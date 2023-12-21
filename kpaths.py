@@ -1,0 +1,109 @@
+from typing import Iterator
+import numpy as np
+import _collections_abc
+
+points = {}
+# face centered cubic in tpiba_b units:
+points['G'] = np.array([[0, 0, 0]])
+points['X'] = np.array([[0, 1, 0]]) # Delta line
+points['K'] = np.array([[3/4, 3/4, 0]]) # Sigma line
+points['L'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
+points['W'] = np.array([[1/2, 1, 0]]) # between X and K
+points['U'] = np.array([[1/4, 1, 1/4]]) # between X and L
+# simple cubic points:
+points['M'] = np.array([[1, 1, 0]]) # Sigma line
+points['R'] = np.array([[1, 1, 1]]) # Lambda line
+# body centered points: (unsure...)
+points['H'] = np.array([[1, 0, 0]]) # Delta line
+points['N'] = np.array([[1/2, 1/2, 0]]) # Sigma line
+points['P'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
+
+class KPath(_collections_abc.Sequence):
+    def __init__(self, start):
+        # TODO accept a list of points instead of start
+        self.path = [(points[start] if start in points else np.array(start)).reshape(-1)]
+        self.indices = [0] # symmetry point indices
+        self.names = [str(start).replace("G", "Γ")]
+    
+    def to(self, point, N=32):
+        self.names.append(str(point).replace("G", "Γ"))
+        point = points[point] if point in points else np.array(point).reshape(1,-1)
+        t = np.linspace(0, 1, N, endpoint=False).reshape(-1, 1) + 1/N
+        self.path.extend(self.path[-1] + t * (point - self.path[-1]))
+        self.indices.append(len(self.path) - 1)
+        return self
+    
+    # generate a sequence of x value for plotting
+    def x(self):
+        # slow serial generation
+        x = [0.0]
+        for i in range(1, len(self.path)):
+            x.append(x[-1] + np.linalg.norm(self.path[i] - self.path[i-1]))
+        return x
+    
+    # get the x values for plotting which correspond to the used symmetry points
+    def sym_x(self):
+        # slow serial generation
+        l = 0.0
+        sym_x = []
+        if 0 in self.indices:
+            sym_x.append(0)
+        for i in range(1, len(self.path)):
+            l += np.linalg.norm(self.path[i] - self.path[i-1])
+            if i in self.indices:
+                sym_x.append(l)
+        return sym_x
+    
+    def sym_x_names(self):
+        return self.names
+    
+    def plot(self, func, *args, **kwargs):
+        from matplotlib import pyplot as plt
+        ibands = func(np.array(self)/2) # TODO different units here...
+        x_smpl = self.x()
+        sym_x_smpl = self.sym_x()
+        plt.gca().set_prop_cycle(None)
+        for i in range(len(ibands[0])):
+            plt.plot(x_smpl, ibands[:,i], *args, **kwargs)
+        for sym_x in sym_x_smpl:
+            plt.axvline(sym_x, color="k", linestyle="dashed")
+        plt.xticks(sym_x_smpl, self.names)
+        plt.xlim(x_smpl[0], x_smpl[-1])
+
+    def __iter__(self) -> Iterator:
+        return self.path.__iter__()
+    
+    def __len__(self) -> int:
+        return self.path.__len__()
+    
+    def __getitem__(self, i) -> int:
+        return self.path.__getitem__(i)
+
+    # representation for quantum espresso
+    def __str__(self):
+        k_points = f"K_POINTS {{tpiba_b}}\n{len(self.path)}\n"
+        for x, y, z in self.path:
+            k_points = k_points + f"{x} {y} {z} 1\n"
+        return k_points
+
+# given band structure data and (non hexagonal) symmetry, return an interpolator for the bandstructure
+# sym needs to be a Symmetry instance from symmetry.py
+def interpolate(k_smpl, bands, sym, method="cubic"):
+    import scipy.interpolate as interp
+    k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
+    dim = sym.dim()
+    n = round(len(k_smpl)**(1/dim))
+    assert n**dim == len(k_smpl), "could reconstruct full square/cubic volume"
+    used_k_smpl = k_smpl.reshape((n,)*dim + (dim,)).T
+    if dim == 1:
+        return interp.RegularGridInterpolator(used_k_smpl,
+                                                bands.reshape((n,)*dim + (-1,)),
+                                                method=method)
+    if dim == 2:
+        return interp.RegularGridInterpolator((used_k_smpl[0][:,0], used_k_smpl[1][0,:]),
+                                                bands.reshape((n,)*dim + (-1,)),
+                                                method=method)
+    if dim == 3:
+        return interp.RegularGridInterpolator((used_k_smpl[0][:,0,0], used_k_smpl[1][0,:,0], used_k_smpl[2][0,0,:]),
+                                                bands.reshape((n,)*dim + (-1,)),
+                                                method=method)
