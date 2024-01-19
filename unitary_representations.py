@@ -25,12 +25,13 @@ def direct_sum(*a):
 
 
 class UnitaryRepresentation:
-    def __init__(self, sym, N):
+    def __init__(self, sym: Symmetry, N):
         self.U = np.array([np.eye(N) for s in sym.S])
         # inversion symmetry can be handled separately, as it is in the centrum of the group
         self.inv_split = N # number of 1 eigenvalues of the inversion symmetry unitary representations
         self.sym = sym
     
+    # dimensions (also called degree) of the representation
     def dim(self):
         return len(self.U[0])
     
@@ -77,11 +78,11 @@ class UnitaryRepresentation:
                 break
         u_repr = UnitaryRepresentation(Symmetry(np.array(S), inversion), N)
         u_repr.inv_split = 0 if invert_inversion else N
-        u_repr.U = U
+        u_repr.U = np.array(U)
         return u_repr
     
     # check if this symmetry matches the given one and if so, reorder the elements to match the order of the given symmetry
-    def match_sym(self, sym):
+    def match_sym(self, sym: Symmetry):
         if len(sym.S) != len(self.sym.S):
             raise ValueError("Symmetries don't match (unequal group order)")
         if len(sym.S[0]) != len(self.sym.S[0]):
@@ -135,7 +136,9 @@ class UnitaryRepresentation:
         return True
     
     # symmetrize a collection of matrices, such that they obey H(Sr) = U_S H(r) (U_S)^+ where r is one of the neighbor positions
-    def symmetrize2(self, params, neighbors):
+    # use symmetrizer(neighbors)(params) for repeated use of symmetrize
+    # IMPORTANT: this one is very slow and is only kept for testing the symmetrizer
+    def symmetrize(self, params, neighbors):
         if len(self.U) <= 1:
             return params # do nothing if self.U is empty, which stands for all U being the unit matrix
         result = np.zeros_like(params) # all U_S are real, so no worries about type here
@@ -146,7 +149,7 @@ class UnitaryRepresentation:
         if self.sym.inversion:
             # only half of the neighbor terms are present, but the symmetry is important
             for i, r in enumerate(neighbors):
-                for s, u in zip(self.sym.S, self.U):
+                for m, (s, u) in enumerate(zip(self.sym.S, self.U)):
                     r_ = s @ r
                     j = np.argmin(np.minimum(np.linalg.norm(neighbors - r_[None, :], axis=-1),
                                              np.linalg.norm(neighbors + r_[None, :], axis=-1)))
@@ -171,9 +174,176 @@ class UnitaryRepresentation:
                     # even here the neighbors are reduced by inversion symmetry, but they are duplicated to cos and sin terms instead
                     j = np.argmin(np.minimum(np.linalg.norm(neighbors - r_[None, :], axis=-1),
                                              np.linalg.norm(neighbors + r_[None, :], axis=-1)))
+                    # TODO check
                     result[i] += u @ params[j] @ np.conj(u.T)
         return result / len(self.U)
     
+    # symmetrize a collection of matrices, such that they obey H(Sr) = U_S H(r) (U_S)^+ where r is one of the neighbor positions
+    # returns a function that does that ^
+    # (has a build in sym.neighbors_check)
+    def symmetrizer(self, neighbors):
+        if len(self.U) <= 1:
+            return lambda x: x # do nothing if self.U is empty, which stands for all U being the unit matrix
+        assert len(self.sym.S) == len(self.U)
+        k = self.inv_split
+        task_list_r0 = []
+        task_list_rinv = []
+        task_list_r = []
+        # for each symmetry class of neighbors, only compute one
+        # representative and then compute the others from that one directly
+        classes = {} # {representative_index: { other_index: transform_index }}
+        covered = set()
+        # build the symmetry graph for the neighbor list
+        # order neighbors to make finding the symmetric points faster
+        neighbors = np.asarray(neighbors)
+        order = np.argsort(np.linalg.norm(neighbors, axis=-1))
+        neighbors = neighbors[order]
+        count = [0]*len(neighbors)
+        for i, r in enumerate(neighbors):
+            rep_class = {}
+            for m, s in enumerate(self.sym.S):
+                r_ = s @ r
+                # here only the neighbors with an index similar to i need to be checked
+                # TODO replace these with the correct numbers
+                start = max(i - len(self.sym.S) * 5, 0)
+                end = min(i + len(self.sym.S) * 5, len(neighbors))
+                j = start + np.argmin(np.minimum(np.linalg.norm(neighbors[start:end] - r_[None, :], axis=-1),
+                                            np.linalg.norm(neighbors[start:end] + r_[None, :], axis=-1)))
+                count[j] += 1
+                if np.linalg.norm(r_) == 0 and self.sym.inversion:
+                    # center case
+                    task_list_r0.append((order[i], order[j], m))
+                elif np.linalg.norm(neighbors[j] + r_) < 1e-7 and self.sym.inversion:
+                    # mirrored case, read the mirrored matrix
+                    if j != i and not order[j] in rep_class:
+                        # save which transform is used to generate this non representative
+                        rep_class[order[j]] = (m, True)
+                    task_list_rinv.append((order[i], order[j], m))
+                else:
+                    assert np.linalg.norm(r_ - neighbors[j]) < 1e-7
+                    if j != i:
+                        # save which transform is used to generate this non representative
+                        rep_class[order[j]] = (m, False)
+                    task_list_r.append((order[i], order[j], m))
+            if order[i] not in covered:
+                classes[order[i]] = rep_class
+            covered = covered.union(rep_class.keys())
+        for c in count:
+            if c != len(self.sym.S):
+                raise ValueError("neighbors need to be choosen to fit the symmetry, however counting occurences has found the numbers " + str(count))
+        # task_list_r0 should only contain one index, so check that and simplify
+        task_list_r0 = tuple(np.reshape(task_list_r0, (-1, 3)).T)
+        assert np.all(task_list_r0[0] == task_list_r0[1]) and np.all(task_list_r0[0][0] == task_list_r0[0])
+        r0_index = task_list_r0[0][0] if len(task_list_r0) else None
+        # the rest can stay as is, just numpyify them
+        task_list_rinv = np.reshape(task_list_rinv, (-1, 3))
+        task_list_rinv = tuple(task_list_rinv[np.array([i in classes for i in task_list_rinv[:,0]])].T)
+        task_list_r = np.reshape(task_list_r, (-1, 3))
+        task_list_r = tuple(task_list_r[np.array([i in classes for i in task_list_r[:,0]])].T)
+        class_copy = []
+        class_invcopy = []
+        for i, class_other in classes.items():
+            for j, (m, mirrored) in sorted(class_other.items(), key=lambda x: x[0]):
+                if mirrored:
+                    class_invcopy.append((i, j, m))
+                else:
+                    class_copy.append((i, j, m))
+        class_invcopy = tuple(np.reshape(class_invcopy, (-1, 3)).T) if class_invcopy else None
+        class_copy = tuple(np.reshape(class_copy, (-1, 3)).T) if class_copy else None
+        # this function is still the performance bottleneck!
+        # even though it has no for loops, just because of the size of the symmetry positions.
+        # It is O(neighbor_representatives * sym)
+        def symmetrizer_func(params):
+            result = np.zeros_like(params) # all U_S are real, so no worries about type here
+            assert len(neighbors) == len(params) # TODO this doesn't match my definition without inversion symmetry...
+            # add up all symmetries
+            # center case
+            if not r0_index is None:
+                result[r0_index] = np.einsum("nki,kl,nlj->ij", np.conj(self.U), params[r0_index], self.U)
+                # center case post processing
+                result[r0_index,:k,k:] = 0
+                result[r0_index,k:,:k] = 0
+            # mirrored
+            i, j, m = task_list_rinv
+            u = self.U[m]
+            np.add.at(result, i, np.conj(np.swapaxes(u, -1, -2)) @ params[j] @ u)
+            # mirror post processing
+            result[:,:k,k:] *= -1
+            result[:,k:,:k] *= -1
+            # normal
+            i, j, m = task_list_r
+            u = self.U[m]
+            np.add.at(result, i, np.conj(np.swapaxes(u, -1, -2)) @ params[j] @ u)
+            # reconstruct all the non representatives now
+            # mirrored
+            if class_invcopy is not None:
+                i, j, m = class_invcopy
+                u = self.U[m]
+                result[j] = u @ result[i] @ np.conj(np.swapaxes(u, -1, -2))
+                # mirrored post processing
+                result[j,:k,k:] *= -1
+                result[j,k:,:k] *= -1
+            # normal
+            if class_copy is not None:
+                i, j, m = class_copy
+                u = self.U[m]
+                result[j] = u @ result[i] @ np.conj(np.swapaxes(u, -1, -2))
+            return result / len(self.U)
+        return symmetrizer_func
+    
+    # symmetrize matrices such that they are invariant under U_S @ mat @ U_S^+ if Sk=k
+    def symmetrize2(self, k_smpl, mat):
+        count = np.zeros(len(k_smpl), dtype=np.int32)
+        result = np.zeros_like(mat)
+        for sign in [-1, 1] if self.sym.inversion else [1]:
+            if sign == 1:
+                # apply U_I (commutes with all other U_S)
+                k = self.inv_split
+                result[:,:k,k:] *= -1
+                result[:,k:,:k] *= -1
+            for s, u in zip(self.sym.S, self.U):
+                invariants = (np.einsum("ij,nj->ni", sign*s - np.eye(len(s)), k_smpl)**2).sum(-1) < 1e-7
+                count += invariants
+                result[invariants] += np.einsum("nij,li,mj->nlm", mat[invariants], u, np.conj(u))
+        return result / count[:,None,None]
+
+    # Calculate all the k_smpl and matrices, which can be computed from the given set.
+    # This uses the unitary representation to transform the matrices like U_S @ mat or U_S @ mat @ U_S^+ in case Sk=k
+    # if inverse is True, U_S^+ is used instead of U_S
+    def realize_symmetric_matrices(self, k_smpl, reduced, sorted=True, inverse=False):
+        full = list(reduced)
+        full_k = list(k_smpl)
+        for data, k in zip(reduced, k_smpl):
+            # asymtotically slow* algorithm to find all symmetric points
+            # (fine because it's never going above 48, so asymtotic behaviour is irrelevant)
+            scale = np.linalg.norm(k)
+            if scale == 0:
+                continue
+            used_k = [k]
+            for inv in [1, -1] if self.sym.inversion else [1]:
+                for s, u in zip(self.sym.S, self.U):
+                    k_ = s @ k * inv
+                    # * this is why this algorithm is asymtotically slow for large symmetry groups
+                    if np.min(np.linalg.norm(used_k - k_.reshape(1, -1), axis=-1)) < scale * 1e-6:
+                        continue
+                    used_k.append(k_)
+                    if inverse:
+                        full.append(u @ data @ np.conj(u.T))
+                    else:
+                        full.append(np.conj(u.T) @ data @ u)
+                    full_k.append(k_)
+        # sort by x, y, z compatible with reshape to meshgrid
+        full_k = np.array(full_k)
+        full = np.array(full)
+        if sorted:
+            for i in range(len(k_smpl[0])):
+                # the round here is annoying as it can break at wrong places
+                # + np.pi makes it less likely, but it can still happen
+                order = np.argsort(np.round(full_k[:,i] + np.pi, 4), kind='stable')
+                full_k = full_k[order]
+                full = full[order]
+        return full_k, full
+
     # check if a hamilton operator satisfies the symmetry of this unitary representation
     # hamilon is a function k -> matrix
     def check_symmetry(self, hamilton):
@@ -183,7 +353,7 @@ class UnitaryRepresentation:
         for k in k_smpl:
             values = []
             for s, u in zip(self.sym.S, self.U):
-                values.append(np.conj(u.T) @ hamilton(s @ k) @ u)
+                values.append(np.conj(u.T) @ hamilton([s @ k])[0] @ u)
             if np.linalg.norm(np.std(values, axis=0)) > 1e-7:
                 print("symmetry error")
                 #print(np.std(values, axis=0))
@@ -192,17 +362,15 @@ class UnitaryRepresentation:
         # TODO check inversion symmetry
         return True
     
-    def check_neighbors(self, neighbors):
-        # only half of the neighbor terms are present, but the symmetry is important
-        count = [0]*len(neighbors)
-        for i, r in enumerate(neighbors):
-            for s, u in zip(self.sym.S, self.U):
-                r_ = s @ r
-                j = np.argmin(np.minimum(np.linalg.norm(neighbors - r_[None, :], axis=-1), np.linalg.norm(neighbors + r_[None, :], axis=-1)))
-                count[j] += 1
-        for c in count:
-            if c != len(self.U):
-                raise ValueError("neighbors need to be choosen to fit the symmetry, however counting occurences has found the numbers " + str(count))
+    # get the subspace structure and dimension for all irreducible representations that were part of the direct sum/product construction
+    def subspaces(self):
+        # finding the symmetric spaces in U_S in general is much much harder
+        # -> assuming U_S is a direct sum of irreducible unitary representations
+        # (for a more general construction one can use characters (traces of the representation matrices))
+        occupancy_table = np.sum(np.abs(self.U), axis=0) > 1e-7
+        groups, counts = np.unique(occupancy_table, return_counts=True, axis=0)
+        assert np.all(groups.astype(np.int32).sum(1) == counts) and np.all(groups.astype(np.int32).sum(0) == 1), "group size didn't match dimension, this has probably not been constructed using direct sums/products"
+        return groups, counts
 
     # direct sum of representations
     def __add__(self, rhs):
@@ -274,7 +442,7 @@ class UnitaryRepresentation:
         return u_repr
     # D_3 dihedral triangle symmetry for cubic symmetry O_h
     # sqrt3 can be given in arbitrary precision if needed
-    def d3(invert_inversion, sqrt3=3**.5):
+    def d3(invert_inversion, inversion=True, sqrt3=3**.5):
         S = [((1,0,0), (0,1,0), (0,0,1)),
              ((1,0,0), (0,0,1), (0,-1,0)),
              ((0,0,-1), (0,1,0), (1,0,0)),
@@ -283,7 +451,7 @@ class UnitaryRepresentation:
              ((1,0), (0,-1)),
              ((-.5,.5*sqrt3), (.5*sqrt3,.5)),
              ((-.5,-.5*sqrt3), (-.5*sqrt3,.5))]
-        return UnitaryRepresentation.from_generator(S, U, True, invert_inversion)
+        return UnitaryRepresentation.from_generator(S, U, inversion, invert_inversion)
     # 1d representations for cubic symmetry O_h
     def one_dim(invert, invert_inversion, inversion=True):
         S = [((1,0,0), (0,1,0), (0,0,1)),
@@ -297,9 +465,23 @@ class UnitaryRepresentation:
              ((x,),)]
         return UnitaryRepresentation.from_generator(S, U, inversion=inversion, invert_inversion=invert_inversion)
 
-test_u_repr = UnitaryRepresentation.one_dim(True, True, True) + UnitaryRepresentation.d3(True) + UnitaryRepresentation.so3()
-neighbors = ((0,0,0), (1,0,0), (0,1,0), (0,0,1))
-test_params = np.random.random((len(neighbors), 1+2+3, 1+2+3))
-test_params2 = test_u_repr.symmetrize2(test_params, neighbors)
-test_params3 = test_u_repr.symmetrize2(test_params2, neighbors)
+# run test on import! TODO make automatic unit tests
+UR = UnitaryRepresentation
+test_u_repr = UR.one_dim(True, True, True) + UR.d3(True) + UR.so3()
+#test_u_repr = UR.one_dim(False, False, True) + UR.d3(False) + UR.so3() + UR.o3()
+assert test_u_repr.check_U()
+neighbors = test_u_repr.sym.complete_neighbors([(0,0,0), (0,0,1), (1,1,1), (2,1,0)]) # with 2,1,3 it will use invcopy
+test_params = np.random.random((len(neighbors),)+(test_u_repr.dim(),)*2)
+test_params = test_params + np.random.random((len(neighbors),)+(test_u_repr.dim(),)*2) * 1j
+test_params = test_params + np.conj(np.swapaxes(test_params, -1, -2))
+
+test_params2 = test_u_repr.symmetrize(test_params, neighbors)
+test_params3 = test_u_repr.symmetrize(test_params2, neighbors)
 assert np.linalg.norm(test_params2 - test_params3) < 1e-7
+_test_symmetrizer = test_u_repr.symmetrizer(neighbors)
+test_params2 = _test_symmetrizer(test_params)
+test_params4 = _test_symmetrizer(test_params2)
+assert np.linalg.norm(test_params2 - test_params4) < 1e-7
+#print(np.linalg.norm(test_params3 - test_params4, axis=(-1,-2)))
+#print((np.linalg.norm(test_params3 - test_params4, axis=0) > 0.0001).astype(int))
+assert np.linalg.norm(test_params3 - test_params4) < 1e-7

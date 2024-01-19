@@ -18,12 +18,15 @@ def random_hermitian(n):
 class TightBindingModel:
     # initialize a tight binding model from a symmetry and initial parameters
     # TODO add a unitary representation for the symmetry of the hamilton operator
-    def __init__(self, unitary_repr, neighbors, params):
+    def __init__(self, unitary_repr: UnitaryRepresentation, neighbors, params):
         assert len(neighbors) > 0
+        assert np.linalg.norm(neighbors[0]) == 0, "the first neighbor needs to be the 0 coordinate"
+        assert np.shape(unitary_repr.U)[1] == np.shape(params)[1]
         self.neighbors = neighbors
         self.unitary_repr = unitary_repr
-        assert np.shape(unitary_repr.U)[1] == np.shape(params)[1]
         self.sym = unitary_repr.sym
+        self.symmetrizer = self.unitary_repr.symmetrizer(self.neighbors)
+        #self.unitary_repr.sym.check_neighbors(neighbors) # done in symmetrizer (this check takes long, so don't do it twice)
         self.params = np.asarray(params)
         pshape = np.shape(self.params)
         assert len(pshape) == 3
@@ -37,15 +40,11 @@ class TightBindingModel:
             n = unitary_repr.inv_split
             self.params[0][:n,n:] = 0
             self.params[0][n:,:n] = 0
-        self.unitary_repr.check_neighbors(neighbors)
         assert pshape[0] == param_count
         # TODO sanity checks for symmetrically equivalent neighbors (those are not allowed)
-        # cache the cos and sin terms here already
-        self.f_i_cache = []
-        self.df_i_cache = []
 
     # initialize a tight binding model from a reference computation
-    def init_from_ref(u_repr, neighbors, k_smpl, ref_bands, use_repr_order=False, verbose=True):
+    def init_from_ref(u_repr: UnitaryRepresentation, neighbors, k_smpl, ref_bands, use_repr_order=False, verbose=True):
         assert len(k_smpl[0]) == len(neighbors[0])
         dim = len(neighbors[0])
         param_count = len(neighbors)
@@ -70,13 +69,9 @@ class TightBindingModel:
         if verbose:
             print("unique band energies:", len(unique))
             print("irreducible symmetry sizes (data): ", { i+1: len(s) for i, s in enumerate(sym) })
-        # finding the symmetric spaces in U_S in general is much much harder
-        # -> assuming U_S is a direct sum of irreducible unitary representations
-        occupancy_table = np.sum(np.abs(u_repr.U), axis=0) > 1e-7
-        groups = list(set([tuple(col) for col in occupancy_table]))
-        groups2 = []
-        for i in range(1, dim+1):
-            groups2.append([g for g in groups if np.sum(np.array(g).astype(np.int32)) == i])
+        # find the symmetric subspaces for the representation
+        groups, counts = u_repr.subspaces()
+        groups2 = [list(groups[counts == i]) for i in range(1, dim+1)]
         if verbose:
             print("irreducible symmetry sizes (model):", { i+1: len(g) for i, g in enumerate(groups2) })
         # check if the data can fit into the unitary representation
@@ -337,13 +332,13 @@ class TightBindingModel:
                 return c[..., None, None] * matrix[None, ..., :, :]
             def einsum_cs(c, _s, diff):
                 return np.einsum("bij,bn->nij", diff, c * sc[:,None])
-        self.params = self.unitary_repr.symmetrize2(self.params, self.neighbors)
+        self.params = self.symmetrizer(self.params)
         # reshape k_smpl_weights
         k_smpl_weights = np.broadcast_to(np.reshape([k_smpl_weights], (-1, 1)), (len(k_smpl), 1))
         weights = np.broadcast_to(np.reshape([weights], (1, -1)), (1, len(ref_bands[0])))
         # start stochastic gradient descent
         last_add = np.zeros_like(self.params)
-        last_loss = self.loss(k_smpl, ref_bands, weights, band_offset)
+        #last_loss = self.loss(k_smpl, ref_bands, weights, band_offset)
         try:
             for iteration in range(iterations):
                 batch = k_smpl[iteration % batch_div::batch_div]
@@ -368,7 +363,7 @@ class TightBindingModel:
                 diff *= weights
                 diff = eigvecs[:,:,band_offset:N-top_pad] @ (diff[...,None] * np.swapaxes(np.conj(eigvecs)[:,:,band_offset:N-top_pad], 1, 2))
                 params_add = einsum_cs(batch_f_i_c * sc[:,None], batch_f_i_s * ss[:,None], diff)
-                params_add = self.unitary_repr.symmetrize2(params_add, self.neighbors)
+                params_add = self.symmetrizer(params_add)
                 params_add *= learning_rate
                 if not train_k0:
                     params_add[0] *= 0.0
@@ -390,7 +385,7 @@ class TightBindingModel:
 
     def normalize(self):
         # resymmetrize
-        self.params = self.unitary_repr.symmetrize2(self.params, self.neighbors)
+        self.params = self.symmetrizer(self.params)
         if True:
             return
         # normalize, respecting the symmetry conditions (doesn't work yet...)

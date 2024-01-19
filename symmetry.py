@@ -21,14 +21,14 @@ def pointcloud_distance(pointcloud1, pointcloud2):
 class Symmetry:
     # initialize symmetry from orthogonal matrices
     def __init__(self, S, inversion=False):
-        self.S = S
+        self.S = np.asarray(S)
         self.inversion = inversion
         # check if S has inversion symmetry build in
         if not inversion and pointcloud_distance(np.reshape(S, (len(S), -1)), -np.reshape(S, (len(S), -1))) < 1e-6:
             print("found inversion symmetry")
             self.inversion = True
             # keep only the S with positive determinants
-            self.S = [s for s in S if np.linalg.det(s) > 0]
+            self.S = np.array([s for s in S if np.linalg.det(s) > 0])
         # TODO add lists for broken symmetries
         # each symmetry(except for inversion) has a line or a plane on which it's unbroken
         # -> add information about that and add a way to get all the unbroken/broken symmetries for a point
@@ -38,10 +38,16 @@ class Symmetry:
 
     def dim(self):
         return len(self.S[0])
+    
+    # cardinality of the group (including inversion symmetry if present!)
+    def __len__(self):
+        return len(self.S) * (2 if self.inversion else 1)
 
     # initialize the symmetry group from the lattice matrix A and the basis atoms b
     # b is a list of lists of basis positions with the meaning bpos = b[type][index]
+    # TODO unfinished
     def from_lattice(A, b):
+        assert False
         # simplify the problem using qr and length normalizsation
         _, A = np.linalg.qr(A)
         A /= A[0,0]
@@ -245,6 +251,72 @@ class Symmetry:
                             j += 1
         return np.array(reduced_k), np.array(reduced)
     
+    def complete_neighbors(self, neighbors):
+        neighbors, _ = self.realize_symmetric_data(neighbors, [[0]] * len(neighbors))
+        neighbors = [n for n in neighbors if n[0] > 0 or (n[0] == 0 and (n[1] > 0 or (n[1] == 0 and n[2] >= 0)))]
+        neighbors = sorted(neighbors, key=lambda n: np.linalg.norm(n))
+        return neighbors
+    
+    def check_neighbors(self, neighbors):
+        # only half of the neighbor terms are present, but the symmetry is important
+        neighbors = np.asarray(neighbors)
+        neighbors = neighbors[np.argsort(np.linalg.norm(neighbors, axis=-1))]
+        count = [0]*len(neighbors)
+        for i, r in enumerate(neighbors):
+            for s in zip(self.S):
+                r_ = s @ r
+                # here only the neighbors with an index similar to i need to be checked
+                # TODO replace these with the correct numbers
+                start = max(i - len(self.S) * 3, 0)
+                end = min(i + len(self.S) * 3, len(neighbors))
+                j = start + np.argmin(np.minimum(np.linalg.norm(neighbors[start:end] - r_[None, :], axis=-1),
+                                            np.linalg.norm(neighbors[start:end] + r_[None, :], axis=-1)))
+                count[j] += 1
+        for c in count:
+            if c != len(self.S):
+                raise ValueError("neighbors need to be choosen to fit the symmetry, however counting occurences has found the numbers " + str(count))
+    
+    # calculate the weight of a k point (percent of the space angle around the point) in a 1-periodic lattice with this symmetry
+    def k_weight(self, k_smpl):
+        weights = np.zeros(len(k_smpl), dtype=np.int32)
+        def pingpong_distance(x):
+            return 0.5 - np.abs(x % 1.0 - 0.5)
+        # NOTE this could be done faster using the right set of generators
+        for sign in [-1, 1] if self.inversion else [1]:
+            for s in self.S:
+                weights += pingpong_distance(np.einsum("ij,nj->ni", sign*s - np.eye(len(s)), k_smpl)).sum(-1) < 1e-7
+        return 1 / weights
+    
+    # calculate the number of unique symmetric points from a given representant.
+    # Same as k_weight, but without periodicity
+    def r_class_size(self, k_smpl):
+        # instead of generating the symmetric points, check how many symmetries fail to produce new points.
+        # NOTE every symmetric point can be generated from using the application of just one symmetry operation,
+        # therefore the number of points is the number of symmetries divided by the symmetries which leave the initial point invariant.
+        weights = np.zeros(len(k_smpl), dtype=np.int32)
+        for sign in [-1, 1] if self.inversion else [1]:
+            for s in self.S:
+                weights += np.linalg.norm(np.einsum("ij,nj->ni", sign*s - np.eye(len(s)), k_smpl), axis=-1) < 1e-7
+        return len(self) / weights
+    
+    def find_classes(self, points):
+        points = np.asarray(points)
+        classes = {} # {representative_index: { index }}
+        covered = set()
+        # build the symmetry graph for the neighbor list
+        for i, r in enumerate(points):
+            rep_class = set()
+            for s in self.S:
+                r_ = s @ r
+                dist = np.linalg.norm(points - r_[None, :], axis=-1)
+                j = np.argmin(dist)
+                if dist[j] <= 1e-7:
+                    rep_class.add(j)
+            if i not in covered:
+                classes[i] = rep_class
+            covered = covered.union(rep_class)
+        return classes
+
     # symmetrize a tensor accoding to this symmetry. This is a projection.
     def symmetrize(self, tensor):
         orig = np.array(tensor) * 1.0

@@ -1,6 +1,5 @@
 import numpy as np
 from matplotlib import pyplot as plt
-np.set_printoptions(precision=3, suppress=True)
 
 def plot_bands_generic(k_smpl, bands, *args, **kwargs):
     plt.gca().set_prop_cycle(None)
@@ -16,7 +15,7 @@ def random_hermitian(n):
 
 class BandStructureModel:
     def __init__(self, f_i, df_i, params, ddf_i=None):
-        self.f_i = f_i # NOTE it should allow tensors of 4. order instead of coefficients for complete generality
+        self.f_i = f_i
         self.df_i = df_i
         self.ddf_i = ddf_i
         self.params = np.asarray(params)
@@ -26,16 +25,23 @@ class BandStructureModel:
         assert pshape[1] == pshape[2]
         assert pshape[0] > 0
 
-    def init_from_ref(f_i, df_i, param_count, ref_bands, band_offset=0, additional_bands=0):
+    def init_tight_binding_from_ref(symmetry, neighbors, k_smpl, ref_bands, band_offset=0, additional_bands=0, cos_reduced=False):
+        f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = get_tight_binding_coeff_funcs(symmetry, np.eye(3), neighbors, cos_reduced=cos_reduced)
+        model = BandStructureModel.init_from_ref(f_i_tb, df_i_tb, ddf_i_tb, term_count, k_smpl, ref_bands, band_offset, additional_bands)
+        model.sym = symmetry
+        return model
+
+    def init_from_ref(f_i, df_i, ddf_i, param_count, k_smpl, ref_bands, band_offset=0, additional_bands=0):
         # assuming the first matrix is a constant term
-        mean_bands = np.mean(ref_bands, axis=0)
-        mean_bands = np.sort(mean_bands)
+        k0_index = np.argmin(np.linalg.norm(k_smpl, axis=-1))
+        assert np.linalg.norm(k_smpl[k0_index]) == 0
+        k0_bands = ref_bands[k0_index]
         left_pad = band_offset
         right_pad = additional_bands - band_offset
-        mean_bands = np.concatenate([[mean_bands[0]]*left_pad, mean_bands, [mean_bands[-1]]*right_pad])
-        scale = (mean_bands[-1] - mean_bands[0]) * 0.0005
-        params = [np.diag(mean_bands)] + [random_hermitian(len(mean_bands)) * scale for _ in range(param_count-1)]
-        return BandStructureModel(f_i, df_i, params)
+        k0_bands = np.concatenate([[k0_bands[0]]*left_pad, k0_bands, [k0_bands[-1]]*right_pad])
+        scale = (k0_bands[-1] - k0_bands[0]) * 0.0005
+        params = [np.diag(k0_bands)] + [random_hermitian(len(k0_bands)) * scale for _ in range(param_count-1)]
+        return BandStructureModel(f_i, df_i, params, ddf_i)
     
     # full function for the band structure
     def f(self, k):
@@ -62,11 +68,11 @@ class BandStructureModel:
         return mat
 
     def loss(self, k_smpl, ref_bands, weights, band_offset):
-        la = self.bands(k_smpl)
-        return np.linalg.norm((la[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(weights, (1, -1))) / len(k_smpl)
+        bands = self.bands(k_smpl)
+        return np.linalg.norm((bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(weights, (1, -1))) / len(k_smpl)
+        #return np.max(np.abs(bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands))
 
-    # TODO add k_weights, as they are also part of the data from Quantum Espresso
-    def optimize(self, k_smpl, k_smpl_weights, ref_bands, weights, band_offset, iterations, batch_div=1):
+    def optimize(self, k_smpl, k_smpl_weights, ref_bands, weights, band_offset, iterations, batch_div=1, train_k0=True):
         N = np.shape(self.params)[1]
         assert band_offset >= 0 and band_offset <= N - len(ref_bands[0])
         # memoize self.f_i here using a rectangular matrix
@@ -105,7 +111,8 @@ class BandStructureModel:
                 diff *= np.reshape((2.0 / len(batch)) / s, (-1, 1))
                 diff = eigvecs[:,:,band_offset:N-top_pad] @ (diff[...,np.newaxis] * np.swapaxes(np.conj(eigvecs)[:,:,band_offset:N-top_pad], 1, 2))
                 params_add = np.einsum("bij,bn->nij", diff, batch_f_i)
-
+                if not train_k0:
+                    params_add[0] *= 0.0
                 # impulse acceleration (beta given by the problem)
                 params_add += last_add * (1 - 1 / len(batch))
                 # change parameters (alpha = 1.0 with the chosen way to normalize the gradient)
@@ -115,10 +122,12 @@ class BandStructureModel:
                 if iteration % 100 == 0:
                     #print(f"loss: {new_loss:.2e} alpha: {alpha:.1e}")
                     l = self.loss(k_smpl, ref_bands, weights, band_offset)
-                    print(f"loss: {l:.2e}")
+                    print(f"\rloss: {l:.2e}", end="")
         except KeyboardInterrupt:
-            print("aborted")
+            print("\naborted")
         self.normalize()
+        l = self.loss(k_smpl, ref_bands, weights, band_offset)
+        print(f"\rfinal loss: {l:.2e}")
 
     def normalize(self):
         la, ev = np.linalg.eigh(self.params[0])
@@ -134,7 +143,6 @@ class BandStructureModel:
                     sign = np.conj(x) / a
                     self.params[:, :, i] *= sign
                     self.params[:, i, :] *= np.conj(sign)
-        # normalize continuous DoF (TODO)
 
     def bands(self, k_smpl):
         return np.linalg.eigvalsh(self.f(k_smpl))
@@ -180,7 +188,8 @@ class BandStructureModel:
         plot_bands_generic(k_smpl, self.bands(k_smpl), *args, **kwargs)
 
 # returns f_i_sym, df_i_sym, term_count, neighbors (transformed)
-def get_tight_binding_coeff_funcs(sym, basis_transform, neighbors):
+# if cos_reduced == True then the functions will use cos(kr)-1 instead of cos(kr)
+def get_tight_binding_coeff_funcs(sym, basis_transform, neighbors, cos_reduced=False):
     # sc crystal
     basis_transform = np.eye(3)
     # bcc crystal
@@ -189,12 +198,13 @@ def get_tight_binding_coeff_funcs(sym, basis_transform, neighbors):
     #basis_transform = np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]]) / 2.0
     neighbors = (basis_transform @ np.asarray(neighbors).T).T
 
+    cos_func = np.cos if not cos_reduced else lambda x: np.cos(x)-1
     if sym.inversion:
-        coeff_funcs = [np.cos]
+        coeff_funcs = [cos_func]
         coeff_dfuncs = [lambda x: -np.sin(x)]
         term_count = len(neighbors)
     else:
-        coeff_funcs = [np.cos, np.sin]
+        coeff_funcs = [cos_func, np.sin]
         coeff_dfuncs = [lambda x: -np.sin(x), np.cos]
         term_count = len(neighbors) * 2
 
@@ -212,7 +222,7 @@ def get_tight_binding_coeff_funcs(sym, basis_transform, neighbors):
             res += func(scale * (k @ r))
         return res
 
-    # (derivative of f_i) @ dk = scalar
+    # 1. derivative of f_i
     def df_i_sym(k, i):
         assert i >= 0
         k = np.asarray(k)
@@ -225,7 +235,23 @@ def get_tight_binding_coeff_funcs(sym, basis_transform, neighbors):
         func = coeff_dfuncs[i // len(neighbors)]
         for s in sym.S:
             r = s @ r_orig
-            res += scale * func(scale * (k[..., 0]*r[0] + k[..., 1]*r[1] + k[..., 2]*r[2]))[..., None] * np.asarray(r)
-        return res
+            res += func(scale * (k @ r))[..., None] * r
+        return res * scale
     
-    return f_i_sym, df_i_sym, term_count, neighbors
+    # 2. derivative of f_i
+    def ddf_i_sym(k, i):
+        assert i >= 0
+        k = np.asarray(k)
+        d = np.zeros(k.shape + (k.shape[-1],))
+        if i == 0:
+            return d
+        res = d
+        scale = 2*np.pi
+        r_orig = neighbors[i % len(neighbors)]
+        func = coeff_dfuncs[i // len(neighbors)]
+        for s in sym.S:
+            r = s @ r_orig
+            res += func(scale * (k @ r))[..., None, None] * np.tensordot(r, r, axes=0)
+        return res * scale**2
+    
+    return f_i_sym, df_i_sym, ddf_i_sym, term_count, neighbors

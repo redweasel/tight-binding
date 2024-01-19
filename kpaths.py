@@ -92,6 +92,7 @@ def interpolate(k_smpl, bands, sym, method="cubic"):
     import scipy.interpolate as interp
     k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
     dim = sym.dim()
+    assert len(k_smpl[0]) == dim
     n = round(len(k_smpl)**(1/dim))
     assert n**dim == len(k_smpl), "could reconstruct full square/cubic volume"
     used_k_smpl = k_smpl.reshape((n,)*dim + (dim,)).T
