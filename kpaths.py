@@ -3,14 +3,15 @@ import numpy as np
 import _collections_abc
 
 points = {}
-# face centered cubic in tpiba_b units:
 points['G'] = np.array([[0, 0, 0]])
-points['X'] = np.array([[0, 1, 0]]) # Delta line
-points['K'] = np.array([[3/4, 3/4, 0]]) # Sigma line
-points['L'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
-points['W'] = np.array([[1/2, 1, 0]]) # between X and K
-points['U'] = np.array([[1/4, 1, 1/4]]) # between X and L
+# face centered cubic in tpiba_b units:
+points['X2'] = 2*np.array([[0, 1, 0]]) # Delta line
+points['K'] = 2*np.array([[3/4, 3/4, 0]]) # Sigma line
+points['L'] = 2*np.array([[1/2, 1/2, 1/2]]) # Lambda line
+points['W'] = 2*np.array([[1/2, 1, 0]]) # between X and K
+points['U'] = 2*np.array([[1/4, 1, 1/4]]) # between X and L
 # simple cubic points:
+points['X'] = np.array([[0, 1, 0]]) # Delta line
 points['M'] = np.array([[1, 1, 0]]) # Sigma line
 points['R'] = np.array([[1, 1, 1]]) # Lambda line
 # body centered points: (unsure...)
@@ -57,12 +58,14 @@ class KPath(_collections_abc.Sequence):
     def sym_x_names(self):
         return self.names
     
-    def plot(self, func, *args, **kwargs):
+    def plot(self, func, *args, band_offset=0, **kwargs):
         from matplotlib import pyplot as plt
         ibands = func(np.array(self)/2) # TODO different units here...
         x_smpl = self.x()
         sym_x_smpl = self.sym_x()
         plt.gca().set_prop_cycle(None)
+        for _ in range(band_offset):
+            next(plt.gca()._get_lines.prop_cycler)
         for i in range(len(ibands[0])):
             plt.plot(x_smpl, ibands[:,i], *args, **kwargs)
         for sym_x in sym_x_smpl:
@@ -86,13 +89,14 @@ class KPath(_collections_abc.Sequence):
             k_points = k_points + f"{x} {y} {z} 1\n"
         return k_points
 
-# given band structure data and (non hexagonal) symmetry, return an interpolator for the bandstructure
+# given band structure data and (non hexagonal) symmetry, return an interpolator for the bandstructure.
+# This works only for data, which is arranged in a rectilinear grid after symmetrization.
 # sym needs to be a Symmetry instance from symmetry.py
 def interpolate(k_smpl, bands, sym, method="cubic"):
     import scipy.interpolate as interp
     k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
     dim = sym.dim()
-    assert len(k_smpl[0]) == dim
+    assert len(k_smpl[0]) == dim, "dimensions of the symmetry and the data don't match"
     n = round(len(k_smpl)**(1/dim))
     assert n**dim == len(k_smpl), "could reconstruct full square/cubic volume"
     used_k_smpl = k_smpl.reshape((n,)*dim + (dim,)).T
@@ -108,3 +112,19 @@ def interpolate(k_smpl, bands, sym, method="cubic"):
         return interp.RegularGridInterpolator((used_k_smpl[0][:,0,0], used_k_smpl[1][0,:,0], used_k_smpl[2][0,0,:]),
                                                 bands.reshape((n,)*dim + (-1,)),
                                                 method=method)
+
+# given band structure data and symmetry, return an interpolator for the bandstructure.
+# The interpolator will return NaN if the point was not in the data.
+# So this function doesn't really interpolate.
+# This is useful for plotting the data along a path
+def interpolate_unstructured(k_smpl, bands, sym, max_error=1e-3):
+    from scipy.spatial import KDTree
+    k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
+    # add a NaN value as last entry
+    bands = np.append(bands, [[np.nan]*len(bands[0])], axis=0)
+    kdtree = KDTree(k_smpl)
+    def interp(k):
+        _dist, index = kdtree.query(k, distance_upper_bound=max_error)
+        # missing neighbors are indicated by infinite distance and index outside of range
+        return np.reshape(bands[index], (len(k), -1))
+    return interp

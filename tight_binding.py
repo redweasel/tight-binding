@@ -146,7 +146,7 @@ class TightBindingModel:
             # it's already filled from the beginning
             pass
         # add random matrices for the k dependence to break the gradient descent subspace
-        scale = (np.max(model_bands) - np.min(model_bands)) * 0.001
+        scale = (np.max(model_bands) - np.min(model_bands)) * 0.001 # TODO make this per band as otherwise it will become really large for far apart bands
         params = [np.diag(model_bands)] + [random_hermitian(len(model_bands)) * scale for _ in range(param_count-1)]
         tb = TightBindingModel(u_repr, neighbors, params)
         tb.normalize()
@@ -292,7 +292,7 @@ class TightBindingModel:
 
     def loss(self, k_smpl, ref_bands, weights, band_offset):
         bands = self.bands(k_smpl)
-        return np.linalg.norm((bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(weights, (1, -1))) / len(k_smpl)
+        return np.linalg.norm((bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(weights, (1, -1))) / len(k_smpl)**0.5
 
     def optimize(self, k_smpl, k_smpl_weights, ref_bands, weights, band_offset, iterations, batch_div=1, learning_rate=1.0, train_k0=True):
         N = np.shape(self.params)[1]
@@ -412,6 +412,30 @@ class TightBindingModel:
                     pass # TODO switch to a different cell to normalize
         # normalize continuous DoF (TODO)
 
+    # get the complex fourier coefficients H_r
+    def params_complex(self):
+        H = self.params / 2
+        if self.sym.inversion:
+            k = self.unitary_repr.inv_split
+            H[:,:k,k:] *= 1j
+            H[:,k:,:k] *= 1j
+        else:
+            H[1:] += H[(len(self.params)+1)//2:] * 1j
+            H = H[:(len(self.params)+1)//2]
+        return H
+    
+    # set params from the complex fourier coefficients H_r
+    def set_from_complex(self, H_r):
+        H = H_r * 2
+        if self.sym.inversion:
+            k = self.unitary_repr.inv_split
+            H[:,:k,k:] *= -1j
+            H[:,k:,:k] *= -1j
+        else:
+            H[1:] += H[(len(self.params)+1)//2:] * 1j
+            H = H[:(len(self.params)+1)//2]
+        return H
+    
     def bands(self, k_smpl):
         return np.linalg.eigvalsh(self.f(k_smpl))
     

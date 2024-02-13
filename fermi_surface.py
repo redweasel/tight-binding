@@ -67,9 +67,9 @@ def plot_3D_fermi_surface(model, fermi_energy, N=32, elev=35, azim=20):
     plt.show()
 
 # plot two cuts of the 3D fermi surface at k=(x,y,z) with given z
-def plot_2D_fermi_surface(model, fermi_energy, z=[0, 1/2], N=50, show=True):
-    x_ = np.linspace(-0.5, 0.5, N)
-    y_ = np.linspace(-0.5, 0.5, N)
+def plot_2D_fermi_surface(model, fermi_energy, z=[0, 1/2], N=50, show=True, k_range=[-0.5, 0.5]):
+    x_ = np.linspace(*k_range, N)
+    y_ = np.linspace(*k_range, N)
     z_ = np.array([0.0])
     x, y, z_ = np.meshgrid(x_, y_, z_, indexing='ij')
 

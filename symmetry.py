@@ -18,11 +18,14 @@ def pointcloud_distance(pointcloud1, pointcloud2):
     return dist
 
 # class for symmetries. All symmetries (except inversion symmetry) are saved as unitary/orthogonal transformation matrices
+# TODO do they need to be orthogonal? Why not SL(3) or -SL(3)? Those would also create closed sets of symmetries.
 class Symmetry:
     # initialize symmetry from orthogonal matrices
     def __init__(self, S, inversion=False):
         self.S = np.asarray(S)
         self.inversion = inversion
+        if [s for s in S if abs(abs(np.linalg.det(s)) - 1) > 1e-7]:
+            raise ValueError("invalid matrix in symmetry. All matrices need to have |det| = 1")
         # check if S has inversion symmetry build in
         if not inversion and pointcloud_distance(np.reshape(S, (len(S), -1)), -np.reshape(S, (len(S), -1))) < 1e-6:
             print("found inversion symmetry")
@@ -84,6 +87,12 @@ class Symmetry:
         else:
             raise NotImplementedError(f"not implemented for dimension {len(A)}")
 
+    # apply a basis transformation to all symmetry operations.
+    # S' = inv(B) @ S @ B
+    def transform(self, basis_transform):
+        self.S = np.einsum("nij,mi,jk->nmk", self.S, np.linalg.inv(basis_transform), basis_transform)
+        return self
+
     # one dimensional symmetry (inversion or nothing)
     def one_dim(inversion):
         S = [np.array(((1,),))]
@@ -132,8 +141,20 @@ class Symmetry:
                 break
         return Symmetry(np.array(S, dtype=np.float64), inversion)
 
+    # no symmetry
+    def none(dim=3):
+        return Symmetry([np.eye(dim)], False)
+    
+    # inversion symmetry
+    def inv(dim=3):
+        return Symmetry([np.eye(dim)], True)
+
     # octahedral group https://en.wikipedia.org/wiki/Octahedral_symmetry
     def cubic(inversion):
+        return Symmetry.perm3() * Symmetry.mirror3(inversion)
+    
+    # TODO symmetry for fcc data from quantum espresso
+    def fcc(inversion):
         # compute everything with integer matrices and convert to float at the end
         S = [((1,0,0), (0,1,0), (0,0,1)),
              ((1,0,0), (0,0,1), (0,-1,0)),
@@ -141,12 +162,38 @@ class Symmetry:
              ((0,1,0), (-1,0,0), (0,0,1))]
         return Symmetry.from_generator(S, inversion)
     
+    # permutation symmetry in the 3 axis
+    def perm3(inversion=False):
+        S = [((1,0,0), (0,1,0), (0,0,1)),
+             ((0,1,0), (0,0,1), (1,0,0)),
+             ((0,0,1), (1,0,0), (0,1,0)),
+             ((1,0,0), (0,0,1), (0,1,0)),
+             ((0,1,0), (1,0,0), (0,0,1)),
+             ((0,0,1), (0,1,0), (1,0,0))]
+        return Symmetry(S, inversion=inversion)
+
+    # point reflections in all 3 planes, or mirror symmetries for all axes if inversion = True
+    def mirror3(inversion=False):
+        S = [((1,0,0), (0,1,0), (0,0,1)),
+             ((1,0,0), (0,-1,0), (0,0,-1)),
+             ((-1,0,0), (0,-1,0), (0,0,1)),
+             ((-1,0,0), (0,1,0), (0,0,-1))]
+        return Symmetry(S, inversion=inversion)
+    
+    # mirror symmetry along x axis
+    def mirror_x(inversion=False):
+        S = [((1,0,0), (0,1,0), (0,0,1)),
+             ((-1,0,0), (0,1,0), (0,0,1))]
+        return Symmetry(S, inversion=inversion)
+
     # symmetries of a 2D square
-    def square(inversion):
+    def square():
         # compute everything with integer matrices and convert to float at the end
+        # TODO check!
         S = [((1,0), (0,1)),
-             ((0,1), (-1,0))]
-        return Symmetry.from_generator(S, inversion)
+             ((0,1), (-1,0)),
+             ((1,0), (0,-1))]
+        return Symmetry.from_generator(S, True)
     
     def monoclinic_x(inversion):
         # monoclinic crystal (inversion symmetry + 180° rotation in yz)
@@ -212,7 +259,7 @@ class Symmetry:
     
     # reduce symmetric data to only included representants for each k equivalence class
     # NOTE: the result can be unstable but usually it's good
-    def reduce_symmetric_data(self, k_smpl, full):
+    def reduce_symmetric_data(self, k_smpl, full, checked=False):
         # same sort as in realize_symmetric_data
         k_smpl = np.asarray(k_smpl)
         full = np.asarray(full)
@@ -230,6 +277,7 @@ class Symmetry:
         while i < len(reduced_k):
             # good* algorithm to find all symmetric points
             k = reduced_k[i]
+            value = reduced[i]
             i += 1
             scale = np.linalg.norm(k)
             if scale == 0:
@@ -245,6 +293,8 @@ class Symmetry:
                         if np.linalg.norm(reduced_k[j]) > scale * 1.0001:
                             break # * this is what makes this a good algorithm
                         if np.linalg.norm(reduced_k[j] - k_) < scale * 1e-6:
+                            if checked and np.linalg.norm(reduced[j] - value) > 1e-7:
+                                raise ValueError("Symmetry check found asymmetric data.")
                             del reduced[j]
                             del reduced_k[j]
                         else:
@@ -325,6 +375,16 @@ class Symmetry:
             res += s.T @ orig @ s
         res /= len(self.S)
         return res
+    
+    # combine two symmetries by taking all combinations of multiplications and removing duplicates
+    def __mul__(self, other):
+        assert self.dim() == other.dim()
+        N = self.dim()
+        S1 = np.array(self.S, dtype=np.float64)
+        S2 = np.array(other.S, dtype=np.float64)
+        S = np.reshape(S1[:,None,...] @ S2[None,...], (-1, N, N))
+        S = np.unique(S, axis=0)
+        return Symmetry(S, inversion=(self.inversion or other.inversion))
 
 
 # test Symmetry class

@@ -20,6 +20,7 @@ class BandStructureModel:
         self.ddf_i = ddf_i
         self.params = np.asarray(params)
         self.sym = None
+        self.cos_reduced = None
         pshape = np.shape(self.params)
         assert len(pshape) == 3
         assert pshape[1] == pshape[2]
@@ -29,6 +30,7 @@ class BandStructureModel:
         f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = get_tight_binding_coeff_funcs(symmetry, np.eye(3), neighbors, cos_reduced=cos_reduced)
         model = BandStructureModel.init_from_ref(f_i_tb, df_i_tb, ddf_i_tb, term_count, k_smpl, ref_bands, band_offset, additional_bands)
         model.sym = symmetry
+        model.cos_reduced = cos_reduced
         return model
 
     def init_from_ref(f_i, df_i, ddf_i, param_count, k_smpl, ref_bands, band_offset=0, additional_bands=0):
@@ -39,7 +41,7 @@ class BandStructureModel:
         left_pad = band_offset
         right_pad = additional_bands - band_offset
         k0_bands = np.concatenate([[k0_bands[0]]*left_pad, k0_bands, [k0_bands[-1]]*right_pad])
-        scale = (k0_bands[-1] - k0_bands[0]) * 0.0005
+        scale = 0.001
         params = [np.diag(k0_bands)] + [random_hermitian(len(k0_bands)) * scale for _ in range(param_count-1)]
         return BandStructureModel(f_i, df_i, params, ddf_i)
     
@@ -67,12 +69,21 @@ class BandStructureModel:
             mat += np.asarray(self.ddf_i(k, i))[..., None, None] * self.params[i].reshape(params_shape)
         return mat
 
+    # returns the weighted loss (standard deviation) and the maximal error per band
+    def error(self, k_smpl, ref_bands, weights, band_offset):
+        bands = self.bands(k_smpl)
+        err = (bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands)
+        max_err = np.max(err, axis=0)
+        err *= np.reshape(weights, (1, -1))
+        return np.linalg.norm(err) / len(k_smpl)**0.5, max_err
+    
     def loss(self, k_smpl, ref_bands, weights, band_offset):
         bands = self.bands(k_smpl)
-        return np.linalg.norm((bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(weights, (1, -1))) / len(k_smpl)
+        err = (bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(weights, (1, -1))
+        return np.linalg.norm(err) / len(k_smpl)**0.5
         #return np.max(np.abs(bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands))
 
-    def optimize(self, k_smpl, k_smpl_weights, ref_bands, weights, band_offset, iterations, batch_div=1, train_k0=True):
+    def optimize(self, k_smpl, k_smpl_weights, ref_bands, weights, band_offset, iterations, batch_div=1, train_k0=True, regularization=1, learning_rate=1.0):
         N = np.shape(self.params)[1]
         assert band_offset >= 0 and band_offset <= N - len(ref_bands[0])
         # memoize self.f_i here using a rectangular matrix
@@ -95,8 +106,11 @@ class BandStructureModel:
                 top_pad = np.shape(self.params)[1] - len(batch_ref[0]) - band_offset
                 batch_weights = batch_weights / np.mean(batch_weights)
 
+                # regularization
+                self.params[1:] *= regularization
+
                 # faster f using cached values
-                f = (self.params[np.newaxis,...] * batch_f_i[...,np.newaxis,np.newaxis]).sum(1)
+                f = (self.params[None,...] * batch_f_i[...,None,None]).sum(1)
                 eigvals, eigvecs = np.linalg.eigh(f)
                 #new_loss = np.linalg.norm(batch_ref - eigvals) / len(batch)**.5
                 #last_loss = new_loss
@@ -109,10 +123,11 @@ class BandStructureModel:
                 diff *= weights
                 diff *= batch_weights
                 diff *= np.reshape((2.0 / len(batch)) / s, (-1, 1))
-                diff = eigvecs[:,:,band_offset:N-top_pad] @ (diff[...,np.newaxis] * np.swapaxes(np.conj(eigvecs)[:,:,band_offset:N-top_pad], 1, 2))
+                diff = eigvecs[:,:,band_offset:N-top_pad] @ (diff[...,None] * np.swapaxes(np.conj(eigvecs)[:,:,band_offset:N-top_pad], 1, 2))
                 params_add = np.einsum("bij,bn->nij", diff, batch_f_i)
                 if not train_k0:
                     params_add[0] *= 0.0
+                params_add *= learning_rate
                 # impulse acceleration (beta given by the problem)
                 params_add += last_add * (1 - 1 / len(batch))
                 # change parameters (alpha = 1.0 with the chosen way to normalize the gradient)
@@ -121,13 +136,13 @@ class BandStructureModel:
 
                 if iteration % 100 == 0:
                     #print(f"loss: {new_loss:.2e} alpha: {alpha:.1e}")
-                    l = self.loss(k_smpl, ref_bands, weights, band_offset)
-                    print(f"\rloss: {l:.2e}", end="")
+                    l, err = self.error(k_smpl, ref_bands, weights, band_offset)
+                    print(f"\rloss: {l:.2e} (max band-error {err})", end="")
         except KeyboardInterrupt:
             print("\naborted")
         self.normalize()
-        l = self.loss(k_smpl, ref_bands, weights, band_offset)
-        print(f"\rfinal loss: {l:.2e}")
+        l, err = self.error(k_smpl, ref_bands, weights, band_offset)
+        print(f"\rfinal loss: {l:.2e} (max band-error {err})")
 
     def normalize(self):
         la, ev = np.linalg.eigh(self.params[0])
@@ -143,6 +158,20 @@ class BandStructureModel:
                     sign = np.conj(x) / a
                     self.params[:, :, i] *= sign
                     self.params[:, i, :] *= np.conj(sign)
+
+    # get the complex fourier coefficients H_r for the initially specified neighbors.
+    # This function also corrects for cos_reduced=True to get the actual H_r.
+    def params_complex(self):
+        H = self.params / 2
+        if not self.sym.inversion:
+            n = (len(self.params)+1)//2
+            if self.cos_reduced:
+                H[1:n] += H[0]
+            H[1:n] += H[n:] * 1j
+            H = H[:n]
+        elif self.cos_reduced:
+            H[1:] += H[0]
+        return H
 
     def bands(self, k_smpl):
         return np.linalg.eigvalsh(self.f(k_smpl))
@@ -206,7 +235,7 @@ def get_tight_binding_coeff_funcs(sym, basis_transform, neighbors, cos_reduced=F
     else:
         coeff_funcs = [cos_func, np.sin]
         coeff_dfuncs = [lambda x: -np.sin(x), np.cos]
-        term_count = len(neighbors) * 2
+        term_count = len(neighbors) * 2 - 1
 
     def f_i_sym(k, i):
         assert i >= 0
