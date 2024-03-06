@@ -12,6 +12,8 @@ element_masses = [1.008, 4.0026, 7.0, 9.012183, 10.81, 12.011, 14.007, 15.999, 1
 element_numbers = {'H': 0, 'He': 1, 'Li': 2, 'Be': 3, 'B': 4, 'C': 5, 'N': 6, 'O': 7, 'F': 8, 'Ne': 9, 'Na': 10, 'Mg': 11, 'Al': 12, 'Si': 13, 'P': 14, 'S': 15, 'Cl': 16, 'Ar': 17, 'K': 18, 'Ca': 19, 'Sc': 20, 'Ti': 21, 'V': 22, 'Cr': 23, 'Mn': 24, 'Fe': 25, 'Co': 26, 'Ni': 27, 'Cu': 28, 'Zn': 29, 'Ga': 30, 'Ge': 31, 'As': 32, 'Se': 33, 'Br': 34, 'Kr': 35, 'Rb': 36, 'Sr': 37, 'Y': 38, 'Zr': 39, 'Nb': 40, 'Mo': 41, 'Tc': 42, 'Ru': 43, 'Rh': 44, 'Pd': 45, 'Ag': 46, 'Cd': 47, 'In': 48, 'Sn': 49, 'Sb': 50, 'Te': 51, 'I': 52, 'Xe': 53, 'Cs': 54, 'Ba': 55, 'La': 56, 'Ce': 57, 'Pr': 58, 'Nd': 59, 'Pm': 60, 'Sm': 61, 'Eu': 62, 'Gd': 63, 'Tb': 64, 'Dy': 65, 'Ho': 66, 'Er': 67, 'Tm': 68, 'Yb': 69, 'Lu': 70, 'Hf': 71, 'Ta': 72, 'W': 73, 'Re': 74, 'Os': 75, 'Ir': 76, 'Pt': 77, 'Au': 78, 'Hg': 79, 'Tl': 80, 'Pb': 81, 'Bi': 82, 'Po': 83, 'At': 84, 'Rn': 85, 'Fr': 86, 'Ra': 87, 'Ac': 88, 'Th': 89, 'Pa': 90, 'U': 91, 'Np': 92, 'Pu': 93, 'Am': 94, 'Cm': 95, 'Bk': 96, 'Cf': 97, 'Es': 98, 'Fm': 99, 'Md': 100, 'No': 101, 'Lr': 102, 'Rf': 103, 'Db': 104, 'Sg': 105, 'Bh': 106, 'Hs': 107, 'Mt': 108, 'Ds': 109, 'Rg': 110, 'Cn': 111, 'Nh': 112, 'Fl': 113, 'Mc': 114, 'Lv': 115, 'Ts': 116, 'Og': 117}
 element_names = ['Hydrogen', 'Helium', 'Lithium', 'Beryllium', 'Boron', 'Carbon', 'Nitrogen', 'Oxygen', 'Fluorine', 'Neon', 'Sodium', 'Magnesium', 'Aluminum', 'Silicon', 'Phosphorus', 'Sulfur', 'Chlorine', 'Argon', 'Potassium', 'Calcium', 'Scandium', 'Titanium', 'Vanadium', 'Chromium', 'Manganese', 'Iron', 'Cobalt', 'Nickel', 'Copper', 'Zinc', 'Gallium', 'Germanium', 'Arsenic', 'Selenium', 'Bromine', 'Krypton', 'Rubidium', 'Strontium', 'Yttrium', 'Zirconium', 'Niobium', 'Molybdenum', 'Technetium', 'Ruthenium', 'Rhodium', 'Palladium', 'Silver', 'Cadmium', 'Indium', 'Tin', 'Antimony', 'Tellurium', 'Iodine', 'Xenon', 'Cesium', 'Barium', 'Lanthanum', 'Cerium', 'Praseodymium', 'Neodymium', 'Promethium', 'Samarium', 'Europium', 'Gadolinium', 'Terbium', 'Dysprosium', 'Holmium', 'Erbium', 'Thulium', 'Ytterbium', 'Lutetium', 'Hafnium', 'Tantalum', 'Tungsten', 'Rhenium', 'Osmium', 'Iridium', 'Platinum', 'Gold', 'Mercury', 'Thallium', 'Lead', 'Bismuth', 'Polonium', 'Astatine', 'Radon', 'Francium', 'Radium', 'Actinium', 'Thorium', 'Protactinium', 'Uranium', 'Neptunium', 'Plutonium', 'Americium', 'Curium', 'Berkelium', 'Californium', 'Einsteinium', 'Fermium', 'Mendelevium', 'Nobelium', 'Lawrencium', 'Rutherfordium', 'Dubnium', 'Seaborgium', 'Bohrium', 'Hassium', 'Meitnerium', 'Darmstadtium', 'Roentgenium', 'Copernicium', 'Nihonium', 'Flerovium', 'Moscovium', 'Livermorium', 'Tennessine', 'Oganesson']
 
+mpi_run = "mpirun --use-hwthread-cpus "
+
 def qe_prepare(pseudo_potential_files_dict):
     if not os.path.exists("./qe-data"):
         os.mkdir("./qe-data")
@@ -144,9 +146,81 @@ class QECrystal:
             fermi_energy = float(fermi_energy_node.firstChild.nodeValue.strip()) * to_eV
         return np.array(k_points), np.array(weights), np.array(bands), np.array(S), fermi_energy
     
+    def read_wannier_tb(self):
+        with open(f"{self.name}_tb.dat", "r") as file:
+            file.readline() # just the creation date
+            # read the lattice vectors in angstrom units
+            for i in range(3):
+                file.readline()
+            # read number of bands and the number of points in the wigner seitz gridcell
+            band_count = int(file.readline().strip())
+            point_count = int(file.readline().strip())
+            # now read the degeneracy list with length point_count
+            degeneracy = ""
+            while True:
+                line = file.readline()
+                if len(line.strip()) > 0:
+                    degeneracy = degeneracy + line.strip() + " "
+                else:
+                    break
+            degeneracy = [int(s) for s in degeneracy.split() if len(s)]
+            assert point_count == len(degeneracy)
+            # now read the hamiltonian matrices
+            neighbors = []
+            params = []
+            r_params = []
+            index = -1
+            for line in file:
+                if not line.strip():
+                    continue # skip empty lines
+                parts = line.strip().split()
+                if len(parts) == 3:
+                    # start new matrix or return to existing one
+                    pos = tuple([int(x) for x in parts])
+                    neg_pos = tuple([-x for x in pos])
+                    if pos not in neighbors:
+                        if pos != neg_pos and neg_pos in neighbors:
+                            # skip the entry if the adjungated matrix is already in neighbors
+                            index = -1
+                            continue
+                        index = len(neighbors)
+                        neighbors.append(pos)
+                        params.append(np.zeros((band_count, band_count), dtype=np.complex128))
+                        r_params.append(np.zeros((band_count, band_count, 3), dtype=np.complex128))
+                    else:
+                        index = neighbors.index(pos)
+                elif len(parts) == 4:
+                    if index < 0:
+                        continue # skip this entry
+                    # new matrix entry (i,j) x+iy
+                    i,j = int(parts[0]), int(parts[1])
+                    x,y = float(parts[2]), float(parts[3])
+                    params[index][i-1,j-1] = x + y*1j
+                elif len(parts) == 8:
+                    if index < 0:
+                        continue # skip this entry
+                    # new matrix element <i| vec r|j>
+                    i,j = int(parts[0]), int(parts[1])
+                    x = float(parts[2]) + 1j*float(parts[3])
+                    y = float(parts[4]) + 1j*float(parts[5])
+                    z = float(parts[6]) + 1j*float(parts[7])
+                    r_params[index][i-1,j-1,0] = x
+                    r_params[index][i-1,j-1,1] = y
+                    r_params[index][i-1,j-1,2] = z
+                else:
+                    raise ValueError(f"File has a format error in the tight bindng matrices in line \"{line.strip()}\"")
+        # sort the neighbors by length
+        neighbors = np.array(neighbors)
+        params = np.array(params)
+        r_params = np.array(r_params)
+        order = np.argsort(np.linalg.norm(neighbors, axis=-1))
+        return neighbors[order], params[order], r_params[order]
+
+
     # read the wavefunctions that have been computed by scf()
     def read_wavefunctions(self):
         # TODO reverse engineer https://gitlab.com/QEF/q-e/blob/31603626cc6bba390574e89c262a1e16d913a8a9/Modules/qexml.f90#L2052
+        # or use wannier90 to convert it to a readable format
         raise NotImplementedError()
     
     # returns an array of density of states with the columns (column major)
@@ -203,12 +277,20 @@ class QECrystal:
             k_points = k_points + f"{x} {y} {z} 1\n"
         return k_points
 
-    def k_grid(self, size):
-        return f"K_POINTS (automatic)\n{size} {size} {size} 0 0 0"
+    def k_grid(self, size, size2=None, size3=None):
+        if size2 is None:
+            size2 = size
+        if size3 is None:
+            size3 = size
+        return f"K_POINTS (automatic)\n{size} {size2} {size3} 0 0 0"
 
     # ----- execution of QUANTUM ESPRESSO -----
 
-    def scf(self, k_grid_size):
+    def scf(self, k_grid_size, k_grid_size2=None, k_grid_size3=None):
+        if k_grid_size2 is None:
+            k_grid_size2 = k_grid_size
+        if k_grid_size3 is None:
+            k_grid_size3 = k_grid_size
         with open(f"{self.name}.scf.in", "w") as file:
             file.write(f"""
 &control
@@ -228,13 +310,14 @@ class QECrystal:
 &electrons
     diagonalization='david',
     conv_thr = 1.0e-8,
+    electron_maxstep = 100,
     mixing_beta = 0.7,
 /
 {self.crystal()}
-{self.k_grid(k_grid_size)}
+{self.k_grid(k_grid_size, k_grid_size2, k_grid_size3)}
 """)
         print(f"running the scf calculation for {self.name}")
-        os.system(f"mpirun --use-hwthread-cpus pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.scf.in | tee {self.name}.scf.out")
+        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.scf.in | tee {self.name}.scf.out")
     
     def relax(self):
         relax_k_grid_size = 4
@@ -274,7 +357,7 @@ class QECrystal:
 {self.k_grid(relax_k_grid_size)}
 """)
         print(f"running the vc-relax calculation for {self.name}")
-        os.system(f"mpirun --use-hwthread-cpus pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.relax.in | tee {self.name}.relax.out")
+        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.relax.in | tee {self.name}.relax.out")
     
     # calculate band structure
     # k_points is the string given to QUANTUM ESPRESSO, which can be generated using
@@ -301,7 +384,7 @@ class QECrystal:
 {str(k_points)}
 """)
         print(f"running the band-structure calculation for {self.name}")
-        os.system(f"mpirun --use-hwthread-cpus pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.band.in | tee {self.name}.band.out")
+        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.band.in | tee {self.name}.band.out")
 
     # use QUANTUM ESPRESSO's bands.x to convert bands output to workable data.
     # -> slow and buggy... for k-grids use my function for direct access instead
@@ -316,7 +399,7 @@ filband='{self.name}.Bandx.dat'
 """)
         # doesn't completely work for high resolutions...
         print(f"converting data for {self.name} to a plottable format")
-        os.system(f"mpirun --use-hwthread-cpus bands.x < {self.name}.bandx.in | tee {self.name}.bandx.out")
+        os.system(mpi_run + f"bands.x < {self.name}.bandx.in | tee {self.name}.bandx.out")
 
     # compute the fermi energy from the density of states (dos)
     def dos(self):
@@ -334,7 +417,193 @@ filband='{self.name}.Bandx.dat'
     fildos = '{self.name}.Dos.dat',
 /
 """)
-        os.system(f"mpirun --use-hwthread-cpus dos.x < {self.name}.dos.in > {self.name}.dos.out")
+        os.system(mpi_run + f"dos.x < {self.name}.dos.in > {self.name}.dos.out")
+
+    def nscf(self, k_points, band_count):
+        with open(f"./{self.name}.nscf.in", "w") as file:
+            file.write(f"""\
+&control
+    calculation='nscf',
+    pseudo_dir = './pseudo/',
+    outdir='./qe-data/',
+    prefix='{self.name}',
+    tstress = true,
+    tprnfor = true,
+    disk_io='low',
+    verbosity='high',
+/
+&system
+    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},
+    ecutwfc = {self.kinetic_energy_cutoff},
+    nbnd={band_count}
+    occupations='smearing', smearing='marzari-vanderbilt', degauss=0.01
+/
+&electrons
+    diagonalization='david',
+    conv_thr = 1.0e-8,
+/
+{self.crystal()}
+{str(k_points)}
+""")
+        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.nscf.in | tee {self.name}.nscf.out")
+
+    def nscf_nosym(self, k_points, band_count):
+        with open(f"./{self.name}.nscf.in", "w") as file:
+            file.write(f"""
+&control
+    calculation='nscf',
+    pseudo_dir = './pseudo/',
+    outdir='./qe-data/',
+    prefix='{self.name}',
+    tstress = true,
+    tprnfor = true,
+    disk_io='low',
+    verbosity='high',
+/
+&system
+    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},
+    ecutwfc = {self.kinetic_energy_cutoff},
+    nosym = true,
+    noinv = true,
+    nbnd={band_count}
+    occupations='smearing', smearing='marzari-vanderbilt', degauss=0.01
+/
+&electrons
+    diagonalization='david',
+    conv_thr = 1.0e-8,
+/
+{self.crystal()}
+{str(k_points)}
+""")
+        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.nscf.in | tee {self.name}.nscf.out")
+
+    def crystal_wannier(self):
+        crystal = f"""begin unit_cell_cart
+{self.unit}
+{self.A[0,0]} {self.A[1,0]} {self.A[2,0]}
+{self.A[0,1]} {self.A[1,1]} {self.A[2,1]}
+{self.A[0,2]} {self.A[1,2]} {self.A[2,2]}
+end unit_cell_cart
+
+begin atoms_frac
+"""
+        for b, t in zip(self.basis, self.types):
+            assert len(b) == 3
+            crystal = crystal + f"{t} {b[0]} {b[1]} {b[2]}\n"
+        crystal = crystal + "end atoms_frac"
+        return crystal
+    
+    def k_points_wannier(self, points):
+        k_points = "begin kpoints\n"
+        for x, y, z in points:
+            k_points = k_points + f"{x} {y} {z}\n"
+        k_points = k_points + "end kpoints"
+        return k_points
+    
+    # prepare the wannierization parameters and check them
+    # wannier_count is the number of bands in the result if disentanglement is used. Otherwise this is choosen automatically to use all bands.
+    # run this after nscf_nosym()
+    def prepare_wannier(self, wannier_count=None, grid_size=None, iterations=100, projections="random"):
+        # the difficult part is the "projections" part
+        # that part is about which orbitals are used where
+        # using my HamiltonianSymmetry I can accumulate all the information for it.
+        # otherwise I would need to add yet another way to construct it...
+        # PROBLEM: This is the difficult part! and it is just for the starting state!
+        # For now, just use "random" to get it running
+        #
+        # TODO make the kpath for the plotting chooseable using the kpath module, or
+        # don't use bands_plot and implement that part myself using the tb model.
+        k_points, weights, bands, symmetries, fermi_energy = self.read_bands(incomplete=True)
+        if grid_size is None:
+            grid_size = round(np.cbrt(len(k_points)))
+        else:
+            k_points = np.stack(np.meshgrid(*(np.linspace(0, 1.0, grid_size, endpoint=False),)*3), axis=-1).reshape(-1, 3)
+        #assert len(k_points) == grid_size**3, "grid from data is reduced by symmetry, which is strangely not allowed for this step"
+        if wannier_count is None:
+            wannier_count = len(bands[0])
+        with open(f"{self.name}.win", "w") as file:
+            file.write(f"""
+num_bands = {len(bands[0])}
+num_wann = {wannier_count}
+num_iter = {iterations}
+conv_tol = 1.0e-10 ! = default value
+conv_window = 4
+trial_step = 3.0 ! line search, increase if the wannierization doesn't converge
+
+iprint = 2
+num_dump_cycles = 10
+num_print_cycles = 10
+
+dis_win_max = 18.0
+dis_win_min = 11.0
+!dis_froz_max = 13.4
+!dis_froz_min = 11.0
+
+spinors = false
+!auto_projections = true !there is a warning about this not always working with pw2wannier90.x
+!use_bloch_phases = true ! doesn't work :(
+
+begin projections
+{projections}
+end projections
+
+site_symmetry = true
+!write_hr = true
+write_tb = true
+write_xyz = true
+
+wannier_plot = true
+wannier_plot_supercell = 3
+bands_plot = true
+
+begin kpoint_path
+L 0.50000 0.50000 0.5000 G 0.00000 0.00000 0.0000
+G 0.00000 0.00000 0.0000 X 0.50000 0.00000 0.5000
+end kpoint_path
+
+!exclude_bands=
+
+{self.crystal_wannier()}
+
+mp_grid = {grid_size} {grid_size} {grid_size}
+
+{self.k_points_wannier(k_points)}
+""")
+        # generate a list of required overlaps (written to {name}.nnkp)
+        # for some reason mpirun doesn't work...
+        #os.system(mpi_run + f"wannier90.x -pp {self.name}")
+        os.system(f"wannier90.x -pp {self.name}")
+    
+    # compute the overlaps of the wavefunctions from the nscf calculation, to be used by wannierization
+    # use this after using prepare_wannier()
+    def overlaps_for_wannier(self):
+        with open(f"{self.name}.pw2wan.in", "w") as file:
+            file.write(f"""
+&inputpp 
+   outdir='./qe-data/'
+   prefix = '{self.name}'
+   seedname = '{self.name}'
+   !spin_component = 'none'
+   !write_mmn = true
+   !write_amn = true
+   !write_unk = true ! not compatible with irr_bz
+   !write_dmn = true ! not compatible with irr_bz
+   !wan_mode = 'standalone'
+   irr_bz = true
+/
+""")
+        os.system(mpi_run + f"pw2wannier90.x -in {self.name}.pw2wan.in | tee {self.name}.pw2wan.out")
+    
+    # compute the maximally localized wave functions (MLWFs)
+    # use this after using overlaps_for_wannier()
+    def wannier(self):
+        # written to {name}.mmn and {name}.amn
+        # parallel execution doesn't work for some reason...
+        #os.system(mpi_run + f"wannier90.x {self.name}")
+        os.system(f"wannier90.x {self.name}")
+
+    def plot_wannier(self):
+        pass
 
     # show Fermi surface using xcrysden
     def fermi_surface(self):
@@ -348,7 +617,7 @@ outdir='./qe-data/'
 /
 """)
 
-        os.system(f"mpirun --use-hwthread-cpus fs.x -in {self.name}.fs.in > {self.name}.fs.out")
+        os.system(mpi_run + f"fs.x -in {self.name}.fs.in > {self.name}.fs.out")
 
         os.system(f"xcrysden --bxsf {self.name}_fs.bxsf > /dev/null")
 

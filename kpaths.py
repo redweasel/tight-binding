@@ -128,3 +128,5 @@ def interpolate_unstructured(k_smpl, bands, sym, max_error=1e-3):
         # missing neighbors are indicated by infinite distance and index outside of range
         return np.reshape(bands[index], (len(k), -1))
     return interp
+
+# TODO add tests

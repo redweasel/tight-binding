@@ -145,21 +145,21 @@ class UnitaryRepresentation:
         # add up all symmetries
         assert len(neighbors) == len(params) # TODO this doesn't match my definition without inversion symmetry...
         assert len(self.sym.S) == len(self.U)
+        neighbor_func = neighbor_function(neighbors)
         k = self.inv_split
         if self.sym.inversion:
             # only half of the neighbor terms are present, but the symmetry is important
             for i, r in enumerate(neighbors):
                 for m, (s, u) in enumerate(zip(self.sym.S, self.U)):
                     r_ = s @ r
-                    j = np.argmin(np.minimum(np.linalg.norm(neighbors - r_[None, :], axis=-1),
-                                             np.linalg.norm(neighbors + r_[None, :], axis=-1)))
+                    j, mirror = neighbor_func(r_)
                     if np.linalg.norm(r_) == 0:
                         # center case
                         p = np.array(params[j])
                         p[:k,k:] = 0 # could also do this at the end
                         p[k:,:k] = 0
                         result[i] += np.conj(u.T) @ p @ u
-                    elif np.linalg.norm(neighbors[j] + r_) < 1e-7:
+                    elif mirror:
                         # mirrored case, read the mirrored matrix
                         p = np.array(params[j])
                         p[:k,k:] *= -1
@@ -170,12 +170,16 @@ class UnitaryRepresentation:
         else:
             for i, r in enumerate(neighbors):
                 for s, u in zip(self.sym.S, self.U):
-                    r_ = s.T @ r
+                    r_ = s @ r
                     # even here the neighbors are reduced by inversion symmetry, but they are duplicated to cos and sin terms instead
-                    j = np.argmin(np.minimum(np.linalg.norm(neighbors - r_[None, :], axis=-1),
-                                             np.linalg.norm(neighbors + r_[None, :], axis=-1)))
+                    mirror = False
+                    _dist, j = kdtree.query(r_, distance_upper_bound=1e-5)
+                    if j < 0 or j >= len(neighbors):
+                        _dist, j = kdtree.query(-r_, distance_upper_bound=1e-5)
+                        mirror = True
+                        assert 0 <= j < len(neighbors), "neighbors don't match the symmetry"
                     # TODO check
-                    result[i] += u @ params[j] @ np.conj(u.T)
+                    result[i] += np.conj(u.T) @ params[j] @ u
         return result / len(self.U)
     
     # symmetrize a collection of matrices, such that they obey H(Sr) = U_S H(r) (U_S)^+ where r is one of the neighbor positions
@@ -185,6 +189,7 @@ class UnitaryRepresentation:
         if len(self.U) <= 1:
             return lambda x: x # do nothing if self.U is empty, which stands for all U being the unit matrix
         assert len(self.sym.S) == len(self.U)
+        neighbor_func = neighbor_function(neighbors)
         k = self.inv_split
         task_list_r0 = []
         task_list_rinv = []
@@ -194,39 +199,32 @@ class UnitaryRepresentation:
         classes = {} # {representative_index: { other_index: transform_index }}
         covered = set()
         # build the symmetry graph for the neighbor list
-        # order neighbors to make finding the symmetric points faster
         neighbors = np.asarray(neighbors)
-        order = np.argsort(np.linalg.norm(neighbors, axis=-1))
-        neighbors = neighbors[order]
         count = [0]*len(neighbors)
         for i, r in enumerate(neighbors):
             rep_class = {}
             for m, s in enumerate(self.sym.S):
                 r_ = s @ r
-                # here only the neighbors with an index similar to i need to be checked
-                # TODO replace these with the correct numbers
-                start = max(i - len(self.sym.S) * 5, 0)
-                end = min(i + len(self.sym.S) * 5, len(neighbors))
-                j = start + np.argmin(np.minimum(np.linalg.norm(neighbors[start:end] - r_[None, :], axis=-1),
-                                            np.linalg.norm(neighbors[start:end] + r_[None, :], axis=-1)))
+                # find r_ or -r_ in neighbors
+                j, mirror = neighbor_func(r_)
                 count[j] += 1
                 if np.linalg.norm(r_) == 0 and self.sym.inversion:
                     # center case
-                    task_list_r0.append((order[i], order[j], m))
-                elif np.linalg.norm(neighbors[j] + r_) < 1e-7 and self.sym.inversion:
+                    task_list_r0.append((i, j, m))
+                elif mirror and self.sym.inversion:
                     # mirrored case, read the mirrored matrix
-                    if j != i and not order[j] in rep_class:
+                    if j != i and not j in rep_class:
                         # save which transform is used to generate this non representative
-                        rep_class[order[j]] = (m, True)
-                    task_list_rinv.append((order[i], order[j], m))
+                        rep_class[j] = (m, True)
+                    task_list_rinv.append((i, j, m))
                 else:
-                    assert np.linalg.norm(r_ - neighbors[j]) < 1e-7
+                    assert not mirror
                     if j != i:
                         # save which transform is used to generate this non representative
-                        rep_class[order[j]] = (m, False)
-                    task_list_r.append((order[i], order[j], m))
-            if order[i] not in covered:
-                classes[order[i]] = rep_class
+                        rep_class[j] = (m, False)
+                    task_list_r.append((i, j, m))
+            if i not in covered:
+                classes[i] = rep_class
             covered = covered.union(rep_class.keys())
         for c in count:
             if c != len(self.sym.S):
@@ -465,23 +463,23 @@ class UnitaryRepresentation:
              ((x,),)]
         return UnitaryRepresentation.from_generator(S, U, inversion=inversion, invert_inversion=invert_inversion)
 
-# run test on import! TODO make automatic unit tests
-UR = UnitaryRepresentation
-test_u_repr = UR.one_dim(True, True, True) + UR.d3(True) + UR.so3()
-#test_u_repr = UR.one_dim(False, False, True) + UR.d3(False) + UR.so3() + UR.o3()
-assert test_u_repr.check_U()
-neighbors = test_u_repr.sym.complete_neighbors([(0,0,0), (0,0,1), (1,1,1), (2,1,0)]) # with 2,1,3 it will use invcopy
-test_params = np.random.random((len(neighbors),)+(test_u_repr.dim(),)*2)
-test_params = test_params + np.random.random((len(neighbors),)+(test_u_repr.dim(),)*2) * 1j
-test_params = test_params + np.conj(np.swapaxes(test_params, -1, -2))
+def test_unitary_representations():
+    UR = UnitaryRepresentation
+    test_u_repr = UR.one_dim(True, True, True) + UR.d3(True) + UR.so3()
+    #test_u_repr = UR.one_dim(False, False, True) + UR.d3(False) + UR.so3() + UR.o3()
+    assert test_u_repr.check_U()
+    neighbors = test_u_repr.sym.complete_neighbors([(0,0,0), (0,0,1), (1,1,1), (2,1,0)]) # with 2,1,3 it will use invcopy
+    test_params = np.random.random((len(neighbors),)+(test_u_repr.dim(),)*2)
+    test_params = test_params + np.random.random((len(neighbors),)+(test_u_repr.dim(),)*2) * 1j
+    test_params = test_params + np.conj(np.swapaxes(test_params, -1, -2))
 
-test_params2 = test_u_repr.symmetrize(test_params, neighbors)
-test_params3 = test_u_repr.symmetrize(test_params2, neighbors)
-assert np.linalg.norm(test_params2 - test_params3) < 1e-7
-_test_symmetrizer = test_u_repr.symmetrizer(neighbors)
-test_params2 = _test_symmetrizer(test_params)
-test_params4 = _test_symmetrizer(test_params2)
-assert np.linalg.norm(test_params2 - test_params4) < 1e-7
-#print(np.linalg.norm(test_params3 - test_params4, axis=(-1,-2)))
-#print((np.linalg.norm(test_params3 - test_params4, axis=0) > 0.0001).astype(int))
-assert np.linalg.norm(test_params3 - test_params4) < 1e-7
+    test_params2 = test_u_repr.symmetrize(test_params, neighbors)
+    test_params3 = test_u_repr.symmetrize(test_params2, neighbors)
+    assert np.linalg.norm(test_params2 - test_params3) < 1e-7
+    _test_symmetrizer = test_u_repr.symmetrizer(neighbors)
+    test_params2 = _test_symmetrizer(test_params)
+    test_params4 = _test_symmetrizer(test_params2)
+    assert np.linalg.norm(test_params2 - test_params4) < 1e-7
+    #print(np.linalg.norm(test_params3 - test_params4, axis=(-1,-2)))
+    #print((np.linalg.norm(test_params3 - test_params4, axis=0) > 0.0001).astype(int))
+    assert np.linalg.norm(test_params3 - test_params4) < 1e-7
