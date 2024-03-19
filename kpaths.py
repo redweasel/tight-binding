@@ -18,6 +18,10 @@ points['R'] = np.array([[1, 1, 1]]) # Lambda line
 points['H'] = np.array([[1, 0, 0]]) # Delta line
 points['N'] = np.array([[1/2, 1/2, 0]]) # Sigma line
 points['P'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
+# 2D square symmetry points:
+points['G2d'] = np.array([[0, 0]])
+points['X2d'] = np.array([[0, 1]]) # Delta line
+points['M2d'] = np.array([[1, 1]]) # Sigma line
 
 class KPath(_collections_abc.Sequence):
     def __init__(self, start):

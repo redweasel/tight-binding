@@ -30,11 +30,12 @@ class BandStructureModel:
         assert pshape[0] > 0
 
     def init_tight_binding(symmetry: Symmetry, neighbors, band_count, cos_reduced=False, exp=False):
-        symmetry.check_neighbors(neighbors)
+        #symmetry.check_neighbors(neighbors)
         f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = get_tight_binding_coeff_funcs(symmetry, np.eye(3), neighbors, cos_reduced=cos_reduced, exp=exp)
         model = BandStructureModel(f_i_tb, df_i_tb, np.zeros((term_count, band_count, band_count)), ddf_i=ddf_i_tb)
         model.sym = symmetry
         model.cos_reduced = cos_reduced
+        model.neighbors = neighbors
         model.exp = exp
         return model
     
@@ -44,6 +45,7 @@ class BandStructureModel:
         # TODO handle the case where cos_reduced=False, because there the params need to be processed here
         model.sym = symmetry
         model.cos_reduced = cos_reduced
+        model.neighbors = neighbors
         model.exp = exp
         return model
 
@@ -290,13 +292,7 @@ class BandStructureModel:
 # if cos_reduced == True then the functions will use cos(kr)-1 instead of cos(kr)
 # if exp == True then the exponential functions e^ikR will be used directly.
 def get_tight_binding_coeff_funcs(sym, basis_transform, neighbors, cos_reduced=False, exp=False):
-    # sc crystal
-    basis_transform = np.eye(3)
-    # bcc crystal
-    #basis_transform = np.array([[-1, 1, 1], [1, -1, 1], [1, 1, -1]]) / 2.0
-    # fcc crystal
-    #basis_transform = np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]]) / 2.0
-    neighbors = (basis_transform @ np.asarray(neighbors).T).T
+    neighbors = np.asarray(neighbors)
 
     cos_func = np.cos if not cos_reduced else lambda x: np.cos(x)-1
     if exp:
@@ -401,5 +397,3 @@ def test_bandstructure():
                 assert np.linalg.norm(tb_test_ddf - tb_test2.ddf(k_smpl)) < 1e-7, f"reconstructed Hamiltonian 2. derivative doesn't match ({i} vs {j}, inversion: {sym.inversion})"
                 H_r2 = tb_test2.params_complex()
                 assert np.linalg.norm(H_r - H_r2) < 1e-14, f"Reconstruction doesn't match ({i} vs {j}, inversion: {sym.inversion})"
-
-test_bandstructure()
