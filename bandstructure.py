@@ -245,6 +245,23 @@ class BandStructureModel:
             if self.cos_reduced:
                 self.params[0] += np.sum(self.params[1:n], axis=0)*2
 
+    def save(self, filename):
+        with open(filename, "w") as file:
+            np.set_printoptions(precision=16, threshold=100000)
+            file.write(repr(self.params_complex()) + ",\\\n")
+            file.write(repr(self.neighbors) + ",\\\n")
+            file.write(repr(self.sym.S) + ",\\\n")
+            file.write(repr(self.sym.inversion) + "\n")
+
+    # import a tight binding model into the given param format (cos_reduced, exp)
+    def load(filename, cos_reduced=False, exp=False):
+        with open("ni.repr", "r") as file:
+            H_r_repr = " ".join(file.readlines())
+            H_r, neighbors, S, inversion  = eval(H_r_repr.replace("array", "np.array"))
+            model = BandStructureModel.init_tight_binding(Symmetry(S, inversion=inversion), neighbors, len(H_r[0]), cos_reduced=True, exp=False)
+            model.set_params_complex(H_r)
+        return model
+
     def bands(self, k_smpl):
         return np.linalg.eigvalsh(self.f(k_smpl))
 
