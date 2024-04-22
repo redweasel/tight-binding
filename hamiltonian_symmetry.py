@@ -87,6 +87,7 @@ class HamiltonianSymmetry:
         for i, r in enumerate(neighbors):
             if np.linalg.norm(r) == 0:
                 H_r[i] = (H_r[i] + np.conj(H_r[i].T)) / 2
+                break
         # symmetrize just inversion
         if self.sym.inversion:
             H_r2 = np.array(H_r)
@@ -194,7 +195,7 @@ class HamiltonianSymmetry:
                             inv_table.append((i, i1, i2, i, 0, -1))
                     s_table = {}
                     for k, s in enumerate(self.sym.S):
-                        j, mirror = neighbor_func(s @ (r + r1 - r2)- r1 + r2)
+                        j, mirror = neighbor_func(s @ (r + r1 - r2) - r1 + r2)
                         if j is not None:
                             # reduce total_table by merging entries which have the same effect (based on the given self.U)
                             # doing this makes it go from 8448 to 8019 entries in my testcase
@@ -217,6 +218,7 @@ class HamiltonianSymmetry:
                             break
                     if len(s_table):
                         total_table.extend([(i, k, i1, i2, j, mirror, fac) for (j, mirror, _, _), (k, fac) in s_table.items()])
+        #total_table = sorted(total_table, key=lambda x: x[6] + 100 * x[5] + 10000 * x[4] + 1000000 * x[3] + 100000000 * x[2] + 10000000000 * x[1] + 10000000000 * x[0])
         reduced_table = total_table
         # TODO reduce the table by various methods. E.g. i just specifies where to put the calculation.
         # calculations for different i are equal, but repeated. The following statement shows, that's not happening though...
@@ -226,6 +228,8 @@ class HamiltonianSymmetry:
         inv_table = np.array(inv_table, dtype=np.int32)
         #print(len(reduced_table)) # can quickly become > 8019
         #print(len(inv_table)) # stays reasonable in size ~ 500
+        #print([list(l) for l in reduced_table])
+        #print("checksum: ", np.prod(reduced_table + 1, axis=-1).sum()) # checksum
         def symmetrizer_func(H_r):
             assert len(neighbors) == len(H_r)
             if origin is not None:
@@ -281,7 +285,10 @@ def test_hamiltonian_symmetry():
 
     test_C_r2 = test_u_repr.symmetrize(test_C_r, neighbors)
     test_H_r3 = test_h_sym.symmetrize(test_H_r, neighbors)
-    test_H_r4 = test_h_sym.symmetrizer(neighbors)(test_H_r)
+    hsym_symm = test_h_sym.symmetrizer(neighbors)
+    test_H_r4 = hsym_symm(test_H_r)
+    test_H_r5 = hsym_symm(test_H_r4)
+    assert np.linalg.norm(test_H_r4 - test_H_r5) < 1e-7
     test_C_r3 = np.array(test_H_r3)
     test_C_r3[:,n:,:n] *= -1j
     test_C_r3[:,:n,n:] *= -1j
@@ -329,3 +336,65 @@ def test_hamiltonian_symmetry():
     assert np.linalg.norm(H_r_sym - H_r_sym2) < 1e-7
     # test symmetry of the eigenvalueproblem
     # TODO
+
+# function for comparing this reference implementation with other implementation
+def compare_hamiltonian_symmetry():
+    np.set_printoptions(precision=3, suppress=True)
+    ref_bands = [
+        [-0.657, -0.657, -0.657, -0.208, 0.25, 0.509, 0.509, 0.509],
+        [-0.226, -0.226, -0.191, -0.16, -0.109, -0.077, 0.195, 0.195],
+        [-0.321, -0.321, -0.293, -0.268, -0.268, 0.568, 0.568, 0.836],
+        [-1.019, -0.375, -0.176, -0.176, -0.176, 0.008, 0.008, 0.008],
+    ]
+    k_smpl = [
+        [0.0, 0.0, 0.0],
+        [0.5, 0.0, 0.0],
+        [0.5, 0.5, 0.0],
+        [0.5, 0.5, 0.5],
+    ]
+    hsym = HamiltonianSymmetry(Symmetry.cubic(True))
+    hsym.append_s((0.0, 0.0, 0.0), "A")
+    hsym.append_p((0.0, 0.0, 0.0), "A")
+    hsym.append_s((0.5, 0.5, 0.5), "B")
+    hsym.append_d3((0.5, 0.5, 0.5), "B")
+    #for s in hsym.sym.S:
+    #    print(s)
+    
+    neighbors = ((0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1)) # works well
+    neighbors = Symmetry.cubic(True).complete_neighbors(neighbors)
+    
+    # make a testcase to validate on a particular result
+    params = []
+    for ni in range(0, len(neighbors)):
+        params.append([[float(i * (j + ni)) for j in range(hsym.dim())] for i in range(hsym.dim())])
+    #params = hsym.symmetrizer(neighbors)(params)
+    params = hsym.symmetrize(params, neighbors)
+    print(params)
+
+    # make a testcase to test the bandstructure calculation based on thes symmetrizer
+    np.set_printoptions(linewidth=1000)
+    import bandstructure
+    tb = bandstructure.BandStructureModel.init_tight_binding_from_ref(Symmetry.none(), neighbors, k_smpl, np.zeros_like(ref_bands), 0, 0, cos_reduced=False, exp=True)
+    tb.symmetrizer = hsym.symmetrizer(neighbors) # for this: cos_reduced=False, exp=True
+    tb.params = np.zeros_like(tb.params)
+    np.random.seed(837258985)
+    tb.params = np.random.standard_normal(tb.params.shape) + np.random.standard_normal(tb.params.shape) * 1j
+    for i in range(10):
+        tb.normalize()
+        tb.params = np.round(tb.params, 3)
+        tb.normalize()
+    tb.params = np.round(tb.params, 3)
+    print("vec![")
+    for i in range(len(tb.params)):
+        print(repr(tb.params[i]).replace("array", "arr!").replace(" ", "").replace(",", ", ").replace(" \n", "\n").replace("(", "").replace(")", "").replace("j", " i"), ",", sep="")
+    print("]")
+    tb.params *= 0.1
+    print("initial loss:", tb.loss(k_smpl, ref_bands, np.ones_like(ref_bands[0]), 0))
+    #print(tb.f((0.1,0.2,0.3)))
+    iterations = 100
+    tb.optimize(k_smpl, 1.0, ref_bands, 1.0, 0, iterations, 1, use_pinv=True)
+    np.set_printoptions(precision=8)
+    print(tb.params)
+    print("final loss:", tb.loss(k_smpl, ref_bands, np.ones_like(ref_bands[0]), 0))
+    #print()
+    #print(tb(k_smpl))

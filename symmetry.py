@@ -297,7 +297,7 @@ class Symmetry:
         return True
     
     # fill in symmetric k-points in symmetry reduced points.
-    # -> creates a ordered grid for cubic symmetry
+    # -> creates an ordered grid for cubic symmetry
     # NOTE this method ONLY works for symmetry reduced points, otherwise it will create duplicates
     # returns a list of k-points and an index list for how to get the k-points.
     def realize_symmetric(self, k_smpl):
@@ -382,7 +382,13 @@ class Symmetry:
     
     def complete_neighbors(self, neighbors):
         neighbors, _ = self.realize_symmetric(neighbors)
-        neighbors = [n for n in neighbors if next((x for x in n if abs(x) > 1e-7), 1) > 0]
+        # deduplicate (but keep the original ordering if there is no duplicates)
+        new_neighbors = []
+        for n in neighbors:
+            if tuple(n) not in new_neighbors: # works only for exact matches
+                new_neighbors.append(tuple(n))
+        # remove negative versions
+        neighbors = [n for n in new_neighbors if next((x for x in n if abs(x) > 1e-7), 1) > 0]
         neighbors = sorted(neighbors, key=lambda n: np.linalg.norm(n))
         return neighbors
 
@@ -452,7 +458,7 @@ class Symmetry:
         orig = np.array(tensor) * 1.0
         res = np.zeros_like(orig)
         for s in self.S:
-            res += s.T @ orig @ s
+            res += np.linalg.inv(s) @ orig @ s
         res /= len(self.S)
         return res
     
@@ -496,7 +502,7 @@ class Symmetry:
         assert (self.inversion or not rhs.inversion) and len(self.S) % len(rhs.S) == 0, "The righthand side needs to be a subgroup"
         # TODO check subgroup
         def left(a, b):
-            # to check a*rhs=b*rhs, check a^{-1}*b in rhs
+            # to check a*rhs1=b*rhs2, check a^{-1}*b in rhs
             c = np.linalg.inv(a) @ b
             for r in rhs.S:
                 if np.linalg.norm(r - c) < 1e-7:
@@ -584,10 +590,22 @@ def test_symmetry():
     assert len(Symmetry.square() / Symmetry.o2()) == 2
 
     # test realize_symmetric
-    neighbors = ((0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1)) # works well
+    neighbors = ((0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1))
     full_neighbors, order = Symmetry.cubic(True).realize_symmetric(neighbors)
     assert np.linalg.norm(np.linalg.norm(full_neighbors, axis=-1) - np.linalg.norm(np.asarray(neighbors)[order], axis=-1)) < 1e-7
     assert len(order) == 27, f"the symmetrization has yielded {len(order)} elements"
     full_neighbors = Symmetry.cubic(True).complete_neighbors(neighbors)
     assert len(full_neighbors) == (27+1)//2, f"the symmetrization has yielded {len(full_neighbors)} elements"
+
+    # test symmetrize
+    mat = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    mat2 = Symmetry.cubic(False).symmetrize(mat)
+    assert np.all(mat2 == np.eye(3) * 5), "symmetrize with cubic symmetry failed"
+    mat3 = Symmetry.mirror3(False).symmetrize(mat)
+    assert np.all(mat3 == np.diag([1, 5, 9])), "symmetrize with mirror symmetry failed"
+
+    # test conjugacy classes
+    classes = Symmetry.cubic(True).conjugacy_classes()
+    assert sorted([len(c) for c in classes]) == [1, 1, 3, 3, 6, 6, 6, 6, 8, 8]
+
 

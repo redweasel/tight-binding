@@ -1,6 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from symmetry import *
+import sys
 
 def plot_bands_generic(k_smpl, bands, *args, **kwargs):
     plt.gca().set_prop_cycle(None)
@@ -93,84 +94,124 @@ class BandStructureModel:
         return mat
 
     # returns the weighted loss (standard deviation) and the maximal error per band
-    def error(self, k_smpl, ref_bands, weights, band_offset):
+    def error(self, k_smpl, ref_bands, band_weights, band_offset):
         bands = self.bands(k_smpl)
         err = (bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands)
         max_err = np.max(np.abs(err), axis=0)
-        err *= np.reshape(weights, (1, -1))
+        err *= np.reshape(band_weights, (1, -1))
         return np.linalg.norm(err) / len(k_smpl)**0.5, max_err
     
-    def loss(self, k_smpl, ref_bands, weights, band_offset):
+    def loss(self, k_smpl, ref_bands, band_weights, band_offset):
         bands = self.bands(k_smpl)
-        err = (bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(weights, (1, -1))
+        err = (bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(band_weights, (1, -1))
         return np.linalg.norm(err) / len(k_smpl)**0.5
         #return np.max(np.abs(bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands))
 
-    def optimize(self, k_smpl, k_smpl_weights, ref_bands, weights, band_offset, iterations, batch_div=1, train_k0=True, regularization=1, learning_rate=1.0):
+    def optimize(self, k_smpl, k_smpl_weights, ref_bands, band_weights, band_offset, iterations, batch_div=1, train_k0=True, regularization=1, learning_rate=1.0, verbose=True, max_accel_global=None, use_pinv=True):
         N = np.shape(self.params)[1]
         assert band_offset >= 0 and band_offset <= N - len(ref_bands[0])
+        # reshape k_smpl_weights
+        k_smpl_weights = np.broadcast_to(np.reshape([k_smpl_weights], (-1, 1)), (len(k_smpl), 1))
+        # reshape normalized band_weights
+        band_weights = np.broadcast_to(np.reshape([band_weights / np.mean(band_weights)], (1, -1)), (1, len(ref_bands[0])))
         # memoize self.f_i here using a rectangular matrix
         f_i = np.zeros((len(k_smpl), len(self.params)), dtype=np.complex128)
         for ki, k in enumerate(k_smpl):
             for i in range(len(self.params)):
                 f_i[ki, i] = self.f_i(k, i)
-        f_i[:, 0] /= 2
-        # reshape k_smpl_weights
-        k_smpl_weights = np.broadcast_to(np.reshape([k_smpl_weights], (-1, 1)), (len(k_smpl), 1))
-        weights = np.broadcast_to(np.reshape([weights], (1, -1)), (1, len(ref_bands[0])))
+        f_i[:, 0] /= 2 # divide by 2 because it is added without the symmetrization
+        # find the perfect "anti-coefficients", such that c_i @ f_i.T = I
+        c_i = np.conj(f_i) # classic gradient descent
+        if batch_div == 1 and use_pinv: # improved optimization
+            if verbose:
+                print("preparing pseudoinverse")
+            # NOTE: the order of k_smpl is arbitrary and not important for the following calculation
+            c_i = np.linalg.pinv(f_i.T)
+            #print(c_i)
+            #print(c_i @ f_i.T) # weird matrix
+            #print(f_i.T @ c_i) # identity
+            if max_accel_global is None:
+                max_accel_global = 1.0
+            # normalize (does also work without this very slow step)
+            #if verbose:
+            #    print("normalizing pseudoinverse")
+            #for i in range(len(self.params)):
+            #    div = max(np.abs((c_i * f_i[i]).sum()), 1.0)
+            #    c_i /= div
+            #    max_accel_global *= div
+            #for i in range(len(k_smpl)):
+            #    c_i[i,:] /= max(np.abs((c_i[i] * f_i).sum()), 1.0)
+            if verbose:
+                print(f"maximal acceleration {max_accel_global}")
+            # counteract the usual treatment:
+            c_i *= (np.abs(f_i)**2).sum(1, keepdims=True)
+            c_i *= len(k_smpl)
+        if max_accel_global is None:
+            max_accel_global = len(k_smpl)
         # start stochastic gradient descent
         last_add = np.zeros_like(self.params)
         self.normalize()
-        #last_loss = self.loss(k_smpl, ref_bands, weights, band_offset)
+        #last_loss = self.loss(k_smpl, ref_bands, band_, band_offset)
         try:
             for iteration in range(iterations):
                 batch = k_smpl[iteration % batch_div::batch_div]
                 batch_weights = k_smpl_weights[iteration % batch_div::batch_div]
                 batch_ref = ref_bands[iteration % batch_div::batch_div]
                 batch_f_i = f_i[iteration % batch_div::batch_div]
+                batch_c_i = c_i[iteration % batch_div::batch_div]
                 top_pad = np.shape(self.params)[1] - len(batch_ref[0]) - band_offset
                 batch_weights = batch_weights / np.mean(batch_weights)
+                max_accel = min(len(batch), max_accel_global)
 
                 # regularization
-                self.params[1:] *= regularization
+                if regularization != 1.0:
+                    self.params[1:] *= regularization
 
                 # faster f using cached values
                 f = (self.params[None,...] * batch_f_i[...,None,None]).sum(1)
-                f += np.conj(np.swapaxes(f, -1, -2)) # TODO see how this duplication affected the optimal learning rate... Maybe I'm missing a factor 2 somewhere now
+                f += np.conj(np.swapaxes(f, -1, -2))
                 eigvals, eigvecs = np.linalg.eigh(f)
                 #new_loss = np.linalg.norm(batch_ref - eigvals) / len(batch)**.5
                 #last_loss = new_loss
 
                 s = (np.abs(batch_f_i)**2).sum(1) # use f_i as weights, but normalize the whole step
                 diff = batch_ref - eigvals[:,band_offset:][:,:len(batch_ref[0])]
+                if batch_div == 1:
+                    max_err = np.max(np.abs(diff), axis=0)
                 # implementation of the following einsum
                 #params_add = np.einsum("bik, bjk, bk, b, bn, k -> nij", eigvecs[:,:,band_offset:N-top_pad], np.conj(eigvecs[:,:,band_offset:N-top_pad]), diff, 2 / s, batch_f_i, weights, optimize="greedy") / len(batch)
                 # but faster: (I don't know why it's faster...)
-                diff *= weights
+                diff *= band_weights
+
+                if batch_div == 1:
+                    loss = np.linalg.norm(diff) / len(batch)**.5 # this is how the loss is computed in self.error
+                
                 diff *= batch_weights
-                diff *= np.reshape((2.0 / len(batch)) / s, (-1, 1))
+                diff *= np.reshape((0.5 / len(batch)) / s, (-1, 1))
                 diff = eigvecs[:,:,band_offset:N-top_pad] @ (diff[...,None] * np.conj(np.swapaxes(eigvecs[:,:,band_offset:N-top_pad], 1, 2)))
-                params_add = np.einsum("bij,bn->nij", diff, np.conj(batch_f_i))
+                params_add = np.einsum("bij,bn->nij", diff, batch_c_i)
                 if self.symmetrizer is not None:
                     params_add = self.symmetrizer(params_add)
                 if not train_k0:
                     params_add[0] *= 0.0
                 params_add *= learning_rate
                 # impulse acceleration (beta given by the problem)
-                params_add += last_add * (1 - 1 / len(batch))
+                params_add += last_add * (1 - 1 / max_accel)
                 # change parameters (alpha = 1.0 with the chosen way to normalize the gradient)
-                self.params += params_add
+                self.params = self.params + params_add
                 last_add = params_add
 
-                if iteration % 100 == 0:
+                if (iteration % 100 == 0 or batch_div == 1) and verbose:
                     #print(f"loss: {new_loss:.2e} alpha: {alpha:.1e}")
-                    l, err = self.error(k_smpl, ref_bands, weights, band_offset)
-                    print(f"\rloss: {l:.2e} (max band-error {err})", end="")
+                    if batch_div != 1:
+                        loss, max_err = self.error(k_smpl, ref_bands, band_weights, band_offset)
+                    print(f"\rloss: {loss:.2e} (max band-error {max_err})", end="")
         except KeyboardInterrupt:
             print("\naborted")
         self.normalize()
-        l, err = self.error(k_smpl, ref_bands, weights, band_offset)
-        print(f"\rfinal loss: {l:.2e} (max band-error {err})")
+        l, err = self.error(k_smpl, ref_bands, band_weights, band_offset)
+        if verbose:
+            print(f"\rfinal loss: {l:.2e} (max band-error {err})")
 
     def normalize(self):
         if self.symmetrizer is not None:
@@ -246,18 +287,20 @@ class BandStructureModel:
                 self.params[0] += np.sum(self.params[1:n], axis=0)*2
 
     def save(self, filename):
+        opt = np.get_printoptions()
+        np.set_printoptions(precision=16, suppress=False, threshold=100000)
         with open(filename, "w") as file:
-            np.set_printoptions(precision=16, threshold=100000)
             file.write(repr(self.params_complex()) + ",\\\n")
             file.write(repr(self.neighbors) + ",\\\n")
             file.write(repr(self.sym.S) + ",\\\n")
             file.write(repr(self.sym.inversion) + "\n")
+        np.set_printoptions(**opt) # reset printoptions
 
     # import a tight binding model into the given param format (cos_reduced, exp)
     def load(filename, cos_reduced=False, exp=False):
-        with open("ni.repr", "r") as file:
+        with open(filename, "r") as file:
             H_r_repr = " ".join(file.readlines())
-            H_r, neighbors, S, inversion  = eval(H_r_repr.replace("array", "np.array"))
+            H_r, neighbors, S, inversion = eval(H_r_repr.replace("array", "np.array"))
             model = BandStructureModel.init_tight_binding(Symmetry(S, inversion=inversion), neighbors, len(H_r[0]), cos_reduced=True, exp=False)
             model.set_params_complex(H_r)
         return model
@@ -377,17 +420,17 @@ def get_tight_binding_coeff_funcs(sym, basis_transform, neighbors, cos_reduced=F
     return f_i_sym, df_i_sym, ddf_i_sym, term_count, neighbors
 
 
-def test_bandstructure():
+def test_bandstructure_params():
     neighbors = ((0, 0, 0), (1, 0, 0))#, (1, 1, 0), (1, 1, 1))
     neighbors = Symmetry.cubic(True).complete_neighbors(neighbors)
     k_smpl = np.array([(0.1, 0.2, 0.3), (0.2, 0.3, 0.4), (0.4, 0.5, 0.6), (0.6, 0.7, 0.8), (0.7, 0.8, 0.9)])
     k_smpl, _ = Symmetry.cubic(True).realize_symmetric(k_smpl)
 
     for sym in [Symmetry.none(), Symmetry.inv()]:
-        tb00 = BandStructureModel.init_tight_binding(sym, neighbors, 1, cos_reduced=False, exp=False) # 0
-        tb01 = BandStructureModel.init_tight_binding(sym, neighbors, 1, cos_reduced=False, exp=True)  # 1
-        tb10 = BandStructureModel.init_tight_binding(sym, neighbors, 1, cos_reduced=True,  exp=False) # 2
-        tb11 = BandStructureModel.init_tight_binding(sym, neighbors, 1, cos_reduced=True,  exp=True)  # 3
+        tb00 = BandStructureModel.init_tight_binding(sym, neighbors, 2, cos_reduced=False, exp=False) # 0
+        tb01 = BandStructureModel.init_tight_binding(sym, neighbors, 2, cos_reduced=False, exp=True)  # 1
+        tb10 = BandStructureModel.init_tight_binding(sym, neighbors, 2, cos_reduced=True,  exp=False) # 2
+        tb11 = BandStructureModel.init_tight_binding(sym, neighbors, 2, cos_reduced=True,  exp=True)  # 3
         tb = [tb00, tb01, tb10, tb11]
 
         # set one model and convert to normal H_r matrices and apply them to the other models
@@ -414,3 +457,30 @@ def test_bandstructure():
                 assert np.linalg.norm(tb_test_ddf - tb_test2.ddf(k_smpl)) < 1e-7, f"reconstructed Hamiltonian 2. derivative doesn't match ({i} vs {j}, inversion: {sym.inversion})"
                 H_r2 = tb_test2.params_complex()
                 assert np.linalg.norm(H_r - H_r2) < 1e-14, f"Reconstruction doesn't match ({i} vs {j}, inversion: {sym.inversion})"
+
+def test_bandstructure_optimize():
+    neighbors = ((0, 0, 0), (1, 0, 0))#, (1, 1, 0), (1, 1, 1))
+    neighbors = Symmetry.cubic(True).complete_neighbors(neighbors)
+    sym = Symmetry.none()
+    n = 5
+    tb00 = BandStructureModel.init_tight_binding(sym, neighbors, n, cos_reduced=False, exp=False) # 0
+    tb01 = BandStructureModel.init_tight_binding(sym, neighbors, n, cos_reduced=False, exp=True)  # 1
+    tb10 = BandStructureModel.init_tight_binding(sym, neighbors, n, cos_reduced=True,  exp=False) # 2
+    tb11 = BandStructureModel.init_tight_binding(sym, neighbors, n, cos_reduced=True,  exp=True)  # 3
+    tb = [tb00, tb01, tb10, tb11]
+
+    for k_count in [1]:
+        # TODO use k_count
+        k_smpl = np.array([(0.1, 0.2, 0.3),])
+        ref_bands = np.arange(n).astype(np.float64)[None,:]
+
+        # test whether a single optimize step solves the single k case
+        for i, tb in enumerate(tb):
+            for kw in [1, 1.5]:
+                for bw in [1, 1.5]:
+                    tb.params = np.random.random(tb.params.shape)
+                    tb.optimize(k_smpl, kw, ref_bands, bw, 0, 1, verbose=False, use_pinv=False)
+                    assert np.linalg.norm(tb.bands(k_smpl) - ref_bands) < 1e-7, f"{tb.bands(k_smpl)} was incorrect for model {i}, kw = {kw}, bw = {bw}"
+                    tb.params = np.random.random(tb.params.shape)
+                    tb.optimize(k_smpl, kw, ref_bands, bw, 0, 1, verbose=False, use_pinv=True)
+                    assert np.linalg.norm(tb.bands(k_smpl) - ref_bands) < 1e-7, f"{tb.bands(k_smpl)} was incorrect for model {i}, kw = {kw}, bw = {bw}"
