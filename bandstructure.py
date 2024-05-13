@@ -286,22 +286,59 @@ class BandStructureModel:
             if self.cos_reduced:
                 self.params[0] += np.sum(self.params[1:n], axis=0)*2
 
-    def save(self, filename):
+    def save(self, filename, format=None):
+        if format is None:
+            if filename.endswith(".repr"):
+                format = "python"
+            if filename.endswith(".json"):
+                format = "json"
+            if filename.endswith(".dat"):
+                format = "wannier90"
+        if format not in {"python", "json", "wannier90"}:
+            raise ValueError('supported formats are "python" and "wannier90"')
         opt = np.get_printoptions()
         np.set_printoptions(precision=16, suppress=False, threshold=100000)
-        with open(filename, "w") as file:
-            file.write(repr(self.params_complex()) + ",\\\n")
-            file.write(repr(self.neighbors) + ",\\\n")
-            file.write(repr(self.sym.S) + ",\\\n")
-            file.write(repr(self.sym.inversion) + "\n")
+        if format == "python":
+            with open(filename, "w") as file:
+                file.write(repr(self.params_complex()) + ",\\\n")
+                file.write(repr(self.neighbors) + ",\\\n")
+                file.write(repr(self.sym.S) + ",\\\n")
+                file.write(repr(self.sym.inversion) + "\n")
+        elif format == "wannier90":
+            import wannier90_tb_format as tb_fmt
+            tb_fmt.save_hr(filename, self.neighbors, self.params_complex())
+        elif format == "json":
+            import json_tb_format
+            json_tb_format.save(filename, self.neighbors, self.params_complex())
+                
         np.set_printoptions(**opt) # reset printoptions
 
     # import a tight binding model into the given param format (cos_reduced, exp)
-    def load(filename, cos_reduced=False, exp=False):
-        with open(filename, "r") as file:
-            H_r_repr = " ".join(file.readlines())
-            H_r, neighbors, S, inversion = eval(H_r_repr.replace("array", "np.array"))
-            model = BandStructureModel.init_tight_binding(Symmetry(S, inversion=inversion), neighbors, len(H_r[0]), cos_reduced=True, exp=False)
+    def load(filename, format=None, cos_reduced=False, exp=False):
+        if format is None:
+            if filename.endswith(".repr"):
+                format = "python"
+            if filename.endswith(".json"):
+                format = "json"
+            if filename.endswith(".dat"):
+                format = "wannier90"
+        if format not in {"python", "json", "wannier90"}:
+            raise ValueError('supported formats are "python" and "wannier90"')
+        if format == "python":
+            with open(filename, "r") as file:
+                H_r_repr = " ".join(file.readlines())
+                H_r, neighbors, S, inversion = eval(H_r_repr.replace("array", "np.array"))
+                model = BandStructureModel.init_tight_binding(Symmetry(S, inversion=inversion), neighbors, len(H_r[0]), cos_reduced=True, exp=False)
+                model.set_params_complex(H_r)
+        elif format == "wannier90":
+            import wannier90_tb_format as tb_fmt
+            neighbors, H_r, w_r_params = tb_fmt.load(filename)
+            model = BandStructureModel.init_tight_binding(Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=False, exp=True)
+            model.set_params_complex(H_r)
+        elif format == "json":
+            import json_tb_format
+            neighbors, H_r = json_tb_format.load(filename)
+            model = BandStructureModel.init_tight_binding(Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=False, exp=True)
             model.set_params_complex(H_r)
         return model
 

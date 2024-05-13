@@ -146,75 +146,10 @@ class QECrystal:
             fermi_energy = float(fermi_energy_node.firstChild.nodeValue.strip()) * to_eV
         return np.array(k_points), np.array(weights), np.array(bands), np.array(S), fermi_energy
     
-    def read_wannier_tb(self):
-        with open(f"{self.name}_tb.dat", "r") as file:
-            file.readline() # just the creation date
-            # read the lattice vectors in angstrom units
-            for i in range(3):
-                file.readline()
-            # read number of bands and the number of points in the wigner seitz gridcell
-            band_count = int(file.readline().strip())
-            point_count = int(file.readline().strip())
-            # now read the degeneracy list with length point_count
-            degeneracy = ""
-            while True:
-                line = file.readline()
-                if len(line.strip()) > 0:
-                    degeneracy = degeneracy + line.strip() + " "
-                else:
-                    break
-            degeneracy = [int(s) for s in degeneracy.split() if len(s)]
-            assert point_count == len(degeneracy)
-            # now read the hamiltonian matrices
-            neighbors = []
-            params = []
-            r_params = []
-            index = -1
-            for line in file:
-                if not line.strip():
-                    continue # skip empty lines
-                parts = line.strip().split()
-                if len(parts) == 3:
-                    # start new matrix or return to existing one
-                    pos = tuple([int(x) for x in parts])
-                    neg_pos = tuple([-x for x in pos])
-                    if pos not in neighbors:
-                        if pos != neg_pos and neg_pos in neighbors:
-                            # skip the entry if the adjungated matrix is already in neighbors
-                            index = -1
-                            continue
-                        index = len(neighbors)
-                        neighbors.append(pos)
-                        params.append(np.zeros((band_count, band_count), dtype=np.complex128))
-                        r_params.append(np.zeros((band_count, band_count, 3), dtype=np.complex128))
-                    else:
-                        index = neighbors.index(pos)
-                elif len(parts) == 4:
-                    if index < 0:
-                        continue # skip this entry
-                    # new matrix entry (i,j) x+iy
-                    i,j = int(parts[0]), int(parts[1])
-                    x,y = float(parts[2]), float(parts[3])
-                    params[index][i-1,j-1] = x + y*1j
-                elif len(parts) == 8:
-                    if index < 0:
-                        continue # skip this entry
-                    # new matrix element <i| vec r|j>
-                    i,j = int(parts[0]), int(parts[1])
-                    x = float(parts[2]) + 1j*float(parts[3])
-                    y = float(parts[4]) + 1j*float(parts[5])
-                    z = float(parts[6]) + 1j*float(parts[7])
-                    r_params[index][i-1,j-1,0] = x
-                    r_params[index][i-1,j-1,1] = y
-                    r_params[index][i-1,j-1,2] = z
-                else:
-                    raise ValueError(f"File has a format error in the tight bindng matrices in line \"{line.strip()}\"")
-        # sort the neighbors by length
-        neighbors = np.array(neighbors)
-        params = np.array(params)
-        r_params = np.array(r_params)
-        order = np.argsort(np.linalg.norm(neighbors, axis=-1))
-        return neighbors[order], params[order], r_params[order]
+    def read_wannier_tb(self, filename=None):
+        import wannier90_tb_format as tb_fmt
+        neighbors, params, r_params, degeneracy, A = tb_fmt.load_tb(f"{self.name}_tb.dat" if filename is None else filename)
+        return neighbors, params, r_params
 
 
     # read the wavefunctions that have been computed by scf()
