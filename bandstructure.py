@@ -107,7 +107,7 @@ class BandStructureModel:
         return np.linalg.norm(err) / len(k_smpl)**0.5
         #return np.max(np.abs(bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands))
 
-    def optimize(self, k_smpl, k_smpl_weights, ref_bands, band_weights, band_offset, iterations, batch_div=1, train_k0=True, regularization=1, learning_rate=1.0, verbose=True, max_accel_global=None, use_pinv=True):
+    def optimize(self, k_smpl, k_smpl_weights, ref_bands, band_weights, band_offset, iterations, batch_div=1, train_k0=True, regularization=1, learning_rate=1.0, verbose=True, max_accel_global=None, use_pinv=True, keep_zeros=False):
         N = np.shape(self.params)[1]
         assert band_offset >= 0 and band_offset <= N - len(ref_bands[0])
         # reshape k_smpl_weights
@@ -194,6 +194,8 @@ class BandStructureModel:
                     params_add = self.symmetrizer(params_add)
                 if not train_k0:
                     params_add[0] *= 0.0
+                if keep_zeros:
+                    params_add *= np.where(np.abs(self.params) < 1e-14, 0.0, 1.0)
                 params_add *= learning_rate
                 # impulse acceleration (beta given by the problem)
                 params_add += last_add * (1 - 1 / max_accel)
@@ -290,12 +292,14 @@ class BandStructureModel:
         if format is None:
             if filename.endswith(".repr"):
                 format = "python"
-            if filename.endswith(".json"):
+            elif filename.endswith(".json"):
                 format = "json"
-            if filename.endswith(".dat"):
+            elif filename.endswith(".dat"):
                 format = "wannier90"
+            else:
+                raise ValueError("unrecognised format for file " + filename)
         if format not in {"python", "json", "wannier90"}:
-            raise ValueError('supported formats are "python" and "wannier90"')
+            raise ValueError('supported formats are "python", "json" and "wannier90"')
         opt = np.get_printoptions()
         np.set_printoptions(precision=16, suppress=False, threshold=100000)
         if format == "python":
@@ -318,12 +322,14 @@ class BandStructureModel:
         if format is None:
             if filename.endswith(".repr"):
                 format = "python"
-            if filename.endswith(".json"):
+            elif filename.endswith(".json"):
                 format = "json"
-            if filename.endswith(".dat"):
+            elif filename.endswith(".dat"):
                 format = "wannier90"
+            else:
+                raise ValueError("unrecognised format for file " + filename)
         if format not in {"python", "json", "wannier90"}:
-            raise ValueError('supported formats are "python" and "wannier90"')
+            raise ValueError('supported formats are "python", "json" and "wannier90", but was ' + str(format))
         if format == "python":
             with open(filename, "r") as file:
                 H_r_repr = " ".join(file.readlines())

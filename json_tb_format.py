@@ -27,6 +27,10 @@ def save(filename, neighbors, params):
     # {"band_count":12,"params":[{"v":1,"dim":[12,12],"data":[[1.0,1.0],...]},...],"neighbors":[[0.0,0.0,0.0],...]}
     with open(filename, "w") as file:
         band_count = len(params[0])
+        # round the numbers to 0 if they are VERY close
+        params = np.where(np.abs(np.real(params)) < 1e-14, 1j*np.imag(params), params)
+        params = np.where(np.abs(np.imag(params)) < 1e-14, np.real(params), params)
+        # save them in the json format
         params_repr = [{"v": 1, "dim": [band_count, band_count], "data": [[np.real(v), np.imag(v)] for v in h.flat]} for h in params]
         json.dump({"band_count": band_count, "params": params_repr, "neighbors": [tuple(n) for n in neighbors]}, file)
 
