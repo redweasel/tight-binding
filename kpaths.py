@@ -5,23 +5,23 @@ import _collections_abc
 points = {}
 points['G'] = np.array([[0, 0, 0]])
 # face centered cubic in tpiba_b units:
-points['X2'] = 2*np.array([[0, 1, 0]]) # Delta line
-points['K'] = 2*np.array([[3/4, 3/4, 0]]) # Sigma line
-points['L'] = 2*np.array([[1/2, 1/2, 1/2]]) # Lambda line
-points['W'] = 2*np.array([[1/2, 1, 0]]) # between X and K
-points['U'] = 2*np.array([[1/4, 1, 1/4]]) # between X and L
+points['X2'] = np.array([[0, 1, 0]]) # Delta line
+points['K'] = np.array([[3/4, 3/4, 0]]) # Sigma line
+points['L'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
+points['W'] = np.array([[1/2, 1, 0]]) # between X and K
+points['U'] = np.array([[1/4, 1, 1/4]]) # between X and L
 # simple cubic points:
-points['X'] = np.array([[0, 1, 0]]) # Delta line
-points['M'] = np.array([[1, 1, 0]]) # Sigma line
-points['R'] = np.array([[1, 1, 1]]) # Lambda line
+points['X'] = 0.5*np.array([[0, 1, 0]]) # Delta line
+points['M'] = 0.5*np.array([[1, 1, 0]]) # Sigma line
+points['R'] = 0.5*np.array([[1, 1, 1]]) # Lambda line
 # body centered points: (unsure...)
 points['H'] = np.array([[1, 0, 0]]) # Delta line
 points['N'] = np.array([[1/2, 1/2, 0]]) # Sigma line
 points['P'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
 # 2D square symmetry points:
-points['G2d'] = np.array([[0, 0]])
-points['X2d'] = np.array([[0, 1]]) # Delta line
-points['M2d'] = np.array([[1, 1]]) # Sigma line
+points['G2d'] = 0.5*np.array([[0, 0]])
+points['X2d'] = 0.5*np.array([[0, 1]]) # Delta line
+points['M2d'] = 0.5*np.array([[1, 1]]) # Sigma line
 
 class KPath(_collections_abc.Sequence):
     def __init__(self, start):
@@ -64,7 +64,7 @@ class KPath(_collections_abc.Sequence):
     
     def plot(self, func, *args, band_offset=0, **kwargs):
         from matplotlib import pyplot as plt
-        ibands = func(np.array(self)/2) # TODO different units here...
+        ibands = func(np.array(self))
         x_smpl = self.x()
         sym_x_smpl = self.sym_x()
         plt.gca().set_prop_cycle(None)
@@ -90,7 +90,7 @@ class KPath(_collections_abc.Sequence):
     def __str__(self):
         k_points = f"K_POINTS {{tpiba_b}}\n{len(self.path)}\n"
         for x, y, z in self.path:
-            k_points = k_points + f"{x} {y} {z} 1\n"
+            k_points = k_points + f"{x*2} {y*2} {z*2} 1\n"
         return k_points
 
 # given band structure data and (non hexagonal) symmetry, return an interpolator for the bandstructure.

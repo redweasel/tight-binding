@@ -29,14 +29,23 @@ class BandStructureModel:
         assert len(pshape) == 3
         assert pshape[1] == pshape[2]
         assert pshape[0] > 0
+    
+    def copy(self):
+        model = BandStructureModel(self.f_i, self.df_i, self.params.copy())
+        self.symmetrizer = self.symmetrizer
+        model.sym = self.sym
+        model.neighbors = self.neighbors
+        model.cos_reduced = self.cos_reduced
+        model.exp = self.exp
+        return model
 
     def init_tight_binding(symmetry: Symmetry, neighbors, band_count, cos_reduced=False, exp=False):
         #symmetry.check_neighbors(neighbors)
         f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = get_tight_binding_coeff_funcs(symmetry, np.eye(3), neighbors, cos_reduced=cos_reduced, exp=exp)
         model = BandStructureModel(f_i_tb, df_i_tb, np.zeros((term_count, band_count, band_count)), ddf_i=ddf_i_tb)
         model.sym = symmetry
-        model.cos_reduced = cos_reduced
         model.neighbors = neighbors
+        model.cos_reduced = cos_reduced
         model.exp = exp
         return model
     
@@ -45,8 +54,8 @@ class BandStructureModel:
         model = BandStructureModel.init_from_ref(f_i_tb, df_i_tb, ddf_i_tb, term_count, k_smpl, ref_bands, band_offset, additional_bands)
         # TODO handle the case where cos_reduced=False, because there the params need to be processed here
         model.sym = symmetry
-        model.cos_reduced = cos_reduced
         model.neighbors = neighbors
+        model.cos_reduced = cos_reduced
         model.exp = exp
         return model
 
@@ -385,8 +394,47 @@ class BandStructureModel:
         hess2 = np.real(np.einsum("mpik, mqki -> mpqi", df_ev, db))
         return bands, grads, hess1 - 2*hess2
 
-    def copy(self):
-        return BandStructureModel(self.f_i, self.df_i, self.params.copy())
+    # Generate a tight binding model (with self.neighbors set)
+    # for a supercell defined as A' = A Λ
+    # where Λ is a non singular integer valued matrix.
+    def supercell(self, A_original, A_new, cos_reduced=False, exp=False):
+        A_original = np.asarray(A_original)
+        A_new = np.asarray(A_new)
+        dim = len(self.neighbors[0])
+        assert dim == len(A_original) and dim == len(A_new), "A matrix doesn't match the dimension of the model"
+        matrix = np.linalg.inv(A_original) @ A_new
+        assert np.all(np.abs(np.round(matrix) - matrix) < 1e-7), "The supercell matrix must be integer valued"
+        matrix = np.round(matrix)
+        det = round(np.linalg.det(matrix))
+        assert self.sym is None or len(self.sym) == 1, "No symmetries of the coefficients are allowed for this operation"
+        new_neighbors = self.neighbors @ matrix.T
+        n = len(self.params[0])
+        new_band_count = n * det
+        params = self.params_complex()
+        # now get all integer positions in the cell defined by matrix
+        # for that, compute the (half open) bounding box of matrix * [0,1[^3
+        box = np.stack(np.meshgrid(*[[0, 1]]*dim), axis=-1).reshape(-1, dim)
+        box = box @ matrix.T
+        bounding_box = np.min(box, axis=0), np.max(box, axis=0)
+        assert np.array(bounding_box).dtype == np.int64
+        # now create a meshgrid inside the bounding box and select the points with inv(matrix) in [0, 1[
+        box = np.stack(np.meshgrid(*[np.arange(bounding_box[0][d], bounding_box[1][d]) for d in range(dim)]), axis=-1).reshape(-1, dim)
+        p_box = box @ np.linalg.inv(matrix).T
+        # internal positions + origin (0)
+        internal_positions = list(p_box[np.all((p_box >= 0-1e-7) & (p_box < 1-1e-7), axis=1)] @ A_new.T)
+        assert len(internal_positions) == det
+        # now build the new hamiltonian
+        H_r = np.zeros((len(params), new_band_count, new_band_count), dtype=np.complex128)
+        neighbor_func = try_neighbor_function(self.neighbors)
+        for k, nk in enumerate(new_neighbors):
+            for i, pi in enumerate(internal_positions):
+                for j, pj in enumerate(internal_positions):
+                    m, mirror = neighbor_func(nk + pj - pi)
+                    if m is not None:
+                        H_r[k, i*n:(i+1)*n, j*n:(j+1)*n] = params[m] if not mirror else np.conj(params[m].T)
+        model = BandStructureModel.init_tight_binding(Symmetry.none(), new_neighbors, new_band_count, cos_reduced=cos_reduced, exp=exp)
+        model.set_params_complex(H_r)
+        return model
 
     def plot_bands(self, k_smpl, *args, **kwargs):
         plot_bands_generic(k_smpl, self.bands(k_smpl), *args, **kwargs)

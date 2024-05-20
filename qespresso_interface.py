@@ -354,6 +354,10 @@ filband='{self.name}.Bandx.dat'
 """)
         os.system(mpi_run + f"dos.x < {self.name}.dos.in > {self.name}.dos.out")
 
+    # calculate band structure
+    # k_points is the string given to QUANTUM ESPRESSO, which can be generated using
+    # self.k_grid(...) or self.k_points(...) or KPath() from kpaths.py
+    # can only be run after scf has been run.
     def nscf(self, k_points, band_count):
         with open(f"./{self.name}.nscf.in", "w") as file:
             file.write(f"""\
