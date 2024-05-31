@@ -146,6 +146,48 @@ class QECrystal:
             fermi_energy = float(fermi_energy_node.firstChild.nodeValue.strip()) * to_eV
         return np.array(k_points), np.array(weights), np.array(bands), np.array(S), fermi_energy
     
+    # read the data that has been computed (either by scf(), or by bands())
+    # returns k_points, weights, bands, symmetries, fermi_energy
+    def read_projections(self):
+        # read the atomic_proj.xml (see https://realpython.com/python-xml-parser/)
+        # read in k_points, bands and projections (matrices) (as unnamed O(3) matrices)
+        to_eV = 13.605693125 # 1Ry to 1eV
+        filename = f"./qe-data/{self.name}.save/atomic_proj.xml"
+        with open(filename, 'r') as file:
+            from xml.dom.minidom import parse
+            document = parse(file)
+            #root = document.documentElement
+            root = document.getElementsByTagName("PROJECTIONS")[0]
+            # <HEADER NUMBER_OF_BANDS="" NUMBER_OF_K-POINTS="" NUMBER_OF_SPIN_COMPONENTS="" NUMBER_OF_ATOMIC_WFC="" NUMBER_OF_ELECTRONS="" FERMI_ENERGY=""/>
+            header = document.getElementsByTagName("HEADER")[0]
+            fermi_energy = float(header.getAttribute('FERMI_ENERGY')) * to_eV
+            band_count = int(header.getAttribute('NUMBER_OF_BANDS'))
+            k_count = int(header.getAttribute('NUMBER_OF_K-POINTS'))
+            spin_count = int(header.getAttribute('NUMBER_OF_SPIN_COMPONENTS'))
+            wfc_count = int(header.getAttribute('NUMBER_OF_ATOMIC_WFC'))
+            electron_count = float(header.getAttribute('NUMBER_OF_ELECTRONS')) # with spin even if NUMBER_OF_SPIN_COMPONENTS=1
+
+            k_list = document.getElementsByTagName("K-POINT")
+            e_list = document.getElementsByTagName("E")
+            proj_list = document.getElementsByTagName("PROJS")
+            overlap_list = document.getElementsByTagName("OVPS")
+
+            k_points = np.zeros((k_count, 3))
+            bands = np.zeros((k_count, band_count))
+            projections = np.zeros((k_count, band_count, spin_count, wfc_count))
+
+            # now find all the data in the xml file
+            for i, (k, e, proj, overlap) in enumerate(zip(k_list, e_list, proj_list, overlap_list)):
+                k_points[i] = [float(x) for x in k.firstChild.nodeValue.strip().split()]
+                bands[i] = [float(x) for x in e.firstChild.nodeValue.strip().split()]
+                for wfc in proj.getElementsByTagName("ATOMIC_WFC"):
+                    index = int(wfc.getAttribute("index")) - 1
+                    spin_index = int(wfc.getAttribute("spin")) - 1
+                    data = np.array([float(x) for x in wfc.firstChild.nodeValue.strip().split()])
+                    projections[i, :, spin_index, index] = data[::2] + 1j*data[1::2]
+        
+        return np.array(k_points), np.array(bands) * to_eV, np.array(projections), fermi_energy, electron_count
+
     def read_wannier_tb(self, filename=None):
         import wannier90_tb_format as tb_fmt
         neighbors, params, r_params, degeneracy, A = tb_fmt.load_tb(f"{self.name}_tb.dat" if filename is None else filename)
@@ -513,6 +555,22 @@ mp_grid = {grid_size} {grid_size} {grid_size}
         #os.system(mpi_run + f"wannier90.x -pp {self.name}")
         os.system(f"wannier90.x -pp {self.name}")
     
+    # use QUANTUM ESPRESSO's bands.x to convert bands output to workable data.
+    # -> slow and buggy... for k-grids use my function for direct access instead
+    def projections(self, lwrite_overlaps=False):
+        with open(f"{self.name}.projwfc.in", "w") as file:
+            file.write(f"""
+&projwfc
+prefix='{self.name}'
+outdir='./qe-data/'
+lwrite_overlaps={lwrite_overlaps}
+/
+""")
+        # doesn't completely work for high resolutions...
+        print(f"converting data for {self.name} to a plottable format")
+        os.system(mpi_run + f"projwfc.x < {self.name}.projwfc.in | tee {self.name}.projwfc.out")
+
+
     # compute the overlaps of the wavefunctions from the nscf calculation, to be used by wannierization
     # use this after using prepare_wannier()
     def overlaps_for_wannier(self):

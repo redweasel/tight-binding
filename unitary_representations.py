@@ -43,7 +43,7 @@ class UnitaryRepresentation:
     
     # create the symmetry group and the representation from a generator set
     # fails if the generators structure doesn't match
-    def from_generator(S_G, U_G, inversion=True, invert_inversion=False):
+    def from_generator(S_G, U_G, inversion=True, negate_inversion=False):
         Nk = len(S_G[0])
         N = len(U_G[0])
         S = S_G.copy()
@@ -77,7 +77,7 @@ class UnitaryRepresentation:
             if len(S) <= prev_len:
                 break
         u_repr = UnitaryRepresentation(Symmetry(np.array(S), inversion), N)
-        u_repr.inv_split = 0 if invert_inversion else N
+        u_repr.inv_split = 0 if negate_inversion else N
         u_repr.U = np.array(U)
         return u_repr
     
@@ -114,7 +114,7 @@ class UnitaryRepresentation:
         for s1, u1 in zip(self.sym.S, self.U):
             for s2, u2 in zip(self.sym.S, self.U):
                 s = s1 @ s2
-                u = u1 @ u2 # order reversed
+                u = u1 @ u2
                 # find s and u in the lists (use approximate equality)
                 found = False
                 for s3, u3 in zip(self.sym.S, self.U):
@@ -150,7 +150,7 @@ class UnitaryRepresentation:
         if self.sym.inversion:
             # only half of the neighbor terms are present, but the symmetry is important
             for i, r in enumerate(neighbors):
-                for m, (s, u) in enumerate(zip(self.sym.S, self.U)):
+                for s, u in zip(self.sym.S, self.U):
                     r_ = s @ r
                     j, mirror = neighbor_func(r_)
                     if np.linalg.norm(r_) == 0:
@@ -171,13 +171,9 @@ class UnitaryRepresentation:
             for i, r in enumerate(neighbors):
                 for s, u in zip(self.sym.S, self.U):
                     r_ = s @ r
-                    # even here the neighbors are reduced by inversion symmetry, but they are duplicated to cos and sin terms instead
-                    mirror = False
-                    _dist, j = kdtree.query(r_, distance_upper_bound=1e-5)
-                    if j < 0 or j >= len(neighbors):
-                        _dist, j = kdtree.query(-r_, distance_upper_bound=1e-5)
-                        mirror = True
-                        assert 0 <= j < len(neighbors), "neighbors don't match the symmetry"
+                    # even here the neighbors are reduced by inversion symmetry,
+                    # but they are duplicated to cos and sin terms instead
+                    j, mirror = neighbor_func(r_)
                     # TODO check
                     result[i] += np.conj(u.T) @ params[j] @ u
         return result / len(self.U)
@@ -440,7 +436,7 @@ class UnitaryRepresentation:
         return u_repr
     # D_3 dihedral triangle symmetry for cubic symmetry O_h
     # sqrt3 can be given in arbitrary precision if needed
-    def d3(invert_inversion, inversion=True, sqrt3=3**.5):
+    def d3(negate_inversion, inversion=True, sqrt3=3**.5):
         S = [((1,0,0), (0,1,0), (0,0,1)),
              ((1,0,0), (0,0,1), (0,-1,0)),
              ((0,0,-1), (0,1,0), (1,0,0)),
@@ -449,9 +445,9 @@ class UnitaryRepresentation:
              ((1,0), (0,-1)),
              ((-.5,.5*sqrt3), (.5*sqrt3,.5)),
              ((-.5,-.5*sqrt3), (-.5*sqrt3,.5))]
-        return UnitaryRepresentation.from_generator(S, U, inversion, invert_inversion)
+        return UnitaryRepresentation.from_generator(S, U, inversion, negate_inversion)
     # 1d representations for cubic symmetry O_h
-    def one_dim(invert, invert_inversion, inversion=True):
+    def one_dim(invert, negate_inversion, inversion=True):
         S = [((1,0,0), (0,1,0), (0,0,1)),
              ((1,0,0), (0,0,1), (0,-1,0)),
              ((0,0,-1), (0,1,0), (1,0,0)),
@@ -461,7 +457,7 @@ class UnitaryRepresentation:
              ((x,),),
              ((x,),),
              ((x,),)]
-        return UnitaryRepresentation.from_generator(S, U, inversion=inversion, invert_inversion=invert_inversion)
+        return UnitaryRepresentation.from_generator(S, U, inversion=inversion, negate_inversion=negate_inversion)
 
 def test_unitary_representations():
     UR = UnitaryRepresentation

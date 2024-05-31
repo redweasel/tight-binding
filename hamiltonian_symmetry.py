@@ -22,11 +22,15 @@ def hamiltonian_symmetry(sym: Symmetry, urepr: list = [], pos: list = []):
 
 
 class HamiltonianSymmetry:
-    def __init__(self, sym: Symmetry):
+    # sym - symmetry group
+    # A - basis matrix
+    def __init__(self, sym: Symmetry, A):
         self.sym = sym
         self.U = [] # unitary representations
         self.pos = [] # e.g. [[0,0,0], [1/4,1/4,1/4]] for k-dependence of symmetry
         self.names = [] # e.g. ["C", "C"] for exchange symmetriesCu
+        # translation symmetries can also be handled separately
+        self.translation = np.ones((sym.dim(), 0))
     
     # dimension (also called degree) of the representation
     def dim(self):
@@ -80,6 +84,7 @@ class HamiltonianSymmetry:
             return H_r # do nothing if self.U is empty, which stands for all U being the unit matrix
         # add up all symmetries
         assert len(neighbors) == len(H_r)
+        assert len(neighbors[0]) == self.sym.dim()
         neighbors = np.asarray(neighbors)
         neighbor_func = try_neighbor_function(neighbors)
         
@@ -115,6 +120,13 @@ class HamiltonianSymmetry:
             H_r2 /= 2
         else:
             H_r2 = H_r
+        # Now do translation symmetry. It's a normal subgroup, so it can be done separately like this
+        H_r3 = np.zeros_like(H_r)
+        d = self.sym.dim()
+        for i in range(d):
+            shift = [neighbor_func(n + self.A[:,i]) for n in neighbors]
+            H_r3[shift] += self.translation[i][None,:] * H_r2 * self.translation[i][:,None]
+        H_r3 /= self.sym.dim()
         result = np.zeros_like(H_r) # all U_S are real, so no worries about type here
         # symmetrise with the subgroup sym/inversion (inversion is always a normal subgroup)
         for i, r in enumerate(neighbors):
@@ -125,7 +137,7 @@ class HamiltonianSymmetry:
             #       = a @ direct_sum(u1, eye...) @ direct_sum(eye, u2, eye...) @ ...
             #for k, s in enumerate(self.sym.S):
             #    j, mirror = neighbor_func(r_)
-            #    p = H_r2[j]
+            #    p = H_r3[j]
             #    if mirror:
             #        p = np.conj(p.T) # get copy with H_{-r}=H_r^+
             #    else:
@@ -143,13 +155,13 @@ class HamiltonianSymmetry:
                 n2 = 0
                 for u2, r2 in zip(self.U, self.pos):
                     d2 = u2.dim()
-                    p = np.zeros_like(H_r2[i,n1:n1+d1,n2:n2+d2])
+                    p = np.zeros_like(H_r[i,n1:n1+d1,n2:n2+d2])
                     for k, s in enumerate(self.sym.S):
                         u1_ = u1.U[k]
                         u2_ = u2.U[k]
                         j, mirror = neighbor_func(s @ (r + r1 - r2) - r1 + r2)
                         if j is not None:
-                            h = H_r2[j]
+                            h = H_r3[j]
                             if mirror:
                                 h = np.conj(h.T)
                             p += np.conj(u1_.T) @ h[n1:n1+d1,n2:n2+d2] @ u2_
@@ -248,7 +260,12 @@ class HamiltonianSymmetry:
                 H_r2 /= 2
             else:
                 H_r2 = H_r
-            H_r2_mirror = np.conj(np.swapaxes(H_r2, -1, -2))
+            # Now do translation symmetry. It's a normal subgroup, so it can be done separately like this
+            H_r3 = np.zeros_like(H_r)
+            for i in range(self.sym.dim()):
+                H_r3 += self.translation[i][None,:] * H_r2 * self.translation[i][:,None]
+            H_r3 /= self.sym.dim()
+            H_r3_mirror = np.conj(np.swapaxes(H_r2, -1, -2))
             result = np.zeros_like(H_r) # all U_S are real, so no worries about type here
             # symmetrise with the subgroup sym/inversion (inversion is always a normal subgroup)
             # TODO find a way to sort these operations to make it more efficient
@@ -257,7 +274,7 @@ class HamiltonianSymmetry:
                 start1, end1 = u_index_lookup[i1]
                 start2, end2 = u_index_lookup[i2]
                 u1, u2 = self.U[i1].U[k], self.U[i2].U[k]
-                h = H_r2_mirror[j] if mirror else H_r2[j]
+                h = H_r3_mirror[j] if mirror else H_r3[j]
                 result[i,start1:end1,start2:end2] += (fac * np.conj(u1.T)) @ h[start1:end1,start2:end2] @ u2
             return result / len(self.sym.S)
         return symmetrizer_func
