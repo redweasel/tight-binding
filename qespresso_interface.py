@@ -148,11 +148,11 @@ class QECrystal:
     
     # read the data that has been computed (either by scf(), or by bands())
     # returns k_points, weights, bands, symmetries, fermi_energy
-    def read_projections(self):
+    def read_projections(self, filename=None):
         # read the atomic_proj.xml (see https://realpython.com/python-xml-parser/)
         # read in k_points, bands and projections (matrices) (as unnamed O(3) matrices)
         to_eV = 13.605693125 # 1Ry to 1eV
-        filename = f"./qe-data/{self.name}.save/atomic_proj.xml"
+        filename = filename or f"./qe-data/{self.name}.save/atomic_proj.xml"
         with open(filename, 'r') as file:
             from xml.dom.minidom import parse
             document = parse(file)
@@ -174,7 +174,7 @@ class QECrystal:
 
             k_points = np.zeros((k_count, 3))
             bands = np.zeros((k_count, band_count))
-            projections = np.zeros((k_count, band_count, spin_count, wfc_count))
+            projections = np.zeros((k_count, band_count, spin_count, wfc_count), dtype=complex)
 
             # now find all the data in the xml file
             for i, (k, e, proj, overlap) in enumerate(zip(k_list, e_list, proj_list, overlap_list)):

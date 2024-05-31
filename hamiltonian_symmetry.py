@@ -24,7 +24,7 @@ def hamiltonian_symmetry(sym: Symmetry, urepr: list = [], pos: list = []):
 class HamiltonianSymmetry:
     # sym - symmetry group
     # A - basis matrix
-    def __init__(self, sym: Symmetry, A):
+    def __init__(self, sym: Symmetry):
         self.sym = sym
         self.U = [] # unitary representations
         self.pos = [] # e.g. [[0,0,0], [1/4,1/4,1/4]] for k-dependence of symmetry
