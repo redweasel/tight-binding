@@ -41,7 +41,7 @@ class BandStructureModel:
 
     def init_tight_binding(symmetry: Symmetry, neighbors, band_count, cos_reduced=False, exp=False):
         #symmetry.check_neighbors(neighbors)
-        f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = get_tight_binding_coeff_funcs(symmetry, np.eye(3), neighbors, cos_reduced=cos_reduced, exp=exp)
+        f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = get_tight_binding_coeff_funcs(symmetry, np.eye(len(neighbors[0])), neighbors, cos_reduced=cos_reduced, exp=exp)
         model = BandStructureModel(f_i_tb, df_i_tb, np.zeros((term_count, band_count, band_count)), ddf_i=ddf_i_tb)
         model.sym = symmetry
         model.neighbors = neighbors
@@ -50,7 +50,7 @@ class BandStructureModel:
         return model
     
     def init_tight_binding_from_ref(symmetry: Symmetry, neighbors, k_smpl, ref_bands, band_offset=0, additional_bands=0, cos_reduced=False, exp=False):
-        f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = get_tight_binding_coeff_funcs(symmetry, np.eye(3), neighbors, cos_reduced=cos_reduced, exp=exp)
+        f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = get_tight_binding_coeff_funcs(symmetry, np.eye(len(neighbors[0])), neighbors, cos_reduced=cos_reduced, exp=exp)
         model = BandStructureModel.init_from_ref(f_i_tb, df_i_tb, ddf_i_tb, term_count, k_smpl, ref_bands, band_offset, additional_bands)
         # TODO handle the case where cos_reduced=False, because there the params need to be processed here
         model.sym = symmetry
@@ -71,6 +71,14 @@ class BandStructureModel:
         params = [np.diag(k0_bands)] + [random_hermitian(len(k0_bands)) * scale for _ in range(param_count-1)]
         return BandStructureModel(f_i, df_i, params, ddf_i)
     
+    # randomize parameters (can break symmetry in bad ways -> normalize after this!)
+    def randomize(self, sigma, keep_zeros=False):
+        dparams = sigma * np.random.standard_normal(self.params.shape) + sigma * 1j*np.random.standard_normal(self.params.shape)
+        if keep_zeros:
+            dparams *= np.where(np.abs(self.params) < 1e-8, 0, 1)
+        self.params += dparams
+
+
     # full function for the band structure
     def f(self, k):
         mat = np.zeros(np.shape(k)[:-1] + self.params[0].shape, dtype=np.complex128)
@@ -327,7 +335,7 @@ class BandStructureModel:
         np.set_printoptions(**opt) # reset printoptions
 
     # import a tight binding model into the given param format (cos_reduced, exp)
-    def load(filename, format=None, cos_reduced=False, exp=False):
+    def load(filename, format=None, cos_reduced=False, exp=True):
         if format is None:
             if filename.endswith(".repr"):
                 format = "python"
@@ -343,17 +351,18 @@ class BandStructureModel:
             with open(filename, "r") as file:
                 H_r_repr = " ".join(file.readlines())
                 H_r, neighbors, S, inversion = eval(H_r_repr.replace("array", "np.array"))
+                # TODO for some reason this only works with cos_reduced=True, exp=False
                 model = BandStructureModel.init_tight_binding(Symmetry(S, inversion=inversion), neighbors, len(H_r[0]), cos_reduced=True, exp=False)
                 model.set_params_complex(H_r)
         elif format == "wannier90":
             import wannier90_tb_format as tb_fmt
             neighbors, H_r, w_r_params = tb_fmt.load(filename)
-            model = BandStructureModel.init_tight_binding(Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=False, exp=True)
+            model = BandStructureModel.init_tight_binding(Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=cos_reduced, exp=exp)
             model.set_params_complex(H_r)
         elif format == "json":
             import json_tb_format
             neighbors, H_r = json_tb_format.load(filename)
-            model = BandStructureModel.init_tight_binding(Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=False, exp=True)
+            model = BandStructureModel.init_tight_binding(Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=cos_reduced, exp=exp)
             model.set_params_complex(H_r)
         return model
 
@@ -571,7 +580,7 @@ def test_bandstructure_optimize():
                 for bw in [1, 1.5]:
                     tb.params = np.random.random(tb.params.shape)
                     tb.optimize(k_smpl, kw, ref_bands, bw, 0, 1, verbose=False, use_pinv=False)
-                    assert np.linalg.norm(tb.bands(k_smpl) - ref_bands) < 1e-7, f"{tb.bands(k_smpl)} was incorrect for model {i}, kw = {kw}, bw = {bw}"
+                    assert np.linalg.norm(tb.bands(k_smpl) - ref_bands) < 1e-7, f"{tb.bands(k_smpl)} without pinv was incorrect for model {i}, kw = {kw}, bw = {bw}"
                     tb.params = np.random.random(tb.params.shape)
                     tb.optimize(k_smpl, kw, ref_bands, bw, 0, 1, verbose=False, use_pinv=True)
-                    assert np.linalg.norm(tb.bands(k_smpl) - ref_bands) < 1e-7, f"{tb.bands(k_smpl)} was incorrect for model {i}, kw = {kw}, bw = {bw}"
+                    assert np.linalg.norm(tb.bands(k_smpl) - ref_bands) < 1e-7, f"{tb.bands(k_smpl)} with pinv was incorrect for model {i}, kw = {kw}, bw = {bw}"

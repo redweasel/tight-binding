@@ -55,23 +55,57 @@ class QECrystal:
         self.kinetic_energy_cutoff = kinetic_energy_cutoff
 
     # 3d plot of the crystal structure
-    def plot_crystal(self, repeat=1, turntable=20, elevation=35):
+    def plot_crystal(self, repeat=1, turntable=14, elevation=35):
         from matplotlib import pyplot as plt
         fig = plt.figure()
         ax = fig.add_subplot(projection="3d")
-        offset = np.stack(np.reshape(np.meshgrid(*([np.arange(repeat)]*3)), (3, -1, 1)), axis=-1).reshape(-1, 1, 3)
+        restrict = False
+        if repeat == 1:
+            restrict = True
+            repeat = 3
+        offset = np.stack(np.reshape(np.meshgrid(*([np.arange(repeat)-repeat//2]*3)), (3, -1, 1)), axis=-1).reshape(-1, 1, 3)
         extended_basis = np.reshape(self.basis, (1, -1, 3)) + offset
         # TODO the multiple drawn lines destroy antialiasing... use NaN points instead
         cube_line = np.array([(0,0,0), (0,0,1), (0,1,1), (0,1,0), (0,0,0), (1,0,0), (1,0,1), (1,1,1), (1,1,0), (1,0,0), (1,1,0), (0,1,0), (0,1,1), (1,1,1), (1,0,1), (0,0,1)])
         deformed_cube = self.A @ cube_line.T
         ax.plot(*deformed_cube, "-k")
-        ax.set_prop_cycle(None)
-        for t in list(set(self.types)):
-            ax.plot(*(self.A @ extended_basis[:, self.types == t].reshape(-1, 3).T), "o", label=t)
-        ax.set_aspect("equal")
+        # add annotations for which cube side is which lattice vector
+        for i in range(3):
+            ax.text(*self.A[:,i], f"$a_{i+1}$")
+        limits = np.array([[0, 0], [0, 0], [0, 0]])
+        for c, t in enumerate(sorted(list(set(self.types)))):
+            basis_of_type = extended_basis[:,self.types == t].reshape(-1, 3)
+            if restrict:
+                x, y, z = basis_of_type.T
+                basis_of_type = basis_of_type[(0 <= x) & (x <= 1) & (0 <= y) & (y <= 1) & (0 <= z) & (z <= 1)]
+            positions = (self.A @ basis_of_type.T).T
+            for i in range(len(positions)):
+                ax.plot([positions[i][0]]*2, [positions[i][1]]*2, [0.0, positions[i][2]], "k:") # plot z-pole holding the atom to show depth
+            ax.plot(*positions.T, f"oC{c}", label=t)
+            # plot original basis atoms larger (even if they are outside of the restricted cell)
+            ax.plot(*(self.A @ np.reshape(self.basis, (1, -1, 3))[:,self.types == t].reshape(-1, 3).T), f"oC{c}", markersize=12)
+            # make tight viewbox
+            positions = np.concatenate([positions.T, limits], axis=1)
+            limits = np.concatenate([np.min(positions, axis=1, keepdims=True), np.max(positions, axis=1, keepdims=True)], axis=1)
         ax.view_init(elev=elevation, azim=turntable)
+        for lim, dim in zip(limits, 'xyz'):
+            getattr(ax, f'set_{dim}lim')(*lim)
+        # add lines for the axes
+        ax.plot(limits[0], [0]*2, [0]*2, 'k--')
+        ax.plot([0]*2, limits[1], [0]*2, 'k--')
+        ax.plot([0]*2, [0]*2, limits[2], 'k--')
+        # Hack: in old matplotlib versions .set_aspect("equal") doesn't work for 3D yet.
+        def axisEqual3D(ax):
+            extents = np.array([getattr(ax, f'get_{dim}lim')() for dim in 'xyz'])
+            sz = extents[:,1] - extents[:,0]
+            centers = np.mean(extents, axis=1)
+            maxsize = max(abs(sz))
+            r = maxsize/2
+            for ctr, dim in zip(centers, 'xyz'):
+                getattr(ax, f'set_{dim}lim')(ctr - r, ctr + r)
+        ax.set_aspect("equal")
+        #axisEqual3D(ax)
         ax.legend()
-        return fig, ax
 
     # ----- reading results of QUANTUM ESPRESSO -----
 
@@ -147,6 +181,58 @@ class QECrystal:
         return np.array(k_points), np.array(weights), np.array(bands), np.array(S), fermi_energy
     
     # read the data that has been computed (either by scf(), or by bands())
+    # returns k_points, bands, symmetries, fermi_energy, real_cell_matrix
+    # k and symmetries are in crystal coordinates.
+    # That means k_points will be in [0,1[^3
+    # symmetries are the crystal space symmetries, meaning they are orthogonal and equal for real and reciprocal space.
+    def read_bands_crystal(self, incomplete=False):
+        # read directly from the bands xml file (see https://realpython.com/python-xml-parser/)
+        # read in k_points, eigenvalues and symmetries (as unnamed O(3) matrices)
+        k_points = []
+        bands = []
+        S = []
+        to_eV = 27.21138625 # from Hartree = 2Ry to 1eV
+        filename = f"./qe-data/{self.name}.save/data-file-schema.xml" if incomplete else f"./qe-data/{self.name}.xml"
+        with open(filename, 'r') as file:
+            from xml.dom.minidom import parse
+            document = parse(file)
+            #root = document.documentElement
+            root = document.getElementsByTagName("qes:espresso")[0]
+            assert root.getAttribute("Units") == "Hartree atomic units" # only accept these units for now
+            b1 = [float(x) for x in document.getElementsByTagName("b1")[0].firstChild.nodeValue.strip().split()]
+            b2 = [float(x) for x in document.getElementsByTagName("b2")[0].firstChild.nodeValue.strip().split()]
+            b3 = [float(x) for x in document.getElementsByTagName("b3")[0].firstChild.nodeValue.strip().split()]
+            reciprocal = np.array([b1, b2, b3]).T
+            inv_reciprocal = np.linalg.inv(reciprocal)
+
+            a1 = [float(x) for x in document.getElementsByTagName("b1")[0].firstChild.nodeValue.strip().split()]
+            a2 = [float(x) for x in document.getElementsByTagName("b2")[0].firstChild.nodeValue.strip().split()]
+            a3 = [float(x) for x in document.getElementsByTagName("b3")[0].firstChild.nodeValue.strip().split()]
+            A = np.array([a1, a2, a3]).T
+            # now find all the data in the xml file
+            symmetry_list = document.getElementsByTagName("symmetry")
+            for sym in symmetry_list:
+                rot = sym.getElementsByTagName("rotation")[0]
+                # read content and convert to matrix
+                content = rot.firstChild.nodeValue
+                mat = np.array([float(x) for x in content.strip().split()]).reshape(3, 3)
+                S.append(mat)
+            ks_energies = document.getElementsByTagName("ks_energies")
+            for ks_e in ks_energies:
+                k_point = ks_e.getElementsByTagName("k_point")[0]
+                eigenvalues = ks_e.getElementsByTagName("eigenvalues")[0]
+                k_points.append([float(x) for x in k_point.firstChild.nodeValue.strip().split()])
+                bands.append([float(x) * to_eV for x in eigenvalues.firstChild.nodeValue.strip().split()])
+            # transform k_points to crystal coordinates
+            k_points = (inv_reciprocal @ np.array(k_points).T).T
+            # transform symmetries to crystal coordinates
+            S = np.einsum("nkl,ik,lj->nij", S, inv_reciprocal, reciprocal)
+            assert np.linalg.norm(np.einsum("nij, nik -> njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
+            fermi_energy_node = document.getElementsByTagName("fermi_energy")[0]
+            fermi_energy = float(fermi_energy_node.firstChild.nodeValue.strip()) * to_eV
+        return np.array(k_points), np.array(bands), S, fermi_energy, A
+    
+    # read the data that has been computed (either by scf(), or by bands())
     # returns k_points, weights, bands, symmetries, fermi_energy
     def read_projections(self, filename=None):
         # read the atomic_proj.xml (see https://realpython.com/python-xml-parser/)
@@ -170,14 +256,13 @@ class QECrystal:
             k_list = document.getElementsByTagName("K-POINT")
             e_list = document.getElementsByTagName("E")
             proj_list = document.getElementsByTagName("PROJS")
-            overlap_list = document.getElementsByTagName("OVPS")
 
             k_points = np.zeros((k_count, 3))
             bands = np.zeros((k_count, band_count))
             projections = np.zeros((k_count, band_count, spin_count, wfc_count), dtype=complex)
 
             # now find all the data in the xml file
-            for i, (k, e, proj, overlap) in enumerate(zip(k_list, e_list, proj_list, overlap_list)):
+            for i, (k, e, proj) in enumerate(zip(k_list, e_list, proj_list)):
                 k_points[i] = [float(x) for x in k.firstChild.nodeValue.strip().split()]
                 bands[i] = [float(x) for x in e.firstChild.nodeValue.strip().split()]
                 for wfc in proj.getElementsByTagName("ATOMIC_WFC"):
@@ -185,6 +270,15 @@ class QECrystal:
                     spin_index = int(wfc.getAttribute("spin")) - 1
                     data = np.array([float(x) for x in wfc.firstChild.nodeValue.strip().split()])
                     projections[i, :, spin_index, index] = data[::2] + 1j*data[1::2]
+            
+            overlap_list = document.getElementsByTagName("OVPS")
+            if overlap_list:
+                overlaps = np.zeros((k_count, spin_count * wfc_count, spin_count * wfc_count), dtype=complex)
+                for i, overlap in enumerate(overlap_list):
+                    data = np.array([float(x) for x in overlap.firstChild.nodeValue.strip().split()])
+                    mat = overlaps[i].ravel()
+                    mat += data[::2] + data[1::2]*1j
+                return np.array(k_points), np.array(bands) * to_eV, np.array(projections), np.array(overlaps), fermi_energy, electron_count
         
         return np.array(k_points), np.array(bands) * to_eV, np.array(projections), fermi_energy, electron_count
 
@@ -567,7 +661,7 @@ lwrite_overlaps={lwrite_overlaps}
 /
 """)
         # doesn't completely work for high resolutions...
-        print(f"converting data for {self.name} to a plottable format")
+        print(f"computing projections onto atomic orbitals for {self.name}")
         os.system(mpi_run + f"projwfc.x < {self.name}.projwfc.in | tee {self.name}.projwfc.out")
 
 

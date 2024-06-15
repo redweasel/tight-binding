@@ -21,9 +21,8 @@ def pointcloud_distance(pointcloud1, pointcloud2):
 
 # a function that returns a function that maps positions to (neighbor_index, is_mirrored)
 # and raises a ValueError if the neighbor isn't found.
-def neighbor_function(neighbors):
+def neighbor_function(neighbors, err=1e-4):
     kdtree = KDTree(neighbors)
-    err = 1e-4 # global error for symmetry points
     def find(r):
         mirror = False
         _dist, j = kdtree.query(r, distance_upper_bound=err)
@@ -37,9 +36,8 @@ def neighbor_function(neighbors):
 
 # a function that returns a function that maps positions to (neighbor_index, is_mirrored)
 # and returns None, None if the neighbor isn't found
-def try_neighbor_function(neighbors):
+def try_neighbor_function(neighbors, err=1e-4):
     kdtree = KDTree(neighbors)
-    err = 1e-4 # global error for symmetry points
     def find(r):
         mirror = False
         _dist, j = kdtree.query(r, distance_upper_bound=err)
@@ -380,16 +378,22 @@ class Symmetry:
                             j += 1
         return np.array(reduced_k), np.array(reduced)
     
-    def complete_neighbors(self, neighbors):
-        neighbors, _ = self.realize_symmetric(neighbors)
+    def complete_neighbors(self, neighbors, return_order=False):
+        neighbors, order = self.realize_symmetric(neighbors)
         # deduplicate (but keep the original ordering if there is no duplicates)
         new_neighbors = []
-        for n in neighbors:
-            if tuple(n) not in new_neighbors: # works only for exact matches
-                new_neighbors.append(tuple(n))
+        used_neighbors = set()
+        for n, orig_index in zip(neighbors, order):
+            if tuple(n) not in used_neighbors: # works only for exact matches
+                new_neighbors.append((n, orig_index))
+                used_neighbors.add(tuple(n))
         # remove negative versions
-        neighbors = [n for n in new_neighbors if next((x for x in n if abs(x) > 1e-7), 1) > 0]
-        neighbors = sorted(neighbors, key=lambda n: np.linalg.norm(n))
+        neighbors = [(n, orig_index) for n, orig_index in new_neighbors if next((x for x in n if abs(x) > 1e-7), 1) > 0]
+        neighbors = sorted(neighbors, key=lambda ni: np.linalg.norm(ni[0]))
+        order = [orig_index for _, orig_index in neighbors]
+        neighbors = [n for n, _ in neighbors]
+        if return_order:
+            return neighbors, order
         return neighbors
 
     def check_neighbors(self, neighbors):

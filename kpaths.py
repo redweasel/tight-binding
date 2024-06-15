@@ -14,7 +14,7 @@ points['U'] = np.array([[1/4, 1, 1/4]]) # between X and L
 points['X'] = 0.5*np.array([[0, 1, 0]]) # Delta line
 points['M'] = 0.5*np.array([[1, 1, 0]]) # Sigma line
 points['R'] = 0.5*np.array([[1, 1, 1]]) # Lambda line
-# body centered points: (unsure...)
+# body centered points:
 points['H'] = np.array([[1, 0, 0]]) # Delta line
 points['N'] = np.array([[1/2, 1/2, 0]]) # Sigma line
 points['P'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
@@ -62,11 +62,16 @@ class KPath(_collections_abc.Sequence):
     def sym_x_names(self):
         return self.names
     
-    def plot(self, func, *args, band_offset=0, **kwargs):
+    def plot(self, func, *args, band_offset=0, label_bands=None, ylim=None, **kwargs):
+        if label_bands not in {None, "", "left", "right"}:
+            raise ValueError("label_bands must be left or right")
         from matplotlib import pyplot as plt
         ibands = func(np.array(self))
         x_smpl = self.x()
         sym_x_smpl = self.sym_x()
+        ax1 = plt.gca()
+        if label_bands == "left":
+            ax2 = plt.gca().twinx() # plot to twinx (now the gca)
         plt.gca().set_prop_cycle(None)
         for _ in range(band_offset):
             next(plt.gca()._get_lines.prop_cycler)
@@ -76,6 +81,37 @@ class KPath(_collections_abc.Sequence):
             plt.axvline(sym_x, color="k", linestyle="dashed")
         plt.xticks(sym_x_smpl, self.names)
         plt.xlim(x_smpl[0], x_smpl[-1])
+        if label_bands == "left" or label_bands == "right":
+            if ylim is None:
+                ylim = np.min(ibands) - 0.1, np.max(ibands) + 0.1
+            if label_bands == "left":
+                # switch back to left
+                plt.sca(ax1)
+            else:
+                ax2 = plt.gca().twinx() # plot to twinx (now the gca)
+            edge_bands = np.round(ibands[-1 if label_bands == "right" else 0], 1) # rounded to display precision to avoid label overlap
+            y_ticks, inv = np.unique(edge_bands, return_inverse=True)
+            y_bands = [[] for i in range(len(y_ticks))]
+            for i, j in enumerate(inv):
+                y_bands[j].append(i)
+            # detect sorting of bands. If bands are sorted format the labels as 10-12 instead of 10,11,12
+            y_labels = [""]*len(y_ticks)
+            for j, bands in enumerate(y_bands):
+                # turn bands into ranges
+                ranges = [[bands[0], bands[0]]] # both sided inclusive ranges
+                for i in bands[1:]:
+                    if ranges[-1][1] + 1 == i:
+                        ranges[-1][1] += 1
+                    else:
+                        ranges.append([i, i])
+                # now format ranges properly
+                y_labels[j] = ",".join([str(r[0]) if r[0] == r[1] else (f"{r[0]},{r[1]}" if r[0] == r[1] - 1 else f"{r[0]}-{r[1]}") for r in ranges])
+            plt.gca().set_yticks(y_ticks, labels=y_labels, fontsize=8)
+            ax1.set_ylim(*ylim)
+            ax2.set_ylim(*ylim)
+            return ax1, ax2
+        elif ylim != None:
+            plt.ylim(*ylim)
 
     def __iter__(self) -> Iterator:
         return self.path.__iter__()

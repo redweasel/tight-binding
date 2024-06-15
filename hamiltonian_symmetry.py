@@ -60,6 +60,7 @@ class HamiltonianSymmetry:
     def append_s(self, pos, name):
         self.append(UnitaryRepresentation(self.sym, 1), pos, name)
 
+    # p_x, p_y, p_z orbitals (in that order)
     def append_p(self, pos, name):
         # TODO check this!
         urepr = UnitaryRepresentation(self.sym, self.sym.dim())
@@ -67,10 +68,12 @@ class HamiltonianSymmetry:
         urepr.inv_split = 0
         self.append(urepr, pos, name)
 
+    # d_{z^2} d_{x^2-y^2} orbitals (in that order)
     def append_d2(self, pos, name):
         # TODO make this work for all symmetries
         self.append(UnitaryRepresentation.d3(False), pos, name)
 
+    # d_yz d_xz d_xy orbitals (in that order)
     def append_d3(self, pos, name):
         # TODO check this!
         urepr = UnitaryRepresentation(self.sym, self.sym.dim())
@@ -78,6 +81,37 @@ class HamiltonianSymmetry:
         urepr.inv_split = self.sym.dim() # don't use -1 on inversion
         self.append(urepr, pos, name)
     
+    # apply the unitary transformation for the symmetry operation
+    # at the given index at the given k-point to the hamiltonian
+    # to get H(S.T^{-1} k) = U_S(k) H(k) U_S(k).T.conj()
+    def apply(self, k, hamiltonian, s_index, inversion=False):
+        # apply inversion first, as that is the simple part
+        hamiltonian_inv = np.array(hamiltonian)
+        n1 = 0
+        for u1, r1 in zip(self.U, self.pos):
+            d1 = u1.dim()
+            u1 = 1 if u1.inv_split > 0 else -1
+            if u1 < 0:
+                hamiltonian_inv[n1:n1+d1,:] *= -1
+                hamiltonian_inv[:,n1:n1+d1] *= -1
+        # now apply the symmetry operation
+        result = np.zeros_like(hamiltonian)
+        s = np.linalg.inv(self.sym.S[s_index])
+        n1 = 0
+        for u1, r1 in zip(self.U, self.pos):
+            d1 = u1.dim()
+            n2 = 0
+            for u2, r2 in zip(self.U, self.pos):
+                d2 = u2.dim()
+                u1_ = u1.U[s_index]
+                u2_ = u2.U[s_index]
+                fac = np.exp(2j*np.pi * k @ (r1 - s @ r2))
+                fac *= np.exp(-2j*np.pi * k @ (r2 - s @ r1))
+                result[n1:n1+d1,n2:n2+d2] += fac * u1_ @ hamiltonian_inv[n1:n1+d1,n2:n2+d2] @ np.conj(u2_.T)
+                n2 += d2
+            n1 += d1
+        return result
+
     # parameter symmetrisation with H_r type
     def symmetrize(self, H_r, neighbors):
         if len(self.U) <= 1:
@@ -121,12 +155,14 @@ class HamiltonianSymmetry:
         else:
             H_r2 = H_r
         # Now do translation symmetry. It's a normal subgroup, so it can be done separately like this
-        H_r3 = np.zeros_like(H_r)
-        d = self.sym.dim()
-        for i in range(d):
-            shift = [neighbor_func(n + self.A[:,i]) for n in neighbors]
-            H_r3[shift] += self.translation[i][None,:] * H_r2 * self.translation[i][:,None]
-        H_r3 /= self.sym.dim()
+        # TODO
+        #H_r3 = np.zeros_like(H_r)
+        #d = self.sym.dim()
+        #for i in range(d):
+        #    shift = [neighbor_func(n + self.A[:,i]) for n in neighbors]
+        #    H_r3[shift] += self.translation[i][None,:] * H_r2 * self.translation[i][:,None]
+        #H_r3 /= self.sym.dim()
+        H_r3 = H_r2
         result = np.zeros_like(H_r) # all U_S are real, so no worries about type here
         # symmetrise with the subgroup sym/inversion (inversion is always a normal subgroup)
         for i, r in enumerate(neighbors):
@@ -261,11 +297,12 @@ class HamiltonianSymmetry:
             else:
                 H_r2 = H_r
             # Now do translation symmetry. It's a normal subgroup, so it can be done separately like this
-            H_r3 = np.zeros_like(H_r)
-            for i in range(self.sym.dim()):
-                H_r3 += self.translation[i][None,:] * H_r2 * self.translation[i][:,None]
-            H_r3 /= self.sym.dim()
-            H_r3_mirror = np.conj(np.swapaxes(H_r2, -1, -2))
+            #H_r3 = np.zeros_like(H_r)
+            #for i in range(self.sym.dim()):
+            #    H_r3 += self.translation[i][None,:] * H_r2 * self.translation[i][:,None]
+            #H_r3 /= self.sym.dim()
+            H_r3 = H_r2
+            H_r3_mirror = np.conj(np.swapaxes(H_r3, -1, -2))
             result = np.zeros_like(H_r) # all U_S are real, so no worries about type here
             # symmetrise with the subgroup sym/inversion (inversion is always a normal subgroup)
             # TODO find a way to sort these operations to make it more efficient
@@ -279,6 +316,44 @@ class HamiltonianSymmetry:
             return result / len(self.sym.S)
         return symmetrizer_func
     
+    # fill in symmetric k-points in symmetry reduced points.
+    # -> creates an ordered grid for cubic symmetry
+    # NOTE this method ONLY works for symmetry reduced points, otherwise it will create duplicates
+    # returns a list of k-points and an index list for how to get the k-points.
+    def realize_symmetric(self, k_smpl, hamiltonian):
+        order = list(range(len(k_smpl)))
+        full_k = list(k_smpl)
+        full_hamiltonian = list(hamiltonian)
+        for i, (k, H_k) in enumerate(zip(k_smpl, hamiltonian)):
+            # asymtotically slow* algorithm to find all symmetric points
+            # (fine because it's never going above 48, so asymtotic behaviour is irrelevant)
+            scale = np.linalg.norm(k)
+            if scale == 0:
+                continue
+            used_k = [k]
+            for inv in [1, -1] if self.sym.inversion else [1]:
+                for s_index, s in enumerate(self.sym.S):
+                    k_ = s @ k * inv
+                    # * this is why this algorithm is asymtotically slow
+                    if np.min(np.linalg.norm(used_k - k_.reshape(1, -1), axis=-1)) < scale * 1e-6:
+                        continue
+                    used_k.append(k_)
+                    full_k.append(k_)
+                    full_hamiltonian.append(self.apply(k, H_k, s_index, inv < 0))
+                    order.append(i)
+        # sort by x, y, z compatible with reshape to meshgrid
+        order = np.array(order)
+        full_k = np.array(full_k)
+        full_hamiltonian = np.array(full_hamiltonian)
+        for i in range(len(k_smpl[0])):
+            # the round here is annoying as it can break at wrong places
+            # + np.pi makes it less likely, but it can still happen
+            reorder = np.argsort(np.round(full_k[:,i] + np.pi, 4), kind='stable')
+            full_k = full_k[reorder]
+            full_hamiltonian = full_hamiltonian[reorder]
+            order = order[reorder]
+        return np.array(full_k), np.array(full_hamiltonian), order
+    
 def test_hamiltonian_symmetry():
     np.set_printoptions(precision=3, suppress=True, linewidth=1000)
     UR = UnitaryRepresentation
@@ -286,6 +361,7 @@ def test_hamiltonian_symmetry():
     test_u_repr = UR.one_dim(True, False) + UR.d3(False) + UR.o3()
     assert test_u_repr.check_U()
     test_h_sym = HamiltonianSymmetry(Symmetry.cubic(True))
+    # append all at rho=0 to compare with the unitary repr directly
     test_h_sym.append(UR.one_dim(True, False), [0, 0, 0], "")
     test_h_sym.append(UR.d3(False), [0, 0, 0], "")
     test_h_sym.append(UR.o3(), [0, 0, 0], "")
@@ -306,6 +382,7 @@ def test_hamiltonian_symmetry():
     test_H_r4 = hsym_symm(test_H_r)
     test_H_r5 = hsym_symm(test_H_r4)
     assert np.linalg.norm(test_H_r4 - test_H_r5) < 1e-7
+    assert np.linalg.norm(test_H_r3 - test_H_r4) < 1e-7, "symmetrize and symmetrizer don't match"
     test_C_r3 = np.array(test_H_r3)
     test_C_r3[:,n:,:n] *= -1j
     test_C_r3[:,:n,n:] *= -1j
