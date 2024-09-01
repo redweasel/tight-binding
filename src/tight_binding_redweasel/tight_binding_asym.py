@@ -438,7 +438,6 @@ class AsymTightBindingModel:
 
                 # compute stepsize using my new formula based on least squares fitting
                 if not train_S and use_lstsq_stepsize:
-                    #H_r_add *= norm # TODO what about this? Theoretically it should be here!
                     # this angle should always be ~90°
                     #log.add_message(f"angle {180/np.pi*np.arccos(min(1, max(-1, np.real(np.sum(last_add * H_r_add.conj())) / (np.linalg.norm(H_r_add) * np.linalg.norm(last_add)))))}")
 
@@ -446,7 +445,7 @@ class AsymTightBindingModel:
                     ev_r = np.einsum("nad,nbd,lab,d->nld", eigvecs_c, eigvecs, H_r_add, band_weights[0])
                     r_AA_r = np.einsum("nk,nl,nld,nkd", batch_c_i, batch_f_i, ev_r, ev_r.conj())
                     # factor 2 because of how the symmetrisation works above!
-                    alpha = 0.5 * np.linalg.norm(H_r_add)**2 / np.real(r_AA_r)
+                    alpha = norm * 0.5 * np.linalg.norm(H_r_add)**2 / np.real(r_AA_r)
                     #log.add_message(f"{alpha}, {0.5 / len(batch)}")
                 else:
                     alpha = 0.5 / len(batch) / band_weights_norm
