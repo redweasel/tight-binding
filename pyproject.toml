@@ -23,6 +23,14 @@ dependencies = [
   'matplotlib >= 3.8.0',
 ]
 
+[project.optional-dependencies]
+tests = [
+  'coverage>=5.0.3',
+  'pytest',
+  'pytest-benchmark[histogram]>=3.2.1',
+]
+
+
 [tool.pytest.ini_options]
 addopts = [
     "--import-mode=importlib",
