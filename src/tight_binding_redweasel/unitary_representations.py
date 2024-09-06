@@ -25,14 +25,29 @@ def direct_sum(*a):
 
 
 class UnitaryRepresentation:
+    """
+    This class is a unitary representation from group representation theory.
+    A representation for a symmetry S is a matrix set D(S) such that
+
+    `D(S1) D(S2) = D(S1 S2)`
+
+    These representation can always be transformed by a change of basis into a
+    representation, that is a direct sum of unitary irreduzible representations (unitary irreps).
+    
+    This class can represent any unitary representation, however inversion symmetry is handled separately.
+    """
+
     def __init__(self, sym: Symmetry, N):
-        self.U = np.array([np.eye(N) for s in sym.S])
+        self.U = np.array([np.eye(N) for _ in sym.S])
         # inversion symmetry can be handled separately, as it is in the centrum of the group
         self.inv_split = N # number of 1 eigenvalues of the inversion symmetry unitary representations
         self.sym = sym
     
-    # dimensions (also called degree) of the representation
     def dim(self):
+        """
+        Returns:
+            int: Dimension (also called degree) of the unitary representation.
+        """
         return len(self.U[0])
     
     def copy(self):
@@ -41,9 +56,19 @@ class UnitaryRepresentation:
         u_repr.U = np.array(self.U)
         return u_repr
     
-    # create the symmetry group and the representation from a generator set
-    # fails if the generators structure doesn't match
     def from_generator(S_G, U_G, inversion=True, negate_inversion=False):
+        """Create the symmetry group and the representation from a generator set of size N_G.
+        Fails if the generators structure is not closed.
+
+        Args:
+            S_G (arraylike(N_G, k-dim, k-dim)): The symmetry operations in the generating set.
+            U_G (arraylike(N_G, dim, dim)): The unitary operations in the generating set.
+            inversion (bool, optional): If True, the inversion will be added to the symmetry. Defaults to True.
+            negate_inversion (bool, optional): If True, the factor for inversion will be -1, otherwise 1. Defaults to False.
+
+        Returns:
+            UnitaryRepresentation: The generated unitary representation.
+        """
         Nk = len(S_G[0])
         N = len(U_G[0])
         S = S_G.copy()
@@ -81,8 +106,17 @@ class UnitaryRepresentation:
         u_repr.U = np.array(U)
         return u_repr
     
-    # check if this symmetry matches the given one and if so, reorder the elements to match the order of the given symmetry
     def match_sym(self, sym: Symmetry):
+        """Check if this symmetry matches the given one
+        and if so, reorder the elements of this symmetry (`self`)
+        to match the order of the given symmetry.
+
+        Args:
+            sym (Symmetry): The other symmetry.
+
+        Raises:
+            ValueError: If the symmetries can not be matched.
+        """
         if len(sym.S) != len(self.sym.S):
             raise ValueError("Symmetries don't match (unequal group order)")
         if len(sym.S[0]) != len(self.sym.S[0]):
@@ -135,15 +169,40 @@ class UnitaryRepresentation:
                     return False
         return True
     
-    # symmetrize a collection of matrices, such that they obey H(Sr) = U_S H(r) (U_S)^+ where r is one of the neighbor positions
-    # use symmetrizer(neighbors)(params) for repeated use of symmetrize
+    # symmetrize a collection of matrices, such that they obey  where r is one of the neighbor positions
+    # use symmetrizer(neighbors)(H_r) for repeated use of symmetrize
     # IMPORTANT: this one is very slow and is only kept for testing the symmetrizer
-    def symmetrize(self, params, neighbors):
+    def symmetrize(self, H_r, neighbors):
+        """Symmetrize a hermitian operator, such that
+
+        'H(Sr) = U_S H(r) (U_S)^+'
+
+        where `H(r)` is a list of matrices, with `r` as index
+        and `r` comes from a list of positions.
+        The `r` list is called the neighbors list in solid state physics.
+
+        The symmetrisation is a group mean over the entire group,
+        such that the whole operation is an orthogonal projection
+        onto the space in which the symmetry operation described
+        by this class holds.
+        
+        Subgroups of the symmetry are not exploited and everything is
+        computed in the most verbose way to make this function a good
+        reference implementation.
+        For a faster function see `self.symmetrizer`.
+
+        Args:
+            H_r (arraylike(N_r, dim, dim)): A list of matrices. One for each r-position.
+            neighbors (arraylike(N_r, r-dim)): A list of positions for the matrices in `H_r`.
+
+        Returns:
+            arraylike(N_r, dim, dim): The changed H_r, which respects the symmetry.
+        """
         if len(self.U) <= 1:
-            return params # do nothing if self.U is empty, which stands for all U being the unit matrix
-        result = np.zeros_like(params) # all U_S are real, so no worries about type here
+            return H_r # do nothing if self.U is empty, which stands for all U being the unit matrix
+        result = np.zeros_like(H_r) # all U_S are real, so no worries about type here
         # add up all symmetries
-        assert len(neighbors) == len(params) # TODO this doesn't match my definition without inversion symmetry...
+        assert len(neighbors) == len(H_r) # TODO this doesn't match my definition without inversion symmetry...
         assert len(self.sym.S) == len(self.U)
         neighbor_func = neighbor_function(neighbors)
         k = self.inv_split
@@ -155,18 +214,18 @@ class UnitaryRepresentation:
                     j, mirror = neighbor_func(r_)
                     if np.linalg.norm(r_) == 0:
                         # center case
-                        p = np.array(params[j])
+                        p = np.array(H_r[j])
                         p[:k,k:] = 0 # could also do this at the end
                         p[k:,:k] = 0
                         result[i] += np.conj(u.T) @ p @ u
                     elif mirror:
                         # mirrored case, read the mirrored matrix
-                        p = np.array(params[j])
+                        p = np.array(H_r[j])
                         p[:k,k:] *= -1
                         p[k:,:k] *= -1
                         result[i] += np.conj(u.T) @ p @ u
                     else:
-                        result[i] += np.conj(u.T) @ params[j] @ u
+                        result[i] += np.conj(u.T) @ H_r[j] @ u
         else:
             for i, r in enumerate(neighbors):
                 for s, u in zip(self.sym.S, self.U):
@@ -175,13 +234,35 @@ class UnitaryRepresentation:
                     # but they are duplicated to cos and sin terms instead
                     j, mirror = neighbor_func(r_)
                     # TODO check
-                    result[i] += np.conj(u.T) @ params[j] @ u
+                    result[i] += np.conj(u.T) @ H_r[j] @ u
         return result / len(self.U)
     
     # symmetrize a collection of matrices, such that they obey H(Sr) = U_S H(r) (U_S)^+ where r is one of the neighbor positions
     # returns a function that does that ^
     # (has a build in sym.neighbors_check)
     def symmetrizer(self, neighbors):
+        """Symmetrize a hermitian operator, such that
+
+        'H(Sr) = U_S H(r) (U_S)^+'
+
+        where `H(r)` is a list of matrices, with `r` as index
+        and `r` comes from a list of positions.
+        The `r` list is called the neighbors list in solid state physics.
+
+        The symmetrisation is a group mean over the entire group,
+        such that the whole operation is an orthogonal projection
+        onto the space in which the symmetry operation described
+        by this class holds.
+        
+        This function prepares an internal function to apply the symmetrization quickly.
+        This is useful if the symmetrization is repeated, since then the preparation pays off.
+
+        Args:
+            neighbors (arraylike(N_r, r-dim)): A list of positions for the matrices in `H_r`.
+
+        Returns:
+            function: A function which takes a `H_r` and returns the symmetrized version, just like `self.symmetrize` would.
+        """
         if len(self.U) <= 1:
             return lambda x: x # do nothing if self.U is empty, which stands for all U being the unit matrix
         assert len(self.sym.S) == len(self.U)
@@ -285,10 +366,21 @@ class UnitaryRepresentation:
             return result / len(self.U)
         return symmetrizer_func
     
-    # symmetrize matrices such that they are invariant under U_S @ mat @ U_S^+ if Sk=k
-    def symmetrize2(self, k_smpl, mat):
-        count = np.zeros(len(k_smpl), dtype=np.int32)
-        result = np.zeros_like(mat)
+    # 
+    def symmetrize2(self, r_smpl, M_r):
+        """Symmetrize matrices `M_r` such that they are
+        invariant under `U_S M_r U_S^+` if `Sr=r`.
+        This is a subgroup symmetrisation of each individual matrix.
+
+        Args:
+            r_smpl (arraylike(N_r, r-dim)): A list of positions for the matrices in `M_r`.
+            M_r (arraylike(N_r, dim, dim)): A matrix for each position.
+
+        Returns:
+            arraylike(N_r, dim, dim): The changed M_r, which fullfils the subgroup symmetry.
+        """
+        count = np.zeros(len(r_smpl), dtype=np.int32)
+        result = np.zeros_like(M_r)
         for sign in [-1, 1] if self.sym.inversion else [1]:
             if sign == 1:
                 # apply U_I (commutes with all other U_S)
@@ -296,9 +388,9 @@ class UnitaryRepresentation:
                 result[:,:k,k:] *= -1
                 result[:,k:,:k] *= -1
             for s, u in zip(self.sym.S, self.U):
-                invariants = (np.einsum("ij,nj->ni", sign*s - np.eye(len(s)), k_smpl)**2).sum(-1) < 1e-7
+                invariants = (np.einsum("ij,nj->ni", sign*s - np.eye(len(s)), r_smpl)**2).sum(-1) < 1e-7
                 count += invariants
-                result[invariants] += np.einsum("nij,li,mj->nlm", mat[invariants], u, np.conj(u))
+                result[invariants] += np.einsum("nij,li,mj->nlm", M_r[invariants], u, np.conj(u))
         return result / count[:,None,None]
 
     # Calculate all the k_smpl and matrices, which can be computed from the given set.
@@ -338,9 +430,16 @@ class UnitaryRepresentation:
                 full = full[order]
         return full_k, full
 
-    # check if a hamilton operator satisfies the symmetry of this unitary representation
-    # hamilon is a function k -> matrix
     def check_symmetry(self, hamilton):
+        """
+        Check if a hermitian operator satisfies the symmetry of this unitary representation.
+
+        Args:
+            hamilton (function(k) -> arraylike(dim, dim)): A function that returns a hermitian matrix.
+
+        Returns:
+            bool: True if the hermitian operator had this exact symmetry.
+        """
         # random sample points
         k_smpl = np.random.random((50, len(self.sym.S[0])))
         k_smpl = ((0.0, 0.5, 0.0),)
@@ -356,8 +455,10 @@ class UnitaryRepresentation:
         # TODO check inversion symmetry
         return True
     
-    # get the subspace structure and dimension for all irreducible representations that were part of the direct sum/product construction
     def subspaces(self):
+        """Get the subspace structure and dimension for
+        all irreducible representations that were
+        part of the direct sum/product construction."""
         # finding the symmetric spaces in U_S in general is much much harder
         # -> assuming U_S is a direct sum of irreducible unitary representations
         # (for a more general construction one can use characters (traces of the representation matrices))
@@ -404,39 +505,43 @@ class UnitaryRepresentation:
         res.inv_split *= rhs
         return res
 
-    ### unitary irreducible representations
+    ### examples for unitary irreducible representations
 
-    # O(3) with inversion -1 for cubic symmetry O_h
     def o3():
+        """O(3) with inversion -1 for cubic symmetry O_h."""
         sym = Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
         u_repr.U = np.asarray(sym.S)
         u_repr.inv_split = 0 # no 1 eigenvalues in inversion
         return u_repr
-    # SO(3) with 1 on inversion for cubic symmetry O_h
+    
     def so3():
+        """SO(3) with 1 on inversion for cubic symmetry O_h."""
         sym = Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
         u_repr.U = np.asarray(sym.S)
         u_repr.inv_split = 3 # all 1 eigenvalues in inversion
         return u_repr
-    # reflected O(3) with inversion -1 for cubic symmetry O_h
+    
     def o3ri():
+        """reflected O(3) with inversion -1 for cubic symmetry O_h."""
         sym = Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
         u_repr.U = -np.asarray(sym.S)
         u_repr.inv_split = 0 # no 1 eigenvalues in inversion
         return u_repr
-    # reflected O(3) with 1 on inversion for cubic symmetry O_h
+    
     def o3r():
+        """reflected O(3) with 1 on inversion for cubic symmetry O_h."""
         sym = Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
         u_repr.U = -np.asarray(sym.S)
         u_repr.inv_split = 3 # all 1 eigenvalues in inversion
         return u_repr
-    # D_3 dihedral triangle symmetry for cubic symmetry O_h
-    # sqrt3 can be given in arbitrary precision if needed
+    
     def d3(negate_inversion: bool, inversion=True, sqrt3=3**.5):
+        """D_3 dihedral triangle symmetry for cubic symmetry O_h.
+        sqrt3 can be given in arbitrary precision if needed."""
         S = [((1,0,0), (0,1,0), (0,0,1)),
              ((0,1,0), (-1,0,0), (0,0,1)), # R_z
              ((0,0,-1), (0,1,0), (1,0,0)), # R_y
@@ -446,8 +551,9 @@ class UnitaryRepresentation:
              ((-.5,.5*sqrt3), (.5*sqrt3,.5)),
              ((-.5,-.5*sqrt3), (-.5*sqrt3,.5))]
         return UnitaryRepresentation.from_generator(S, U, inversion, negate_inversion)
-    # 1d representations for cubic symmetry O_h
+    
     def one_dim(invert: bool, negate_inversion: bool, inversion=True):
+        """1d representations for cubic symmetry O_h."""
         S = [((1,0,0), (0,1,0), (0,0,1)),
              ((1,0,0), (0,0,1), (0,-1,0)),
              ((0,0,-1), (0,1,0), (1,0,0)),

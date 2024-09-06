@@ -1,6 +1,7 @@
 import numpy as np
-from .symmetry import *
-from .unitary_representations import *
+from typing import Self
+from .symmetry import _sym
+from .unitary_representations import _urep
 
 # This file contains a structure very similar to
 # unitary representations, however it only works for direct products
@@ -8,23 +9,34 @@ from .unitary_representations import *
 # about the position of the represented atomic orbitals in the unit cell.
 # This way it can represent a more general set of symmetries
 
-
-# direct sum of two matrices (block diagonal concatenation)
-def direct_sum2(a, b):
-    return np.block([[a, np.zeros((np.shape(a)[0], np.shape(b)[1]))], [np.zeros((np.shape(b)[0], np.shape(a)[1])), b]])
-
-
-def hamiltonian_symmetry(sym: Symmetry, urepr: list = [], pos: list = []):
-    hsym = HamiltonianSymmetry(sym)
-    for u, p in zip(urepr, pos):
-        hsym.append(u, p)
-    return hsym
-
-
 class HamiltonianSymmetry:
-    # sym - symmetry group
-    # A - basis matrix
-    def __init__(self, sym: Symmetry):
+    """
+    This class represents a symmtery for a hermitian operator that
+    is dependent on a periodic spacial parameter.
+    The hermitian operator is represented as a fourier series:
+
+    `H(k) = sum_R(H_R exp(2πikR))`
+
+    The symmetry is based on a fixed spacial symmetry group and represents a
+    direct sum of unitary representations of that symmetry group.
+    There is an additional phase added to each individual unitary representation.
+    The total symmetry can be expressed as:
+
+    `H((S^T)^{-1} k) = U_S H(k) U^+_S exp(2πik(1+S)(r_1-r_2))`
+
+    In solid state physics, the most important example for this
+    is the **system hamiltonian**, which gives the class its name.
+    """
+
+    def __init__(self, sym: _sym.Symmetry):
+        """
+        Initialize a new empty HamiltonianSymmetry based on a spacial symmetry group.
+        The corresponding hermitian operator starts out as 0-dimensional
+        and get extended to n-dim. by appending new unitary representations.
+
+        Args:
+            sym (Symmetry): the spacial symmetry group
+        """
         self.sym = sym
         self.U = [] # unitary representations
         self.pos = [] # e.g. [[0,0,0], [1/4,1/4,1/4]] for k-dependence of symmetry
@@ -32,21 +44,37 @@ class HamiltonianSymmetry:
         # translation symmetries can also be handled separately
         self.translation = np.ones((sym.dim(), 0))
     
-    # dimension (also called degree) of the representation
     def dim(self):
+        """
+        Returns:
+            int: dimension (also called degree) of the full unitary representation/symmetry
+        """
         # sum of the representations, used in the direct sum
         return sum((u.dim() for u in self.U))
     
-    def copy(self):
+    def copy(self) -> Self:
         u_repr = HamiltonianSymmetry(self.sym.copy(), 1)
         u_repr.inv = np.array(self.inv)
         u_repr.U = [u.copy() for u in self.U]
+        u_repr.pos = [x.copy() for x in self.pos]
+        u_repr.names = self.names.copy()
         return u_repr
     
     def __len__(self):
         return len(self.sym)
     
-    def append(self, urepr: UnitaryRepresentation, pos, name):
+    def append(self, urepr: _urep.UnitaryRepresentation, pos, name=""):
+        """Append a unitary representation to the full symmetry.
+        Additional to the representation, there is a position,
+        which introduces a phase after each symmetry operation.
+        See class description for more information.
+
+        Args:
+            urepr (UnitaryRepresentation): a unitary representation to be added as a direct sum to the existing representation.
+                Only unitary representation with skalar behavior under inversion are allowed. This is always the case for irreps.
+            pos (arraylike): the position used for the added phase.
+            name (str, optional): a name that is just used for annotation. Defaults to empty string.
+        """
         if len(pos) != self.sym.dim():
             raise ValueError(f"position (dimension {len(pos)}) needs to match the dimension of the symmetry ({self.sym.dim()})")
         if not (urepr.inv_split == 0 or urepr.inv_split == urepr.dim()):
@@ -57,33 +85,79 @@ class HamiltonianSymmetry:
         self.pos.append(np.array(pos))
         self.names.append(name)
     
-    def append_s(self, pos, name):
-        ''' s orbital, works with any symmetry group '''
-        self.append(UnitaryRepresentation(self.sym, 1), pos, name)
+    def append_s(self, pos, name: str):
+        """Append an automatically created s-orbital.
+        This is a notion from solid state physics that means the representation
+        is a one dimensional representation that does nothing (identity).
+        This works with any symmetry group.
 
-    def append_p(self, pos, name):
-        ''' p_x, p_y, p_z orbitals (in that order) '''
-        urepr = UnitaryRepresentation(self.sym, self.sym.dim())
+        Args:
+            pos (arraylike): the position used for the added phase.
+            name (str, optional): a name that is just used for annotation. Defaults to empty string.
+        """
+        self.append(_urep.UnitaryRepresentation(self.sym, 1), pos, name)
+
+    def append_p(self, pos, name: str):
+        """Append automatically created p-orbitals in axis order. (xyz...)
+        This is a notion from solid state physics that means the representation
+        is the same matrix as the symmetry operation itself.
+        This works with any symmetry group.
+
+        Args:
+            pos (arraylike): the position used for the added phase.
+            name (str, optional): a name that is just used for annotation. Defaults to empty string.
+        """
+        urepr = _urep.UnitaryRepresentation(self.sym, self.sym.dim())
         urepr.U = self.sym.S
         urepr.inv_split = 0
         self.append(urepr, pos, name)
 
-    def append_d2(self, pos, name):
-        ''' d_{z^2} d_{x^2-y^2} orbitals (in that order) '''
-        # TODO make this work for all symmetries
-        self.append(UnitaryRepresentation.d3(False), pos, name)
+    def append_d2(self, pos, name: str):
+        """Append d_{z^2}, d_{x^2-y^2} orbitals in that order.
+        This is a notion from solid state physics that comes from the
+        symmetry of the real spherical harmonics with the same name.
+        This currently only works with the cubic symmetry group.
 
-    def append_d3(self, pos, name):
-        ''' d_yz d_xz d_xy orbitals (in that order) '''
-        urepr = UnitaryRepresentation(self.sym, self.sym.dim())
+        Args:
+            pos (arraylike): the position used for the added phase.
+            name (str, optional): a name that is just used for annotation. Defaults to empty string.
+        """
+        # TODO make this work for all symmetries
+        self.append(_urep.UnitaryRepresentation.d3(False, inversion=self.sym.inversion), pos, name)
+
+    def append_d3(self, pos, name: str):
+        """Append d_yz, d_xz, d_xy orbitals in that order.
+        This is a notion from solid state physics that comes from the
+        symmetry of the real spherical harmonics with the same name.
+        The symmetry of these function is same as that of p-orbitals,
+        but without the negative sign on inversion.
+        As such this works for any symmetry group.
+
+        Args:
+            pos (arraylike): the position used for the added phase.
+            name (str, optional): a name that is just used for annotation. Defaults to empty string.
+        """
+        urepr = _urep.UnitaryRepresentation(self.sym, self.sym.dim())
         urepr.U = self.sym.S / np.linalg.det(self.sym.S)[:,None,None]
         urepr.inv_split = self.sym.dim() # don't use -1 on inversion
         self.append(urepr, pos, name)
     
-    # apply the unitary transformation for the symmetry operation
-    # at the given index at the given k-point to the hamiltonian
-    # to get H(S.T^{-1} k) = U_S(k) H(k) U_S(k).T.conj()
     def apply(self, k, hamiltonian, s_index, inversion=False):
+        """Apply the unitary transformation for one symmetry operation
+        at the given k-point to the hermitian operator to get
+
+        `H((S^T)^{-1} k) = U_S H(k) U^+_S exp(2πik(1+S)(r_1-r_2))`
+
+        Args:
+            k (arraylike): The spacial point
+            hamiltonian (arraylike(dim, dim)): The hermitian operator H(k) on which the operation is performed.
+            s_index (int): The index of the symmetry operation in the associated symmetry.
+            inversion (bool, optional): Whether to add an inversion to the symmetry operation
+                                        (not covered by the index alone). Defaults to False.
+
+        Returns:
+            arraylike(dim, dim): the resulting hermitian operator `U_S H(k) U^+_S exp(ik(1+S)(r_1-r_2))`
+        """
         # apply inversion first, as that is the simple part
         hamiltonian_inv = np.array(hamiltonian)
         n1 = 0
@@ -111,15 +185,37 @@ class HamiltonianSymmetry:
             n1 += d1
         return result
 
-    # parameter symmetrisation with H_r type
     def symmetrize(self, H_r, neighbors):
-        if len(self.U) <= 1:
-            return H_r # do nothing if self.U is empty, which stands for all U being the unit matrix
+        """Symmetrize a hermitian operator of the form
+
+        `H(k) = sum_r(H_r exp(2πikr))`
+
+        where `H_r` is a list of matrices, with `r` as index
+        and `r` comes from a list of positions.
+        The `r` list is called the neighbors list in solid state physics.
+
+        The symmetrisation is a group mean over the entire group,
+        such that the whole operation is an orthogonal projection
+        onto the space in which the symmetry operation described
+        by this class holds.
+        
+        Subgroups of the symmetry are not exploited and everything is
+        computed in the most verbose way to make this function a good
+        reference implementation.
+        For a faster function see `self.symmetrizer`.
+
+        Args:
+            H_r (arraylike(N_r, dim, dim)): A list of matrices, that make up the hermitian operator.
+            neighbors (arraylike(N_r, k-dim)): A list of positions for the matrices in `H_r`.
+
+        Returns:
+            arraylike(N_r, dim, dim): The changed H_r, which respects the symmetry.
+        """
         # add up all symmetries
         assert len(neighbors) == len(H_r)
         assert len(neighbors[0]) == self.sym.dim()
         neighbors = np.asarray(neighbors)
-        neighbor_func = try_neighbor_function(neighbors)
+        neighbor_func = _sym.try_neighbor_function(neighbors)
         
         H_r = np.array(H_r)
         for i, r in enumerate(neighbors):
@@ -155,14 +251,14 @@ class HamiltonianSymmetry:
             H_r2 = H_r
         # Now do translation symmetry. It's a normal subgroup, so it can be done separately like this
         # TODO
-        #H_r3 = np.zeros_like(H_r)
+        #H_r3 = np.zeros_like(H_r2)
         #d = self.sym.dim()
         #for i in range(d):
         #    shift = [neighbor_func(n + self.A[:,i]) for n in neighbors]
         #    H_r3[shift] += self.translation[i][None,:] * H_r2 * self.translation[i][:,None]
         #H_r3 /= self.sym.dim()
         H_r3 = H_r2
-        result = np.zeros_like(H_r) # all U_S are real, so no worries about type here
+        result = np.zeros_like(H_r3) # all U_S are real, so no worries about type here
         # symmetrise with the subgroup sym/inversion (inversion is always a normal subgroup)
         for i, r in enumerate(neighbors):
             # the neighbors are reduced by inversion symmetry
@@ -190,7 +286,7 @@ class HamiltonianSymmetry:
                 n2 = 0
                 for u2, r2 in zip(self.U, self.pos):
                     d2 = u2.dim()
-                    p = np.zeros_like(H_r[i,n1:n1+d1,n2:n2+d2])
+                    p = np.zeros_like(H_r3[i,n1:n1+d1,n2:n2+d2])
                     for k, s in enumerate(self.sym.S):
                         u1_ = u1.U[k]
                         u2_ = u2.U[k]
@@ -208,10 +304,32 @@ class HamiltonianSymmetry:
                 n1 += d1
         return result / len(self.sym.S)
     
-    def symmetrizer(self, neighbors):
+    def symmetrizer(self, neighbors) -> function:
+        """Symmetrize a hermitian operator of the form
+
+        `H(k) = sum_r(H_r exp(2πikr))`
+
+        where `H_r` is a list of matrices, with `r` as index
+        and `r` comes from a list of positions.
+        The `r` list is called the neighbors list in solid state physics.
+
+        The symmetrisation is a group mean over the entire group,
+        such that the whole operation is an orthogonal projection
+        onto the space in which the symmetry operation described
+        by this class holds.
+        
+        This function prepares an internal function to apply the symmetrization quickly.
+        This is useful if the symmetrization is repeated, since then the preparation pays off.
+
+        Args:
+            neighbors (arraylike(N_r, k-dim)): A list of positions for the matrices in `H_r`.
+
+        Returns:
+            function: A function which takes a `H_r` and returns the symmetrized version, just like `self.symmetrize` would.
+        """
         neighbors = np.asarray(neighbors)
         # prepare neighbor lookup
-        neighbor_func = try_neighbor_function(neighbors)
+        neighbor_func = _sym.try_neighbor_function(neighbors)
         # index lookup
         u_index_lookup = []
         n1 = 0
@@ -272,6 +390,7 @@ class HamiltonianSymmetry:
         reduced_table = np.array(reduced_table, dtype=np.int32)
         #print(*np.unique(np.unique(reduced_table[:,1:-1], axis=0, return_counts=True)[1], return_counts=True))
 
+        # TODO reduce inv_table significantly (increasing precision) by cummulating "inv" for equal parameters
         inv_table = np.array(inv_table, dtype=np.int32)
         #print(len(reduced_table)) # can quickly become > 8019
         #print(len(inv_table)) # stays reasonable in size ~ 500
@@ -305,7 +424,8 @@ class HamiltonianSymmetry:
             result = np.zeros_like(H_r) # all U_S are real, so no worries about type here
             # symmetrise with the subgroup sym/inversion (inversion is always a normal subgroup)
             # TODO find a way to sort these operations to make it more efficient
-            # (remove some iterations from the for loop and move them to numpy)
+            # e.g. sort by u2 so the last matrix multiplication needs to be performed less often.
+            # (ideally, remove some iterations from the for loop and move them to numpy)
             for i, k, i1, i2, j, mirror, fac in reduced_table:
                 start1, end1 = u_index_lookup[i1]
                 start2, end2 = u_index_lookup[i2]
@@ -315,11 +435,19 @@ class HamiltonianSymmetry:
             return result / len(self.sym.S)
         return symmetrizer_func
     
-    # fill in symmetric k-points in symmetry reduced points.
-    # -> creates an ordered grid for cubic symmetry
-    # NOTE this method ONLY works for symmetry reduced points, otherwise it will create duplicates
-    # returns a list of k-points and an index list for how to get the k-points.
     def realize_symmetric(self, k_smpl, hamiltonian):
+        """Same as `Symmetry.realize_symmetric` but here the data consists
+        of hermitian operators that transform with the symmetry described by this class.
+
+        NOTE: this method ONLY works for symmetry reduced points, otherwise it will create duplicates.
+
+        Args:
+            k_smpl (arraylike(N_k, k-dim)): The positions that are referred to as k.
+            hamiltonian (arraylike(N_k, dim, dim)): The hermitian operator H(k) for the given k positions.
+
+        Returns:
+            (ndarray(N_k', k-dim), ndarray(N_k', dim, dim), ndarray(N_k')): (The full k-samples with all symmetries, The full list of hermitian operators with all symmetries, The index of the source k-sample for each new k-smpl)
+        """
         order = list(range(len(k_smpl)))
         full_k = list(k_smpl)
         full_hamiltonian = list(hamiltonian)
@@ -369,7 +497,7 @@ def _compare_hamiltonian_symmetry():
         [0.5, 0.5, 0.0],
         [0.5, 0.5, 0.5],
     ]
-    hsym = HamiltonianSymmetry(Symmetry.cubic(True))
+    hsym = HamiltonianSymmetry(_sym.Symmetry.cubic(True))
     hsym.append_s((0.0, 0.0, 0.0), "A")
     hsym.append_p((0.0, 0.0, 0.0), "A")
     hsym.append_s((0.5, 0.5, 0.5), "B")
@@ -378,7 +506,7 @@ def _compare_hamiltonian_symmetry():
     #    print(s)
     
     neighbors = ((0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1)) # works well
-    neighbors = Symmetry.cubic(True).complete_neighbors(neighbors)
+    neighbors = _sym.Symmetry.cubic(True).complete_neighbors(neighbors)
     
     # make a testcase to validate on a particular result
     params = []
@@ -391,7 +519,7 @@ def _compare_hamiltonian_symmetry():
     # make a testcase to test the bandstructure calculation based on thes symmetrizer
     np.set_printoptions(linewidth=1000)
     import bandstructure
-    tb = bandstructure.BandStructureModel.init_tight_binding_from_ref(Symmetry.none(), neighbors, k_smpl, np.zeros_like(ref_bands), 0, 0, cos_reduced=False, exp=True)
+    tb = bandstructure.BandStructureModel.init_tight_binding_from_ref(_sym.Symmetry.none(), neighbors, k_smpl, np.zeros_like(ref_bands), 0, 0, cos_reduced=False, exp=True)
     tb.symmetrizer = hsym.symmetrizer(neighbors) # for this: cos_reduced=False, exp=True
     tb.params = np.zeros_like(tb.params)
     np.random.seed(837258985)
