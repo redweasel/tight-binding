@@ -1,5 +1,6 @@
 import numpy as np
-from .symmetry import *
+from typing import Self, Callable
+from . import symmetry as _sym
 
 # direct sum of two matrices (block diagonal concatenation)
 def direct_sum2(a, b):
@@ -37,7 +38,7 @@ class UnitaryRepresentation:
     This class can represent any unitary representation, however inversion symmetry is handled separately.
     """
 
-    def __init__(self, sym: Symmetry, N):
+    def __init__(self, sym: _sym.Symmetry, N):
         self.U = np.array([np.eye(N) for _ in sym.S])
         # inversion symmetry can be handled separately, as it is in the centrum of the group
         self.inv_split = N # number of 1 eigenvalues of the inversion symmetry unitary representations
@@ -50,13 +51,13 @@ class UnitaryRepresentation:
         """
         return len(self.U[0])
     
-    def copy(self):
+    def copy(self) -> Self:
         u_repr = UnitaryRepresentation(self.sym.copy(), 1)
         u_repr.inv_split = self.inv_split
         u_repr.U = np.array(self.U)
         return u_repr
     
-    def from_generator(S_G, U_G, inversion=True, negate_inversion=False):
+    def from_generator(S_G, U_G, inversion=True, negate_inversion=False) -> Self:
         """Create the symmetry group and the representation from a generator set of size N_G.
         Fails if the generators structure is not closed.
 
@@ -101,12 +102,12 @@ class UnitaryRepresentation:
             assert len(S) < 1000 # limitation to avoid endless loops
             if len(S) <= prev_len:
                 break
-        u_repr = UnitaryRepresentation(Symmetry(np.array(S), inversion), N)
+        u_repr = UnitaryRepresentation(_sym.Symmetry(np.array(S), inversion), N)
         u_repr.inv_split = 0 if negate_inversion else N
         u_repr.U = np.array(U)
         return u_repr
     
-    def match_sym(self, sym: Symmetry):
+    def match_sym(self, sym: _sym.Symmetry):
         """Check if this symmetry matches the given one
         and if so, reorder the elements of this symmetry (`self`)
         to match the order of the given symmetry.
@@ -141,7 +142,7 @@ class UnitaryRepresentation:
 
     # TODO create an iterator, which lists a representant for each of the possible unitary representations of the symmetry given a partition (multiplicities of band energies at k=0)
     
-    def check_U(self):
+    def check_U(self) -> bool:
         N = self.dim()
         # check the structure of the unitary matrices
         # i.e. check if they are a representation of the symmetry by checking 
@@ -204,7 +205,7 @@ class UnitaryRepresentation:
         # add up all symmetries
         assert len(neighbors) == len(H_r) # TODO this doesn't match my definition without inversion symmetry...
         assert len(self.sym.S) == len(self.U)
-        neighbor_func = neighbor_function(neighbors)
+        neighbor_func = _sym.neighbor_function(neighbors)
         k = self.inv_split
         if self.sym.inversion:
             # only half of the neighbor terms are present, but the symmetry is important
@@ -240,7 +241,7 @@ class UnitaryRepresentation:
     # symmetrize a collection of matrices, such that they obey H(Sr) = U_S H(r) (U_S)^+ where r is one of the neighbor positions
     # returns a function that does that ^
     # (has a build in sym.neighbors_check)
-    def symmetrizer(self, neighbors):
+    def symmetrizer(self, neighbors) -> Callable:
         """Symmetrize a hermitian operator, such that
 
         'H(Sr) = U_S H(r) (U_S)^+'
@@ -266,7 +267,7 @@ class UnitaryRepresentation:
         if len(self.U) <= 1:
             return lambda x: x # do nothing if self.U is empty, which stands for all U being the unit matrix
         assert len(self.sym.S) == len(self.U)
-        neighbor_func = neighbor_function(neighbors)
+        neighbor_func = _sym.neighbor_function(neighbors)
         k = self.inv_split
         task_list_r0 = []
         task_list_rinv = []
@@ -430,7 +431,7 @@ class UnitaryRepresentation:
                 full = full[order]
         return full_k, full
 
-    def check_symmetry(self, hamilton):
+    def check_symmetry(self, hamilton) -> bool:
         """
         Check if a hermitian operator satisfies the symmetry of this unitary representation.
 
@@ -507,39 +508,39 @@ class UnitaryRepresentation:
 
     ### examples for unitary irreducible representations
 
-    def o3():
+    def o3() -> Self:
         """O(3) with inversion -1 for cubic symmetry O_h."""
-        sym = Symmetry.cubic(True)
+        sym = _sym.Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
         u_repr.U = np.asarray(sym.S)
         u_repr.inv_split = 0 # no 1 eigenvalues in inversion
         return u_repr
     
-    def so3():
+    def so3() -> Self:
         """SO(3) with 1 on inversion for cubic symmetry O_h."""
-        sym = Symmetry.cubic(True)
+        sym = _sym.Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
         u_repr.U = np.asarray(sym.S)
         u_repr.inv_split = 3 # all 1 eigenvalues in inversion
         return u_repr
     
-    def o3ri():
+    def o3ri() -> Self:
         """reflected O(3) with inversion -1 for cubic symmetry O_h."""
-        sym = Symmetry.cubic(True)
+        sym = _sym.Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
         u_repr.U = -np.asarray(sym.S)
         u_repr.inv_split = 0 # no 1 eigenvalues in inversion
         return u_repr
     
-    def o3r():
+    def o3r() -> Self:
         """reflected O(3) with 1 on inversion for cubic symmetry O_h."""
-        sym = Symmetry.cubic(True)
+        sym = _sym.Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
         u_repr.U = -np.asarray(sym.S)
         u_repr.inv_split = 3 # all 1 eigenvalues in inversion
         return u_repr
     
-    def d3(negate_inversion: bool, inversion=True, sqrt3=3**.5):
+    def d3(negate_inversion: bool, inversion=True, sqrt3=3**.5) -> Self:
         """D_3 dihedral triangle symmetry for cubic symmetry O_h.
         sqrt3 can be given in arbitrary precision if needed."""
         S = [((1,0,0), (0,1,0), (0,0,1)),
@@ -552,7 +553,7 @@ class UnitaryRepresentation:
              ((-.5,-.5*sqrt3), (-.5*sqrt3,.5))]
         return UnitaryRepresentation.from_generator(S, U, inversion, negate_inversion)
     
-    def one_dim(invert: bool, negate_inversion: bool, inversion=True):
+    def one_dim(invert: bool, negate_inversion: bool, inversion=True) -> Self:
         """1d representations for cubic symmetry O_h."""
         S = [((1,0,0), (0,1,0), (0,0,1)),
              ((1,0,0), (0,0,1), (0,-1,0)),

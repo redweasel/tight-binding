@@ -1,7 +1,7 @@
 import numpy as np
-from typing import Self
-from .symmetry import _sym
-from .unitary_representations import _urep
+from typing import Self, Callable
+from . import symmetry as _sym
+from . import unitary_representations as _urep
 
 # This file contains a structure very similar to
 # unitary representations, however it only works for direct products
@@ -304,7 +304,7 @@ class HamiltonianSymmetry:
                 n1 += d1
         return result / len(self.sym.S)
     
-    def symmetrizer(self, neighbors) -> function:
+    def symmetrizer(self, neighbors) -> Callable:
         """Symmetrize a hermitian operator of the form
 
         `H(k) = sum_r(H_r exp(2πikr))`
