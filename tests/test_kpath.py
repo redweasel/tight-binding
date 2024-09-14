@@ -2,7 +2,7 @@ import io
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib.testing as mpl_test
-mpl_test.set_reproducibility_for_testing()
+mpl_test.setup()
 
 from tight_binding_redweasel import kpaths
 from tight_binding_redweasel import symmetry
@@ -11,7 +11,7 @@ def test_kpaths_plot():
     plt.figure(figsize=(5, 5), frameon=False)
     kpaths.SC_PATH.plot(lambda x: x, band_offset=1, label_bands="left", ylim=(-1.0, 1.0))
     s = io.StringIO()
-    plt.savefig(s, format="svg", bbox_inches='tight', metadata={'Date': None})
+    plt.savefig(s, format="svg", bbox_inches='tight', metadata={'Date': None, 'Creator': None})
     svg = s.getvalue()
     with open("tests/ref_kpath_left.svg", "r") as file:
         f = file.read()
@@ -22,7 +22,7 @@ def test_kpaths_plot():
     plt.figure(figsize=(5, 5), frameon=False)
     kpaths.FCC_PATH.plot(lambda x: x, band_offset=1, label_bands="right", ylim=(-1.0, 1.0))
     s = io.StringIO()
-    plt.savefig(s, format="svg", bbox_inches='tight', metadata={'Date': None})
+    plt.savefig(s, format="svg", bbox_inches='tight', metadata={'Date': None, 'Creator': None})
     svg = s.getvalue()
     with open("tests/ref_kpath_right.svg", "r") as file:
         f = file.read()
