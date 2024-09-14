@@ -1,4 +1,3 @@
-
 import numpy as np
 
 from tight_binding_redweasel.symmetry import *

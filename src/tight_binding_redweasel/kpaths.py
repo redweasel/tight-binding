@@ -1,5 +1,6 @@
 from typing import Iterator
 import numpy as np
+from . import symmetry as _sym
 import _collections_abc
 
 points = {}
@@ -116,7 +117,9 @@ class KPath(_collections_abc.Sequence):
             ax2 = plt.gca().twinx() # plot to twinx (now the gca)
         plt.gca().set_prop_cycle(None)
         for _ in range(band_offset):
-            next(plt.gca()._get_lines.prop_cycler)
+            # "prop_cycle" API is not yet stabilised and changed recently.
+            # Adding empty plot commands works as a workaround.
+            plt.plot([], [])
         for i in range(len(ibands[0])):
             plt.plot(x_smpl, ibands[:,i], *args, **kwargs)
         for sym_x in sym_x_smpl:
@@ -174,11 +177,12 @@ class KPath(_collections_abc.Sequence):
 # given band structure data and (non hexagonal) symmetry, return an interpolator for the bandstructure.
 # This works only for data, which is arranged in a rectilinear grid after symmetrization.
 # sym needs to be a Symmetry instance from symmetry.py
-def interpolate(k_smpl, bands, sym, method="cubic"):
+def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic"):
     import scipy.interpolate as interp
-    k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
-    dim = sym.dim()
-    assert len(k_smpl[0]) == dim, "dimensions of the symmetry and the data don't match"
+    dim = len(k_smpl[0])
+    if sym is not None:
+        assert sym.dim() == dim, "dimensions of the symmetry and the data don't match"
+        k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
     n = round(len(k_smpl)**(1/dim))
     assert n**dim == len(k_smpl), "could reconstruct full square/cubic volume"
     
@@ -210,9 +214,12 @@ def interpolate(k_smpl, bands, sym, method="cubic"):
 # The interpolator will return NaN if the point was not in the data.
 # So this function doesn't really interpolate.
 # This is useful for plotting the data along a path
-def interpolate_unstructured(k_smpl, bands, sym, max_error=1e-3):
+def interpolate_unstructured(k_smpl, bands, sym: _sym.Symmetry = None, max_error=1e-3):
     from scipy.spatial import KDTree
-    k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
+    dim = len(k_smpl[0])
+    if sym is not None:
+        assert sym.dim() == dim, "dimensions of the symmetry and the data don't match"
+        k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
     # add a NaN value as last entry
     bands = np.append(bands, [[np.nan]*len(bands[0])], axis=0)
     kdtree = KDTree(k_smpl)
@@ -222,4 +229,9 @@ def interpolate_unstructured(k_smpl, bands, sym, max_error=1e-3):
         return np.reshape(bands[index], (len(k), -1))
     return interp
 
-# TODO add tests
+# define some default paths
+SC_PATH = KPath('G').to('X').to('M').to('G').to('R').to('X')
+FCC_PATH = KPath('G').to('X2').to('W').to('L').to('G').to('K')
+BCC_PATH = KPath('G').to('H').to('P').to('G').to('N').to('P')
+DIAMOND_PATH = KPath('L').to('G').to('X2').to('U').to('G').to('K')
+SC_2D_PATH = KPath('G2d').to('X2d').to('M2d').to('G2d')

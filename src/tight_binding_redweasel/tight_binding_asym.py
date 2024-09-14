@@ -180,6 +180,18 @@ class AsymTightBindingModel:
         self.H = H
         self.S = HermitianFourierSeries.unit_matrix([(0,)*H.dim()], np.shape(H.H_r)[1]) if S is None else S
     
+    def new(neighbors, band_count) -> Self:
+        """Create a new empty model.
+
+        Args:
+            neighbors (arraylike(N_R, dim_k)): Positions of the used matrices
+            band_count (int): Number of bands in the model.
+
+        Returns:
+            Self: An empty model with bandstructure = 0 for all bands.
+        """
+        return AsymTightBindingModel(HermitianFourierSeries(neighbors, np.zeros((len(neighbors), band_count, band_count), dtype=complex)))
+
     def band_count(self):
         """
         Returns:
@@ -270,6 +282,22 @@ class AsymTightBindingModel:
             neighbors, H_r = json_tb_format.load(filename)
             model = AsymTightBindingModel(HermitianFourierSeries(neighbors, H_r))
         return model
+    
+    def randomize(self, sigma, keep_zeros=False, randomize_S=False):
+        """
+        Randomize parameters with normal distributed numbers with a standard deviation sigma.
+
+        **This can break symmetry in bad ways -> call `self.normalize()` manually after this!**
+        """
+        dparams = sigma * np.random.standard_normal(self.H.H_r.shape) + sigma * 1j*np.random.standard_normal(self.H.H_r.shape)
+        if keep_zeros:
+            dparams *= np.where(np.abs(self.H.H_r) < 1e-8, 0, 1)
+        self.H.H_r += dparams
+        if randomize_S:
+            dparams = sigma * np.random.standard_normal(self.S.H_r.shape) + sigma * 1j*np.random.standard_normal(self.S.H_r.shape)
+            if keep_zeros:
+                dparams *= np.where(np.abs(self.S.H_r) < 1e-8, 0, 1)
+            self.S.H_r += dparams
 
     def error(self, k_smpl, ref_bands, band_weights, band_offset):
         """
@@ -570,14 +598,22 @@ class AsymTightBindingModel:
                 loss = new_loss
 
                 if mat_t_path is None:
-                    mat_t_path = np.einsum_path("nk,nid,njd,nd->kij", c_i_E_mat_c, eigvecs, eigvecs_c, diff, optimize="optimal")[0]
+                    #mat_t_path, info = np.einsum_path("nk,nid,njd,nd->kij", c_i_E_mat_c, eigvecs, eigvecs_c, diff, optimize="optimal")
+                    #print(mat_t_path)
+                    #print(info)
+                    # HACK: sometimes einsum_path completely fails! This is a path that works well for my most common case:
+                    mat_t_path = ['einsum_path', (1, 3), (1, 2), (0, 1)]
                 diff *= weights
                 # TODO test contracting eigvecs and eigvecs_c beforehand, because that combination is used everywhere
                 b = np.einsum("nk,nid,njd,nd->kij", c_i_E_mat_c, eigvecs, eigvecs_c, diff, optimize=mat_t_path)
                 if mat_path is None:
                     #mat_path = np.einsum_path("nid,njd,nij->nd", eigvecs_c, eigvecs, np.einsum("nk,kij->nij", f_i, b), optimize="optimal")[0]
                     #combined_path = np.einsum_path("nk,nid,njd,nad,nbd,nab,kl->lij", c_i, eigvecs, eigvecs_c, eigvecs_c, eigvecs, np.einsum("nk,kij->nij", f_i, b), E_mat_c, optimize="optimal")[0]
-                    combined_path = np.einsum_path("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i], [b, b], optimize="optimal")[0]
+                    #combined_path, info = np.einsum_path("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i], [b, b], optimize="optimal")
+                    #print(combined_path)
+                    #print(info)
+                    # HACK: sometimes einsum_path completely fails! This is a path that works well for my most common case:
+                    combined_path = ['einsum_path', (6, 7), (4, 6), (4, 5), (3, 4), (1, 3), (1, 2), (0, 1)]
                 def A(x):
                     x = precond(x / len(k_smpl))
                     #fx = np.einsum("nk,kij->nij", f_i, x)
