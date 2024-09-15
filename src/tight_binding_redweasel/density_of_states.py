@@ -22,11 +22,13 @@ def cubes_preprocessing(band, wrap):
     else:
         return a0[:-1,:-1,:-1], ax[:-1,:-1,:-1], ay[:-1,:-1,:-1], az[:-1,:-1,:-1]
 
+EPSILON = 1e-6
+
 # cheap approximation of volume in cuboid using cube cuts
 def cube_cut_volume(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
     # TODO get rid of these added constants (they are added to make the axial case work without if's)
-    ax, ay, az = np.abs(ax) + 1e-6, np.abs(ay) + 1e-6, np.abs(az) + 1e-6
+    ax, ay, az = np.abs(ax) + EPSILON, np.abs(ay) + EPSILON, np.abs(az) + EPSILON
     # cube cuts = sum of tetrahedrons
     norm = (ax**2 + ay**2 + az**2)**0.5
     ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
@@ -40,12 +42,13 @@ def cube_cut_volume(a0, ax, ay, az):
     volume += np.maximum(0, (-ax - ay + az)/2 + a0)**3
     volume -= np.maximum(0, (-ax - ay - az)/2 + a0)**3
     axyz = ax * ay * az
-    return np.where(np.abs(norm*axyz) > 1e-8, volume / 6 / axyz, a0 > 0)
+    # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
+    return np.where(np.abs(a0) < 3**.5/2, volume / 6 / axyz, a0 > 0)
 
 # cheap approximation using cube cuts (direct derivative of cube_cut_volume, not the actual area!)
 def cube_cut_dvolume(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
-    ax, ay, az = np.abs(ax) + 1e-6, np.abs(ay) + 1e-6, np.abs(az) + 1e-6
+    ax, ay, az = np.abs(ax) + EPSILON, np.abs(ay) + EPSILON, np.abs(az) + EPSILON
     # cube cuts = sum of tetrahedrons
     norm = (ax**2 + ay**2 + az**2)**0.5
     ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
@@ -59,12 +62,13 @@ def cube_cut_dvolume(a0, ax, ay, az):
     area += np.maximum(0, (-ax - ay + az)/2 + a0)**2
     area -= np.maximum(0, (-ax - ay - az)/2 + a0)**2
     axyzn = ax * ay * az * norm
-    return np.where(np.abs(axyzn) > 1e-8, area / (2 * axyzn), 0)
+    # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
+    return np.where(np.abs(a0) < 3**.5/2, area / (2 * axyzn), 0)
 
 # cheap approximation of volume and area in cuboid using cube cuts
 def cube_cut_volume_area(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
-    ax, ay, az = np.abs(ax) + 1e-6, np.abs(ay) + 1e-6, np.abs(az) + 1e-6
+    ax, ay, az = np.abs(ax) + EPSILON, np.abs(ay) + EPSILON, np.abs(az) + EPSILON
     # cube cuts = sum of tetrahedrons
     norm = (ax**2 + ay**2 + az**2)**0.5
     ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
@@ -79,13 +83,14 @@ def cube_cut_volume_area(a0, ax, ay, az):
     volume = v0**3 - v1**3 - v2**3 - v3**3 + v4**3 + v5**3 + v6**3 - v7**3
     area = v0**2 - v1**2 - v2**2 - v3**2 + v4**2 + v5**2 + v6**2 - v7**2
     axyz = ax * ay * az
-    return np.where(np.abs(norm*axyz) > 1e-8, volume / (6 * axyz), a0 > 0), np.where(np.abs(norm*axyz) > 1e-8, area / (2 * axyz * norm), 0)
+    # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
+    return np.where(np.abs(a0) < 3**.5/2, volume / (6 * axyz), a0 > 0), np.where(np.abs(a0) < 3**.5/2, area / (2 * axyz * norm), 0)
 
 # center of mass of the surface of a cube cut
 def cube_cut_area_com(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
     sx, sy, sz = np.sign(ax), np.sign(ay), np.sign(az)
-    ax, ay, az = np.abs(ax) + 1e-6, np.abs(ay) + 1e-6, np.abs(az) + 1e-6
+    ax, ay, az = np.abs(ax) + EPSILON, np.abs(ay) + EPSILON, np.abs(az) + EPSILON
     # cube cuts = sum of tetrahedrons
     norm = (ax**2 + ay**2 + az**2)**0.5
     ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
@@ -97,7 +102,7 @@ def cube_cut_area_com(a0, ax, ay, az):
     v5 = np.maximum(0, (-ax + ay - az)/2 + a0)
     v6 = np.maximum(0, (-ax - ay + az)/2 + a0)
     v7 = np.maximum(0, (-ax - ay - az)/2 + a0)
-    area = v0**2 - v1**2 - v2**2 - v3**2 + v4**2 + v5**2 + v6**2 - v7**2
+    area = np.where(np.abs(a0) < 3**.5/2, v0**2 - v1**2 - v2**2 - v3**2 + v4**2 + v5**2 + v6**2 - v7**2, 0)
     shape = (1,) * len(np.shape(a0)) + (3,)
     com = np.reshape((0, 0, 0), shape)
     d = (1/3) / np.stack((ax, ay, az), axis=-1)
@@ -237,15 +242,39 @@ class DensityOfStates:
         bands = model(np.reshape(self.k_smpl, (-1, 3)))
         self.model = model
         self.bands = np.reshape(bands, shape[:-1]+(-1,))
-        # TODO compute better band ranges using a Newton step to find the actual extrema in k
-        self.bands_range = [(np.min(self.bands[...,i]), np.max(self.bands[...,i])) for i in range(self.bands.shape[-1])]
+        if "bands_grad_hess" in dir(model):
+            # compute better band ranges using a Newton step to find the actual extrema in k
+            # -> use self.model.bands_grads_hess(...), and do the step if the hessian is positive semi-definite
+            # -> only do that if model.bands_grads_hess exists to keep supporting simpler models
+            bands_range_indices = [(np.argmin(self.bands[...,i]), np.argmax(self.bands[...,i])) for i in range(self.bands.shape[-1])]
+            self.bands_range = []
+            for i, band_range_indices in enumerate(bands_range_indices):
+                # find minimum
+                min_k = self.k_smpl.reshape(-1, 3)[band_range_indices[0]]
+                for _ in range(2):
+                    _, grad, hess = model.bands_grad_hess(np.array([min_k]))
+                    eigvals = np.linalg.eigvalsh(hess[0, :, :, i])
+                    if np.all(eigvals >= 0):
+                        min_k -= np.linalg.pinv(hess[0, :, :, i]) @ grad[0, :, i]
+                # find maximum
+                max_k = self.k_smpl.reshape(-1, 3)[band_range_indices[1]]
+                for _ in range(2):
+                    _, grad, hess = model.bands_grad_hess(np.array([max_k]))
+                    eigvals = np.linalg.eigvalsh(hess[0, :, :, i])
+                    if np.all(eigvals <= 0):
+                        max_k -= np.linalg.pinv(hess[0, :, :, i]) @ grad[0, :, i]
+                # compute min/max values and store them
+                self.bands_range.append(tuple(model(np.array([min_k, max_k]))[:, i]))
+        else:
+            self.bands_range = [(np.min(self.bands[...,i]), np.max(self.bands[...,i])) for i in range(self.bands.shape[-1])]
+        # TODO add bands_range_k_points, because that is useful information in some contexts
         # preprocessing the cubes halves he computation time
         self.cubes = [cubes_preprocessing(self.bands[...,i], wrap=wrap) for i in range(len(self.bands_range))]
     
     def model_bandcount(self):
         return len(self.bands_range)
 
-    def states_below(self, energy):
+    def states_below(self, energy: float):
         states = 0.0
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
@@ -255,7 +284,7 @@ class DensityOfStates:
         return states
     
     # returns states_below, density
-    def states_density(self, energy):
+    def states_density(self, energy: float):
         states = 0.0
         density = 0.0
         for i, band_range in enumerate(self.bands_range):
@@ -268,7 +297,7 @@ class DensityOfStates:
         return states, density
     
     # returns density
-    def density(self, energy):
+    def density(self, energy: float):
         density = 0.0
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
@@ -276,17 +305,17 @@ class DensityOfStates:
         return density
     
     # returns density for a specific band
-    def density_band(self, energy, i):
+    def density_band(self, energy: float, i: int):
         if self.bands_range[i][0] < energy < self.bands_range[i][1]:
             return np.mean(cube_cut_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:]))
         return 0.0
     
     # returns density but split into the band contributions
-    def density_bands(self, energy):
+    def density_bands(self, energy: float):
         return [self.density_band(energy, i) for i in range(self.model_bandcount())]
     
     # get the indices of the bands, that cut the given energy
-    def cut_band_indices(self, energy):
+    def cut_band_indices(self, energy: float):
         indices = []
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
@@ -319,41 +348,37 @@ class DensityOfStates:
     
     # for a given number of electrons per cell (float in general)
     # compute the fermi energy (correct for metals and isolators)
-    def fermi_energy(self, electrons, tol=1e-8, maxsteps=30):
-        # first approximation from integer number of electrons
-        assert electrons >= 0 and electrons <= len(self.bands_range)
+    def fermi_energy(self, electrons: float, tol=1e-8, maxsteps=30):
+        assert electrons >= 0 and electrons <= len(self.bands_range), f'"electrons" must be between 0 and the number of bands (here {len(self.bands_range)})'
+        # check if the material is an isolator
         e_int = round(electrons)
-        if e_int > 0 and e_int < len(self.bands_range):
-            max_below = self.bands_range[e_int-1][1]
-            min_above = self.bands_range[e_int][0]
-            if e_int == electrons:
+        if e_int == electrons:
+            if e_int > 0 and e_int < len(self.bands_range):
+                max_below = self.bands_range[e_int-1][1]
+                min_above = self.bands_range[e_int][0]
                 fermi_energy = (max_below + min_above) / 2
                 if max_below < min_above:
                     return fermi_energy # isolator (can only happen at integer electrons)
-            elif e_int > electrons:
-                fermi_energy = max_below
+            elif e_int == 0:
+                return self.bands_range[0][0]
             else:
-                fermi_energy = min_above
-        elif e_int == 0:
-            fermi_energy = self.bands_range[0][0]
-            if electrons == 0:
-                return fermi_energy
-        else:
-            assert e_int == len(self.bands_range)
-            fermi_energy = self.bands_range[-1][1]
-            if electrons == e_int:
-                return fermi_energy
+                assert e_int == len(self.bands_range) # already checked above, it's here just as a reminder
+                return self.bands_range[-1][1]
+        # first approximation from a very rough states curve
+        e_smpl, states_smpl, _ = self.full_curve(N=2)
+        e_index = list(states_smpl > electrons).index(True) - 1
+        fermi_energy = (electrons - states_smpl[e_index])/(states_smpl[e_index+1] - states_smpl[e_index]) * (e_smpl[e_index+1] - e_smpl[e_index]) + e_smpl[e_index]
+        # now do a couple newton steps to find the exact value
         for _ in range(maxsteps):
             states, density = self.states_density(fermi_energy)
-            # TODO handle density = 0 using bisection (isolators are already handles above...)
+            # TODO handle density = 0 in metals
             fermi_energy -= (states - electrons) / density
-            if abs((states - electrons) / density) / fermi_energy <= tol:
+            if abs((states - electrons) / density) <= tol:
                 return fermi_energy
-        return fermi_energy
-        #raise ValueError(f"root search didn't converge in {maxsteps} steps. {abs((states - electrons) / density) / fermi_energy} > {tol}.")
+        raise ValueError(f"root search didn't converge in {maxsteps} steps. {abs((states - electrons) / density)} > {tol}.")
 
     # returns the approximate bandgap if the model describes an isolator, 0 if it describes a metal
-    def bandgap(self, electrons):
+    def bandgap(self, electrons: float):
         # first approximation from integer number of electrons
         assert electrons >= 0 and electrons <= len(self.bands_range)
         e_int = round(electrons)
@@ -363,7 +388,6 @@ class DensityOfStates:
         max_below = self.bands_range[e_int-1][1]
         min_above = self.bands_range[e_int][0]
         if max_below < min_above:
-            # TODO improve this calculation with self.model.bands_grads(...)
             return min_above - max_below # isolator
         return 0.0 # metal
     
@@ -371,7 +395,7 @@ class DensityOfStates:
     def energy_range(self):
         return self.bands_range[0][0], self.bands_range[-1][1]
 
-    def chemical_potential(self, electrons, T_smpl, N=30, tol=1e-8, maxsteps=30):
+    def chemical_potential(self, electrons: float, T_smpl, N=30, tol=1e-8, maxsteps=30):
         fermi_energy = self.fermi_energy(electrons, tol=tol, maxsteps=maxsteps)
         # use a good distribution for energy_smpl,
         # such that this works for small T!
@@ -407,7 +431,7 @@ class DensityOfStates:
         return np.array(res)
     
     # TODO currently WRONG
-    def energy(self, T, electrons, mu=None, N=30):
+    def energy(self, T: float, electrons: float, mu: float=None, N=30):
         if mu is None:
             mu = self.chemical_potential(electrons, [T], N=N)
         # energy is integral e f(e) rho(e) de
@@ -443,7 +467,7 @@ class DensityOfStates:
 
     # volumetric heat capacity in eV/K
     # TODO currently WRONG
-    def heat_capacity(self, T, mu, N=30):
+    def heat_capacity(self, T: float, mu: float, N=30):
         # The heat capacity is du/dT where u is the energy per unit cell
         # u = integral e*rho(e)*f(e) de = -integral N(e)*(f(e)+e df/de(e)) de
         # du/dT = -integral N(e)*(-(e-mu)/T*df/de(e)+e/T*(-df/de(e) - (e-mu)*d2f/de2(e))) de
@@ -477,7 +501,7 @@ class DensityOfStates:
     # if the improved keyword argument is True, the results will be much more precise
     # at the cost of an integration over the fermi surface.
     # returns points, weights
-    def fermi_surface_samples(self, energy, improved=True, normalize=None):
+    def fermi_surface_samples(self, energy: float, improved=True, normalize=None):
         assert normalize in [None, "band", "total"], "normalize needs to be None, 'band' or 'total'"
         # use cube_cut_area_com() to get points, then
         # use the approximate gradients to do a newton step

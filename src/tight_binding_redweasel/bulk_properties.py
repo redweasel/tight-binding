@@ -18,7 +18,7 @@ class KIntegral:
     The integrals are of different forms, so look for the `integrate..` functions for details.
     """
 
-    def __init__(self, dos_model: _dos.DensityOfStates, electrons: int, T: float, errors=False):
+    def __init__(self, dos_model: _dos.DensityOfStates, electrons: float, T: float, errors=False):
         """Initialize an Integral over the bandstructure (k-space) 
 
         Args:
@@ -184,7 +184,7 @@ class KIntegral:
         # transform the derivative, which live in the dual vector space -> dual transformation
         # this transformation also includes the unit conversion using Ångström and hbar in SI.
         # The unit of energy needs to be converted to Joule down below as well.
-        grad_transform = (2*np.pi * 1e-10 / hbar) * A
+        grad_transform = (1/(2*np.pi) * 1e-10 / hbar) * A
         if hessians:
             def g2(e, v, h, k):
                 k = np.einsum("ji,ni->nj", B, k)
@@ -200,7 +200,7 @@ class KIntegral:
             return self.integrate_df(g2, hessians=False, print_error=print_error)
     
     # conductivity divided by the electron/phonon scattering time tau in 1/(Ohm*m*s), assuming constant tau
-    def conductivity_over_tau(self, cell_length, spin_factor=2, print_error=False):
+    def conductivity_over_tau(self, cell_length: float, spin_factor=2, print_error=False):
         I = self.integrate_df(lambda _e, v, _k: v[:,None,:] * v[:,:,None], hessians=False, print_error=print_error)
         # TODO check this for non cubic structures
         k_unit = np.pi*2/cell_length # 1/m
@@ -222,6 +222,7 @@ class KIntegral:
     
     def hall_coefficient(self, A, spin_factor=2):
         # PhysRevB.82.035103 Hall effect formula with constant relaxation time for all bands over all k.
+        # In reality the relaxation times are different over k-space or even just for different spins in the same band. (PhysRev.97.647)
         # Somehow their units don't match the expected result unit, so I removed the division by the speed of light to make it work.
         # I canceled one e from sigma_xx with e^2 from sigma_xyz
         #sigma_xyz = elementary_charge/c/eV * self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)

@@ -240,7 +240,7 @@ class AsymTightBindingModel:
         if format not in {"json"}:
             raise ValueError('only supported format is "json"')
         opt = np.get_printoptions()
-        np.set_printoptions(precision=16, suppress=False, threshold=100000)
+        np.set_printoptions(precision=16, suppress=False, threshold=100000, legacy='1.25')
         if format == "json":
             json_tb_format.save(filename, self.H.neighbors, self.H.H_r)
             # TODO save the S matrix part as well, maybe in a separate file? Or extend the format...

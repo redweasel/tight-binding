@@ -491,7 +491,7 @@ class BandStructureModel:
         if format not in {"python", "json", "wannier90"}:
             raise ValueError('supported formats are "python", "json" and "wannier90"')
         opt = np.get_printoptions()
-        np.set_printoptions(precision=16, suppress=False, threshold=100000)
+        np.set_printoptions(precision=16, suppress=False, threshold=100000, legacy='1.25')
         if format == "python":
             with open(filename, "w") as file:
                 file.write(repr(self.params_complex()) + ",\\\n")
