@@ -128,6 +128,17 @@ class QECrystal:
         ax.set_zlabel(f"z [{self.unit}]")
         #axisEqual3D(ax)
         ax.legend()
+    
+    def mass_density(self) -> float:
+        """Compute the mass density based on the given crystal lattice.
+        This is very useful to sanity check the input parameters.
+
+        Returns:
+            float: mass density in kg/m^3
+        """
+        nuclei_mass = 1.66053907e-27 * sum((element_masses[element_numbers[t]] for t in self.types))
+        electron_mass = 9.1093837e-31 * sum((element_numbers[t] for t in self.types))
+        return (electron_mass + nuclei_mass) / np.linalg.det(self.A*1e-10)
 
     # ----- reading results of QUANTUM ESPRESSO -----
 
@@ -164,6 +175,25 @@ class QECrystal:
             raise IOError("plottable band data not found.")
         z = np.loadtxt(datafile, unpack=True) # This loads the bandx.dat.gnu file
         return np.array(sym_x), z
+
+    # this is my bands plot function for the bands sorted by bandx
+    def plot_bands(self):
+        from matplotlib import pyplot as plt
+        sym_x, z = self.read_bandx()
+        ymin, ymax = np.min(z[1]), np.max(z[1])
+        # insert NaN points for every line that doesn't satisfy x2 > x1 to break up the lines
+        for i in reversed(range(len(z[0]) - 1)):
+            if z[0, i] >= z[0, i+1]:
+                z = np.insert(z, i+1, np.nan, axis=1)
+        plt.plot(z[0], z[1])
+        plt.ylim(ymin, ymax)
+        plt.xlim(np.nanmin(z[0]), np.nanmax(z[0]))
+        plt.vlines(sym_x, ymin, ymax, "black", linestyles="dashed", lw=0.55)
+        fermi_energy = self.read_bands()[4]
+        plt.axhline(fermi_energy, 'r')
+        plt.ylabel("Energy in eV")
+        plt.title(f"Bandstructure of {self.name}")
+        return sym_x
 
     # read the data that has been computed (either by scf(), or by bands())
     # returns k_points, weights, bands, symmetries, fermi_energy
@@ -451,25 +481,6 @@ class QECrystal:
                 fermi_energy = float(header.split(' ')[-2])
         density_of_states = np.loadtxt(f"{self.name}.Dos.dat", unpack=True)
         return density_of_states, fermi_energy
-
-    # this is my bands plot function for the bands sorted by bandx
-    def plot_bands(self):
-        from matplotlib import pyplot as plt
-        sym_x, z = self.read_bandx()
-        ymin, ymax = np.min(z[1]), np.max(z[1])
-        # insert NaN points for every line that doesn't satisfy x2 > x1 to break up the lines
-        for i in reversed(range(len(z[0]) - 1)):
-            if z[0, i] >= z[0, i+1]:
-                z = np.insert(z, i+1, np.nan, axis=1)
-        plt.plot(z[0], z[1])
-        plt.ylim(ymin, ymax)
-        plt.xlim(np.nanmin(z[0]), np.nanmax(z[0]))
-        plt.vlines(sym_x, ymin, ymax, "black", linestyles="dashed", lw=0.55)
-        fermi_energy = self.read_bands()[4]
-        plt.axhline(fermi_energy, 'r')
-        plt.ylabel("Energy in eV")
-        plt.title(f"Bandstructure of {self.name}")
-        return sym_x
 
     # ----- QUANTUM ESPRESSO Parameter construction -----
 

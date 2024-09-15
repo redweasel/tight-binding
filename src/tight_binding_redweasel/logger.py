@@ -10,6 +10,7 @@ class OptimisationLogger:
         self.verbose = verbose
         self.print_loss = print_loss
         self.update_line = update_line
+        self.count = False
 
     def add_message(self, msg):
         self.stream.append(msg)
@@ -21,7 +22,10 @@ class OptimisationLogger:
 
     def add_data(self, iteration, loss, max_err):
         self.stream.append((iteration, loss, max_err))
-        self.iterations.append(iteration)
+        if self.count:
+            self.iterations.append(self.iteration_count() + 1)
+        else:
+            self.iterations.append(iteration)
         self.loss.append(loss)
         if self.print_loss:
             if self.update_line:
@@ -29,18 +33,21 @@ class OptimisationLogger:
             # error visualizer
             # U+2581 = ▁ ... U+2588 = █
             scale = max(*max_err)
-            error_vis = "".join([" " if err/scale <= 1/16 else chr(0x2581 + round(err/scale * 8 - 1)) for err in max_err])
+            error_vis = "".join(
+                [" " if err/scale <= 1/16 else chr(0x2581 + round(err/scale * 8 - 1)) for err in max_err])
             print(f"{iteration:3}: loss{loss:9.2e}{scale:8.1e}×[{error_vis}]", end="")
             if not self.update_line:
                 print()
-    
+
     def iteration_count(self):
-        return self.iterations[-1]
-    
+        if len(self.iterations):
+            return self.iterations[-1]
+        return -1
+
     def last_loss(self):
         return self.loss[-1]
 
-    def plot_loss(self):
+    def plot_loss(self, *args, **kwargs):
         from matplotlib import pyplot as plt
-        plt.semilogy(self.iterations, self.loss)
-    
+        plt.semilogy(self.iterations, self.loss, *args, **kwargs)
+        plt.xlim(self.iterations[0], self.iterations[-1])

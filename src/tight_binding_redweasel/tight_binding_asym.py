@@ -408,6 +408,14 @@ class AsymTightBindingModel:
                     batch_s_f_i = s_f_i[iteration % batch_div::batch_div]
                     batch_s_c_i = s_c_i[iteration % batch_div::batch_div]
                 max_accel = min(len(batch), max_accel_global)
+                # compute c_i if pinv is requested, even though this is kinda slow...
+                if batch_div != 1 and use_pinv:
+                    batch_c_i = np.linalg.pinv(batch_f_i.T)
+                    # counteract the usual treatment:
+                    batch_c_i[:,0] *= 2
+                    norm = len(batch_f_i[0]) - 1 + 0.5**3
+                    batch_c_i *= norm
+                    batch_c_i *= len(batch)
 
                 # regularization
                 if regularization != 1.0:
@@ -469,11 +477,14 @@ class AsymTightBindingModel:
                     # this angle should always be ~90°
                     #log.add_message(f"angle {180/np.pi*np.arccos(min(1, max(-1, np.real(np.sum(last_add * H_r_add.conj())) / (np.linalg.norm(H_r_add) * np.linalg.norm(last_add)))))}")
 
+                    H_r_add[0] *= 2
+                    rr = np.linalg.norm(H_r_add)**2 # this needs to be computed without the preconditioner
+                    H_r_add[0] /= 2
                     #r_AA_r = np.einsum("kn,nid,njd,d,ln,nad,nbd,lab,kij", batch_c_i, eigvecs, eigvecs_c, band_weights[0]**2, batch_f_i, eigvecs_c, eigvecs, H_r_add, H_r_add.conj(), optimize="optimal")
-                    ev_r = np.einsum("nad,nbd,lab,d->nld", eigvecs_c, eigvecs, H_r_add, band_weights[0])
-                    r_AA_r = np.einsum("nk,nl,nld,nkd", batch_c_i, batch_f_i, ev_r, ev_r.conj())
+                    ev_r = np.einsum("nad,nbd,lab,d->nld", eigvecs_c, eigvecs, H_r_add, band_weights[0], optimize="greedy")
+                    r_AA_r = np.einsum("nk,nl,nld,nkd", batch_c_i, batch_f_i, ev_r, ev_r.conj(), optimize="greedy")
                     # factor 2 because of how the symmetrisation works above!
-                    alpha = norm * 0.5 * np.linalg.norm(H_r_add)**2 / np.real(r_AA_r)
+                    alpha = norm * 0.5 * rr / np.real(r_AA_r)
                     #log.add_message(f"{alpha}, {0.5 / len(batch)}")
                 else:
                     alpha = 0.5 / len(batch) / band_weights_norm
@@ -486,7 +497,7 @@ class AsymTightBindingModel:
                         S_r_add *= S_r_mask
                     S_r_add[0] = (S_r_add[0] + S_r_add[0].T.conj()) / 4
                     S_r_add *= learning_rate * alpha
-                # impulse acceleration (beta given by the problem)
+                # impulse acceleration (factor given by the problem)
                 H_r_add += last_add * (1 - 1 / max_accel)
                 if train_S:
                     S_r_add += last_add_s * (1 - 1 / max_accel) # don't accelerate S???
@@ -505,7 +516,7 @@ class AsymTightBindingModel:
         log.add_data(iteration, l, err)
         return log
 
-    def optimize_cg(self, k_smpl, ref_bands, band_weights, band_offset: int, iterations: int, train_S=False, keep_zeros=False, convergence_threshold=1e-3, loss_threshold=1e-16, max_cg_iterations=5, log=True):
+    def optimize_cg(self, k_smpl, ref_bands, band_weights, band_offset: int, iterations: int, train_S=False, keep_zeros=False, precond=True, convergence_threshold=1e-3, loss_threshold=1e-16, max_cg_iterations=5, log=True):
         N = np.shape(self.H.H_r)[1]
         N_B = len(ref_bands[0])
         assert band_offset >= 0 and band_offset <= N - N_B, f"band_offset={band_offset} must be in [0, {N-N_B}]"
@@ -547,22 +558,32 @@ class AsymTightBindingModel:
         #k_weights = np.real(np.einsum("nm->n", np.einsum("nk,mk->nm", c2_i, c2_i.conj()))[:,None])
         weights = weights[None,:]# * k_weights
         
-        # preconditioned CG (here) is:
-        # E^+ A^+ A E y = E^+ A^+ b, x = E y, E invertible
-        # where all preconditioning matrices E are expressed as
-        # functions, which take ownership of their argument and mutate it!
-        # E = E^+
-        # TODO add k_weights in here as well!
-        E_mat = np.linalg.pinv(np.linalg.cholesky(np.einsum("nk,nl->kl", c_i, f_i)).T.conj()) * len(k_smpl)**.5
-        E_mat_c = np.conj(E_mat)
-        # precompute a contraction that comes up often
-        c_i_E_mat_c = np.einsum("nk,kl->nl", c_i, E_mat_c)
-        #print(E_mat)
+        if precond:
+            # preconditioned CG (here) is:
+            # E^+ A^+ A E y = E^+ A^+ b, x = E y, E invertible
+            # where all preconditioning matrices E are expressed as
+            # functions, which take ownership of their argument and mutate it!
+            # E = E^+
+            # TODO add k_weights in here as well!
+            # TODO it seems that preconditioning like this does not always result in an improvement... why?
+            #E_mat = np.linalg.pinv(np.linalg.cholesky(np.einsum("nk,nl->kl", c_i, f_i))) * len(k_smpl)**.5
+            E_mat = np.linalg.cholesky(np.linalg.pinv(np.einsum("nk,nl->kl", c_i, f_i))) * len(k_smpl)**.5
+            E_mat_c = np.conj(E_mat)
+            # precompute a contraction that comes up often
+            c_i_E_mat_c = np.einsum("nk,kl->nl", c_i, E_mat_c)
+            #print(E_mat)
 
-        def precond(x):
-            # TODO preconditioning based on band_weights!
-            np.einsum("lk,kij->lij", E_mat, x, out=x)
-            return x
+            def precond(x):
+                # TODO preconditioning based on band_weights!
+                np.einsum("lk,kij->lij", E_mat, x, out=x)
+                return x
+        else:
+            E_mat = np.eye(len(f_i[0]))
+            E_mat_c = np.eye(len(f_i[0]))
+            c_i_E_mat_c = c_i
+            def precond(x):
+                return x
+
 
         self.normalize()
 
@@ -621,10 +642,10 @@ class AsymTightBindingModel:
                     #return np.einsum("nk,nid,njd,nad,nbd,nab,kl->lij", c_i, eigvecs, eigvecs_c, eigvecs_c, eigvecs, fx, E_mat_c, optimize=combined_path)
                     return np.einsum("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i.conj()], [x, np.swapaxes(x, -1, -2).conj()], optimize=combined_path)
                 # A(x) is close to a projection matrix
-                step = precond(conjugate_gradient_solve(A, b, err=np.linalg.norm(b) * 1e-2, max_i=max_cg_iterations))
+                step = precond(conjugate_gradient_solve(A, b, err=np.linalg.norm(b) * 1e-3, max_i=max_cg_iterations))
                 step *= 1 / len(k_smpl)
 
-                self.H.H_r -= step.reshape(self.H.H_r.shape)
+                self.H.H_r -= step
                 if keep_zeros:
                     self.H.H_r *= H_r_mask
                 # keep the 0 entry hermitian!
