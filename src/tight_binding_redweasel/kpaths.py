@@ -1,4 +1,4 @@
-from typing import Iterator
+from typing import Iterator, Callable
 import numpy as np
 from . import symmetry as _sym
 import _collections_abc
@@ -174,18 +174,31 @@ class KPath(_collections_abc.Sequence):
             k_points = k_points + f"{x*2} {y*2} {z*2} 1\n"
         return k_points
 
-# given band structure data and (non hexagonal) symmetry, return an interpolator for the bandstructure.
-# This works only for data, which is arranged in a rectilinear grid after symmetrization.
-# sym needs to be a Symmetry instance from symmetry.py
-def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic"):
+
+def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", periodic=True) -> Callable:
+    """Given band structure data and symmetry, return an 1D/2D/3D interpolator for the bandstructure.
+    This works only for data, which can be arranged in a rectilinear grid after symmetrization.
+
+    Args:
+        k_smpl (arraylike(N_k, dim(k))): k-points for interpolation
+        bands (arraylike(N_k, N_B)): (band) data for the k-points
+        sym (Symmetry, optional): symmetry for realize_symmetric_data on the data to complete the grid. Defaults to None.
+        method (str, optional): see `scipy.interpolate.RegularGridInterpolator(method=...)`. Defaults to "cubic".
+        periodic (bool, optional): if True, the data will be wrapped in a [-0.5, 0.5] unit cell and the interpolator will work for any k. Defaults to True.
+
+    Returns:
+        scipy.interpolate.RegularGridInterpolator: interpolator for the data
+    """
     import scipy.interpolate as interp
+    assert np.shape(k_smpl)[0] == np.shape(bands)[0], f"number of k_smpl and bands needs to match, but was k_smpl: ({np.shape(k_smpl)}), bands: ({np.shape(bands)})"
     dim = len(k_smpl[0])
     if sym is not None:
-        assert sym.dim() == dim, "dimensions of the symmetry and the data don't match"
-        k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands)
+        assert sym.dim() == dim, f"dimensions of the symmetry and the k_smpl data don't match, symmetry: {sym.dim()}, k_smpl: {dim}"
+        k_smpl_orig = k_smpl
+        k_smpl, bands = sym.realize_symmetric_data(k_smpl, bands, unit_cell=periodic)
     n = round(len(k_smpl)**(1/dim))
     assert n**dim == len(k_smpl), "could reconstruct full square/cubic volume"
-    
+
     # sort (again) by x, y, z compatible with reshape to meshgrid
     bands = np.array(bands)
     k_smpl = np.array(k_smpl)
@@ -197,24 +210,37 @@ def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic"):
         bands = bands[reorder]
     
     used_k_smpl = k_smpl.reshape((n,)*dim + (dim,)).T
+    used_bands = bands.reshape((n,)*dim + (-1,)) # TODO is transpose needed here as well??? Probably yes!
+    if periodic:
+        # TODO make it work for k outside of the original k_smpl range by
+        # 1. extending the range of the data using periodic points
+        # 2. wrapping the function argument of the returned function using % 1.0
+        for i in range(dim):
+            vec = np.zeros(dim)
+            vec[i] = 1.0
+            vec = vec.reshape((dim,) + (1,)*dim)
+            used_k_smpl = np.concatenate([used_k_smpl.take([-1], axis=i+1, mode="wrap") - vec, used_k_smpl, used_k_smpl.take([0], axis=i+1, mode="wrap") + vec], axis=i+1)
+            used_bands = np.concatenate([used_bands.take([-1], axis=i, mode="wrap"), used_bands, used_bands.take([0], axis=i, mode="wrap")], axis=i)
+    
     if dim == 1:
-        return interp.RegularGridInterpolator(used_k_smpl,
-                                                bands.reshape((n,)*dim + (-1,)),
-                                                method=method)
+        interp_f = interp.RegularGridInterpolator(used_k_smpl, used_bands, method=method)
     if dim == 2:
-        return interp.RegularGridInterpolator((used_k_smpl[0][:,0], used_k_smpl[1][0,:]),
-                                                bands.reshape((n,)*dim + (-1,)),
+        interp_f = interp.RegularGridInterpolator((used_k_smpl[0][:,0], used_k_smpl[1][0,:]),
+                                                used_bands,
                                                 method=method)
     if dim == 3:
-        return interp.RegularGridInterpolator((used_k_smpl[0][:,0,0], used_k_smpl[1][0,:,0], used_k_smpl[2][0,0,:]),
-                                                bands.reshape((n,)*dim + (-1,)),
+        interp_f = interp.RegularGridInterpolator((used_k_smpl[0][:,0,0], used_k_smpl[1][0,:,0], used_k_smpl[2][0,0,:]),
+                                                used_bands,
                                                 method=method)
+    if periodic:
+        return lambda k: interp_f((k + 0.5) % 1.0 - 0.5)
+    return interp_f
 
 # given band structure data and symmetry, return an interpolator for the bandstructure.
 # The interpolator will return NaN if the point was not in the data.
 # So this function doesn't really interpolate.
 # This is useful for plotting the data along a path
-def interpolate_unstructured(k_smpl, bands, sym: _sym.Symmetry = None, max_error=1e-3):
+def interpolate_unstructured(k_smpl, bands, sym: _sym.Symmetry = None, max_error=1e-3) -> Callable:
     from scipy.spatial import KDTree
     dim = len(k_smpl[0])
     if sym is not None:

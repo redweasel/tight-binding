@@ -19,14 +19,12 @@ def fermi_surface(model, fermi_energy, k_smpl):
     return volumes, indices
 
 
-def plot_3D_fermi_surface(model, fermi_energy, N=32, elev=35, azim=20):
+def plot_3D_fermi_surface(model, fermi_energy, N=32, elev=35, azim=20, k_range=[-0.5, 0.5]):
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    import matplotlib
     import matplotlib.colors as mcolors
     from skimage import measure
-    x_ = np.linspace(-.5, .5, N)
-    y_ = np.linspace(-.5, .5, N)
-    z_ = np.linspace(-.5, .5, N)
-    x, y, z = np.meshgrid(x_, y_, z_, indexing='ij')
+    x, y, z = np.meshgrid(*3*[np.linspace(*k_range, N)], indexing='ij')
     xyz = np.stack([x, y, z], axis=-1)
 
     # define light source
@@ -53,27 +51,24 @@ def plot_3D_fermi_surface(model, fermi_energy, N=32, elev=35, azim=20):
     # with mayavi (see skimage.measure.marching_cubes docstring).
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
-    mesh = Poly3DCollection(np.array(all_verts)/N - 0.5, antialiased=False) # in 3.7 there is shade=True
+    mesh = Poly3DCollection(np.array(all_verts)/N * (k_range[1] - k_range[0]) + k_range[0], antialiased=False)
     mesh.set_edgecolor(None)
     mesh.set_facecolor(all_rgb)
     ax.add_collection3d(mesh)
-    ax.set_xlim(-0.5, 0.5)
-    ax.set_ylim(-0.5, 0.5)
-    ax.set_zlim(-0.5, 0.5)
+    ax.set_xlim(*k_range)
+    ax.set_ylim(*k_range)
+    ax.set_zlim(*k_range)
     ax.set_aspect("equal")
     ax.view_init(elev=elev, azim=azim)
 
     plt.tight_layout()
     plt.show()
 
-def export_3D_fermi_surface(file, model, fermi_energy, N=32):
+def export_3D_fermi_surface(file, model, fermi_energy, N=32, k_range=[-0.5, 0.5]):
     from skimage import measure
     import matplotlib.colors as mcolors
 
-    x_ = np.linspace(-.5, .5, N)
-    y_ = np.linspace(-.5, .5, N)
-    z_ = np.linspace(-.5, .5, N)
-    x, y, z = np.meshgrid(x_, y_, z_, indexing='ij')
+    x, y, z = np.meshgrid(*3*[np.linspace(*k_range, N)], indexing='ij')
     xyz = np.stack([x, y, z], axis=-1)
 
     # use default colors from matplotlib

@@ -52,9 +52,18 @@ def test_kpaths_interpolate():
     np.random.seed(13**5)
     k_smpl = np.array([(0, 0), (0, 0.5), (0, 1), (0.5, 0.5), (0.5, 1), (1, 1)])
     bands = np.random.random((len(k_smpl), 2))
-    interp = kpaths.interpolate(k_smpl, bands, sym=symmetry.Symmetry.square())
+    interp = kpaths.interpolate(k_smpl, bands, sym=symmetry.Symmetry.square(), periodic=False)
     for k, band in zip(k_smpl, bands):
         assert np.linalg.norm(interp(k) - band) < 1e-12, f"{interp(k)} != {band}"
         assert np.linalg.norm(interp(-k) - band) < 1e-12, f"{interp(-k)} != {band}"
 
-test_kpaths_plot_svg()
+
+def test_kpaths_interpolate():
+    np.random.seed(13**5)
+    k_smpl = np.array([(0, 0), (0, 0.5), (0.5, 0.5)])
+    bands = np.random.random((len(k_smpl), 2))
+    interp = kpaths.interpolate(k_smpl, bands, sym=symmetry.Symmetry.square(), periodic=True)
+    for k, band in zip(k_smpl, bands):
+        assert np.linalg.norm(interp(k) - band) < 1e-12, f"{interp(k)} != {band}"
+        assert np.linalg.norm(interp(-k) - band) < 1e-12, f"{interp(-k)} != {band}"
+        assert np.linalg.norm(interp(k+1) - band) < 1e-12, f"{interp(k+1)} != {band}"

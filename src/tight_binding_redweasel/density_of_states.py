@@ -115,7 +115,7 @@ def cube_cut_area_com(a0, ax, ay, az):
     com +=  v6[...,None]**2 * (np.reshape(( 1,  1, -1), shape)/2 + d * v6[...,None])
     com -=  v7[...,None]**2 * (np.reshape(( 1,  1,  1), shape)/2 + d * v7[...,None])
     com *= np.stack((sx, sy, sz), axis=-1)
-    com = np.where(area[...,None] != 0, com / area[...,None], np.reshape((0, 0, 0), shape))
+    com = com / np.where(area[...,None] != 0, area[...,None], np.inf)
     axyz = ax * ay * az
     area = np.where(np.abs(axyz) != 0, area / (2 * axyz), 0)
     return area, com

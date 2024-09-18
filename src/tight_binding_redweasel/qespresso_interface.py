@@ -2,7 +2,7 @@ import os
 import numpy as np
 
 # simple interface for QUANTUM ESPRESSO
-# assuming quantum espresso is installed on linux
+# assuming quantum espresso is installed and in the PATH
 
 ibrav_map = { "none": 0, "sc": 1, "fcc": 2, "bcc": 3, "hex": 4, "tri": 5, "monoclinic": 12 }
 
@@ -21,7 +21,16 @@ def qe_prepare(pseudo_potential_files_dict):
         os.mkdir("./pseudo")
 
     # TODO checkout https://github.com/dalcorso/pslibrary for automation of this process?
-    for file in pseudo_potential_files_dict.values():
+    for name, file in pseudo_potential_files_dict.copy().items():
+        if file is None:
+            # try to automatically choose the filename
+            # TODO these are close, but not correct...
+            # they are missing the valence tag spd
+            # a correct name would be "Cu.rel-pbesol-dn-kjpaw_psl.1.0.0.UPF"
+            #                                        ^
+            # To get those one would need to query f"http://pseudopotentials.quantum-espresso.org/legacy_tables/ps-library/{name.lower()}"
+            file = name + ".rel-pbesol-n-kjpaw_psl.1.0.0.UPF"
+            pseudo_potential_files_dict[name] = file
         if not os.path.isfile("./pseudo/" + file):
             os.chdir("./pseudo")
             os.system("wget https://pseudopotentials.quantum-espresso.org/upf_files/" + file)
@@ -55,6 +64,92 @@ def bcc(a):
 # create a hexagonal lattice with spacing a and height c
 def hexagonal(a, c):
     return np.array([[1,0,0], [-1/2,3**.5/2,0], [0,0,c/a]]).T*a
+
+# Triclinic (aP) C_i point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def triclinic(a: float, b: float, c: float, alpha: float, beta: float, gamma: float):
+    assert a > 0.0 and b > 0.0 and c > 0.0, f"all lengths a, b, c need to be positive, but were {a:.3e}, {b:.3e}, {c:.3e}"
+    assert np.pi > alpha and alpha > 0.0 and np.pi > beta and beta > 0.0 and np.pi > gamma and gamma > 0.0, f"all angles need to be in the range (0, π), but were α={alpha/np.pi:.4}π, β={beta/np.pi:.4}π, γ={gamma/np.pi:.4}π"
+    assert alpha + beta + gamma < np.pi*2, f"invalid combination of angles α={alpha/np.pi:.4}π, β={beta/np.pi:.4}π, γ={gamma/np.pi:.4}π (inner angle sum must by smaller than 2π, but was {(alpha + beta + gamma)/np.pi}π)"
+    bc = np.cos(beta)
+    bs = np.sin(beta)
+    gc = np.cos(gamma)
+    gs = np.sin(gamma)
+    v = (np.cos(alpha) - gc*bc) / gs
+    assert v*v < bs*bs, f"invalid combination of angles α={alpha/np.pi:.4}π, β={beta/np.pi:.4}π, γ={gamma/np.pi:.4}π (one angle is bigger than the other two combined)"
+    return np.array([[a, 0.0, 0.0],
+                [gc * b, np.sin(gamma) * b, 0.0],
+                [bc * c, v * c, (bs*bs - v*v)**.5 * c]]).T
+
+# Monoclinic (mP) C_2h point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def monoclinic(a: float, b: float, c: float, beta: float):
+    assert a > 0.0 and b > 0.0 and c > 0.0, f"all lengths a, b, c need to be positive, but were {a:.3e}, {b:.3e}, {c:.3e}"
+    assert np.pi > beta and beta > 0.0, f"angle needs to be in the range (0, π), but was β={beta/np.pi:.4}π"
+    return np.array([[a, 0.0, 0.0],
+                [0.0, b, 0.0],
+                [np.cos(beta) * c, 0.0, np.sin(beta) * c]]).T
+
+# Base centered monoclinic (mS) C_2h point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def monoclinic_base_centered(a: float, b: float, c: float, beta: float):
+    assert a > 0.0 and b > 0.0 and c > 0.0, f"all lengths a, b, c need to be positive, but were {a:.3e}, {b:.3e}, {c:.3e}"
+    assert np.pi > beta and beta > 0.0, f"angle needs to be in the range (0, π), but was β={beta/np.pi:.4}π"
+    return np.array([[0.5*a, -0.5*b, 0.0],
+                [0.5*a, 0.5*b, 0.0],
+                [np.cos(beta) * c, 0.0, np.sin(beta) * c]]).T
+
+# Orthorhombic (oP) D_2h point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def orthorhombic(a: float, b: float, c: float):
+    assert a > 0.0 and b > 0.0 and c > 0.0, f"all lengths a, b, c need to be positive, but were {a:.3e}, {b:.3e}, {c:.3e}"
+    return np.array([[a, 0.0, 0.0],
+                [0.0, b, 0.0],
+                [0.0, 0.0, c]]).T
+
+# Base centered orthorhombic (oP) D_2h point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def orthorhombic_base_centered(a: float, b: float, c: float):
+    assert a > 0.0 and b > 0.0 and c > 0.0, f"all lengths a, b, c need to be positive, but were {a:.3e}, {b:.3e}, {c:.3e}"
+    return np.array([[0.5*a, -0.5*b, 0.0],
+                [0.5*a, 0.5*b, 0.0],
+                [0.0, 0.0, c]]).T
+
+# Body centered orthorhombic (oI) D_2h point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def orthorhombic_body_centered(a: float, b: float, c: float):
+    assert a > 0.0 and b > 0.0 and c > 0.0, f"all lengths a, b, c need to be positive, but were {a:.3e}, {b:.3e}, {c:.3e}"
+    return np.array([[-0.5*a, 0.5*b, 0.5*c],
+                [0.5*a, -0.5*b, 0.5*c],
+                [0.5*a, 0.5*b, -0.5*c]]).T
+
+# Face centered orthorhombic (oF) D_2h point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def orthorhombic_face_centered(a: float, b: float, c: float):
+    assert a > 0.0 and b > 0.0 and c > 0.0, f"all lengths a, b, c need to be positive, but were {a:.3e}, {b:.3e}, {c:.3e}"
+    return np.array([[0.0, 0.5*b, 0.5*c],
+                [0.5*a, 0.0, 0.5*c],
+                [0.5*a, 0.5*b, 0.0]]).T
+
+# Tetragonal (tP) D_4h point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def tetragonal(a: float, c: float):
+    assert a > 0.0 and c > 0.0, f"all lengths a, c need to be positive, but were {a:.3e}, {c:.3e}"
+    return np.array([[a, 0.0, 0.0],
+                [0.0, a, 0.0],
+                [0.0, 0.0, c]]).T
+
+# Body centered tetragonal (tI) D_4h point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def tetragonal_body_centered(a: float, c: float):
+    assert a > 0.0 and c > 0.0, f"all lengths a, c need to be positive, but were {a:.3e}, {c:.3e}"
+    return np.array([[-0.5*a, 0.5*a, 0.5*c],
+                [0.5*a, -0.5*a, 0.5*c],
+                [0.5*a, 0.5*a, -0.5*c]]).T
+
+# Rhombohedral (hR) D_3d point group (Schönflies notation https://en.wikipedia.org/wiki/Schoenflies_notation)
+def rhombohedral(a: float, alpha: float):
+    assert a > 0.0, "length a needs to be positive, but was {a:.3e}"
+    # basis in which the crystal stands upright
+    # -> reciprocal is also of the same type, but rotated by 180°
+    assert alpha > 0.0 and alpha < 2.0*np.pi/3, f"angle needs to be in the range (0, 2π/3), but was α={alpha/np.pi:.4}π"
+    v = 2.0/3.0 - 2.0/3.0*np.cos(alpha)
+    h = (1.0 - v)**.5 * a
+    r = v**.5 * a
+    return np.array([[r, 0.0, h],
+                [-0.5*r, 3**.5/2 * r, h],
+                [-0.5*r, -3**.5/2 * r, h]]).T
 
 class QECrystal:
     # name - the prefix for the files
@@ -251,6 +346,7 @@ class QECrystal:
         S = []
         S_trans = []
         to_eV = 27.21138625 # from Hartree = 2Ry to 1eV
+        bohr_to_angstrom = 0.52917721 # bohr_radius in Angstrom
         filename = f"./qe-data/{self.name}.save/data-file-schema.xml" if incomplete else f"./qe-data/{self.name}.xml"
         with open(filename, 'r') as file:
             from xml.dom.minidom import parse
@@ -264,10 +360,14 @@ class QECrystal:
             reciprocal = np.array([b1, b2, b3]).T
             inv_reciprocal = np.linalg.inv(reciprocal)
 
+            # This A is in bohr_radius -> convert it to Angstrom
             a1 = [float(x) for x in document.getElementsByTagName("a1")[0].firstChild.nodeValue.strip().split()]
             a2 = [float(x) for x in document.getElementsByTagName("a2")[0].firstChild.nodeValue.strip().split()]
             a3 = [float(x) for x in document.getElementsByTagName("a3")[0].firstChild.nodeValue.strip().split()]
-            A = np.array([a1, a2, a3]).T
+            A = np.array([a1, a2, a3]).T * bohr_to_angstrom
+            # TODO consider returning "reciprocal" if it is too difficult to recontruct it
+            # inv_reciprocal and A.T are collinear, but with what factor???
+            #assert np.linalg.norm(inv_reciprocal - (A.T / np.linalg.norm(A[0]))) < 1e-7, f"reciprocal lattice doesn't match real lattice... This problem comes from Quantum Espresso. The compared matrices were\n{inv_reciprocal}\nand\n{A.T / np.linalg.norm(A[0])}"
             # now find all the data in the xml file
             symmetry_list = document.getElementsByTagName("symmetry")
             for sym in symmetry_list:
@@ -290,20 +390,27 @@ class QECrystal:
             # transform k_points to crystal coordinates
             k_points = (inv_reciprocal @ np.array(k_points).T).T
             # transform symmetries to crystal coordinates
+            # HOWEVER: they seem to already be in crystal coordinates!
+            # HOWEVER: they are for the real lattice, while I only care about the symmetries for the reciprocal lattice.
             if len(S) == 0:
                 # ???
                 S = np.eye(3)[None,...]
             else:
-                S = np.einsum("nkl,ik,lj->nij", S, inv_reciprocal, reciprocal)
+                #S = np.einsum("ik,nkl,lj->nij", inv_reciprocal, S, reciprocal)
                 # TODO translations should also be transformed!
+
+                # transform S from the real space symmetries to the reciprocal space symmetries.
+                S = np.array(S).swapaxes(-1, -2)
+                S = np.linalg.inv(S)
             # symmetries should be orthogonal in this basis. TODO sometimes they are not??? Related to fractional symmetries...
             if len(S_trans) == 0:
-                assert np.linalg.norm(np.einsum("nij, nik -> njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
+                assert np.linalg.norm(np.einsum("nij,nik->njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
             else:
                 # only return the symmetries without translational part
                 S = [S for S, t in zip(S, S_trans) if np.linalg.norm(t) < 1e-10]
-                # those symmetries without translation should be orthogonal!
+                # those symmetries without translation should be orthogonal! (nope...)
                 #assert np.linalg.norm(np.einsum("nij, nik -> njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
+                print("WARNING: fractional symmetries dropped")
             fermi_energy_node = document.getElementsByTagName("fermi_energy")[0]
             fermi_energy = float(fermi_energy_node.firstChild.nodeValue.strip()) * to_eV
         return np.array(k_points), np.array(bands), S, fermi_energy, A
@@ -520,6 +627,11 @@ class QECrystal:
         if k_grid_size3 is None:
             k_grid_size3 = k_grid_size
         with open(f"{self.name}.scf.in", "w") as file:
+            # Notes:
+            # The following is just for non relativistic calculations
+            # for relativistic calculations, use the additional parameters
+            # lspinorb=.true., noncolin=.true.
+            # TODO celldm(1) is no longer allowed to be specified if CELL_PARAMETERS are used...
             file.write(f"""
 &control
     calculation='scf',
