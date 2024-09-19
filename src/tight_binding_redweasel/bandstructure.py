@@ -603,6 +603,7 @@ class BandStructureModel:
         grads = np.real(np.diagonal(df_ev, axis1=2, axis2=3))
         hess1 = np.real(np.einsum("mji, mpqjk, mki -> mpqi", np.conj(ev), ddf, ev))
         # second order perturbation theory terms
+        # TODO degenerate perturbation by computing np.linalg.eigh(self.df(k_smpl)) in each degenerate subspace
         no_diag = np.array(df_ev) # copy before modification (grads is a view)
         for i in range(len(grads[0,0])):
             no_diag[:,:,i,i] = 0 # zero out diagonal terms

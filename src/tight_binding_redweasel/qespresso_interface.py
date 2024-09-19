@@ -1,4 +1,5 @@
 import os
+from sys import platform
 import numpy as np
 
 # simple interface for QUANTUM ESPRESSO
@@ -166,6 +167,24 @@ class QECrystal:
         self.ibrav = 0 # use CELL_PARAMETERS instead!
         self.cell_scale = 1.0 # = celldm(1) from pw.x
         self.kinetic_energy_cutoff = kinetic_energy_cutoff
+        self.set_multitasking_parameters(1)
+    
+    def set_multitasking_parameters(self, nk, nd=1, ni=1, nt=1):
+        """Set the multitasking parameters for the pw.x call.
+        Setting nk to a divisor of the actual number of k-points is very efficient.
+        The nt and nd settings need to be adjusted carefully for each problem.
+        The FFT can not have too many task groups, so most processors would go into the diagonalisation.
+
+        Args:
+            nk (int): Parallel computed k-points.
+            nd (int, optional): Processors for the diagonalisation. Defaults to 1.
+            ni (int, optional): Parallel computed configurations (for phonons). Defaults to 1.
+            nt (int, optional): Taskgroups for the FFT. Defaults to 1.
+        """
+        self.nk = nk
+        self.nd = nd
+        self.ni = ni
+        self.nt = nt
 
     # 3d plot of the crystal structure
     def plot_crystal(self, repeat=1, turntable=14, elevation=35):
@@ -364,7 +383,9 @@ class QECrystal:
             a1 = [float(x) for x in document.getElementsByTagName("a1")[0].firstChild.nodeValue.strip().split()]
             a2 = [float(x) for x in document.getElementsByTagName("a2")[0].firstChild.nodeValue.strip().split()]
             a3 = [float(x) for x in document.getElementsByTagName("a3")[0].firstChild.nodeValue.strip().split()]
-            A = np.array([a1, a2, a3]).T * bohr_to_angstrom
+            A = np.array([a1, a2, a3]).T
+            if self.unit == "angstrom":
+                A *= bohr_to_angstrom
             # TODO consider returning "reciprocal" if it is too difficult to recontruct it
             # inv_reciprocal and A.T are collinear, but with what factor???
             #assert np.linalg.norm(inv_reciprocal - (A.T / np.linalg.norm(A[0]))) < 1e-7, f"reciprocal lattice doesn't match real lattice... This problem comes from Quantum Espresso. The compared matrices were\n{inv_reciprocal}\nand\n{A.T / np.linalg.norm(A[0])}"
@@ -406,11 +427,11 @@ class QECrystal:
             if len(S_trans) == 0:
                 assert np.linalg.norm(np.einsum("nij,nik->njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
             else:
+                assert len(S_trans) == len(S), "every symmetry needs an associated translational part if one of them has one."
                 # only return the symmetries without translational part
                 S = [S for S, t in zip(S, S_trans) if np.linalg.norm(t) < 1e-10]
-                # those symmetries without translation should be orthogonal! (nope...)
-                #assert np.linalg.norm(np.einsum("nij, nik -> njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
-                print("WARNING: fractional symmetries dropped")
+                if len(S) != len(S_trans):
+                    print("WARNING: fractional symmetries dropped")
             fermi_energy_node = document.getElementsByTagName("fermi_energy")[0]
             fermi_energy = float(fermi_energy_node.firstChild.nodeValue.strip()) * to_eV
         return np.array(k_points), np.array(bands), S, fermi_energy, A
@@ -470,13 +491,15 @@ class QECrystal:
         neighbors, params, r_params, degeneracy, A = tb_fmt.load_tb(f"{self.name}_tb.dat" if filename is None else filename)
         return neighbors, params, r_params
 
-
-    # read the wavefunctions that have been computed by scf()
-    # returns k_smpl (in crystal coordinates), g_smpl (in crystal coordinates = integer vectors), evc
-    # k_smpl is in the same order as in read_bands(...)
-    # evc is the list of the wavefunction in the format
-    # (k_smpl, band, g_smpl, spin_polarisation)
     def read_wavefunctions(self):
+        """Read the wavefunctions that have been computed by scf() or nscf()
+        k_smpl is in the same order as in read_bands(...)
+        evc is the list of the wavefunction in the format 
+        Returns:
+            ndarray(N_k, dim): k_smpl in crystal coordinates,
+            ndarray(N_k, N_G, dim): g_smpl in crystal coordinates = integer vectors,
+            ndarray(N_k, band, N_G, spin_polarisation): evc, coefficients for the plane wave construction of the bloch functions
+        """
         # The format is documented in
         # https://gitlab.com/QEF/q-e/-/wikis/Developers/Format-of-data-files
         # and there was someone who already did this implementation
@@ -547,6 +570,12 @@ class QECrystal:
         return (np.linalg.inv(B) @ np.array([k_smpl[i] for i in inv_order]).T).T, [g_smpl_list[i] for i in inv_order], [evc_list[i] for i in inv_order]
     
     def read_charge_density(self):
+        """Read the charge density from the last run of scf or nscf.
+
+        Returns:
+            ndarray(N_G, dim): g_smpl in crystal coordinates = integer vectors,
+            ndarray(spin, N_G): charge density fourier coefficients.
+        """
         # The format is documented in
         # https://gitlab.com/QEF/q-e/-/wikis/Developers/Format-of-data-files
         with open(f'./qe-data/{self.name}.save/charge-density.dat', 'rb') as f:
@@ -577,10 +606,16 @@ class QECrystal:
                 f.seek(8, 1)
         return g_smpl, rho_g
 
-    # returns an array of density of states with the columns (column major)
-    # Energy, Density of States, Integrated Density of States.
-    # also returns the Fermi-energy
     def read_dos(self):
+        """Read the data from the last dos.x run.
+
+        Example call:
+        `(energy_smpl, density, states), fermi_energy = material.read_dos()`
+
+        Returns:
+            ndarray(3, N_E): tuple with energy samples, density (rho) and states (N) values.
+            float: Fermi-Energy in eV
+        """
         fermi_energy = None
         with open(f"{self.name}.Dos.dat", "r") as file:
             header = file.readline()
@@ -631,7 +666,6 @@ class QECrystal:
             # The following is just for non relativistic calculations
             # for relativistic calculations, use the additional parameters
             # lspinorb=.true., noncolin=.true.
-            # TODO celldm(1) is no longer allowed to be specified if CELL_PARAMETERS are used...
             file.write(f"""
 &control
     calculation='scf',
@@ -643,7 +677,7 @@ class QECrystal:
     disk_io='low',
 /
 &system
-    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))}, celldm(1)={self.cell_scale},
+    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff},
     occupations='smearing', smearing='marzari-vanderbilt', degauss=0.02
 /
@@ -657,10 +691,9 @@ class QECrystal:
 {self.k_grid(k_grid_size, k_grid_size2, k_grid_size3)}
 """)
         print(f"running the scf calculation for {self.name}")
-        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.scf.in | tee {self.name}.scf.out")
+        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.scf.in | tee {self.name}.scf.out")
     
-    def relax(self):
-        relax_k_grid_size = 4
+    def relax(self, relax_k_grid_size = 4, fix_volume=False):
         with open(f"{self.name}.relax.in", "w") as file:
             file.write(f"""
 &control
@@ -673,7 +706,7 @@ class QECrystal:
     disk_io='low',
 /
 &system
-    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))}, celldm(1)={self.cell_scale},
+    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff},
     occupations='smearing', smearing='marzari-vanderbilt', degauss=0.02
 /
@@ -691,13 +724,15 @@ class QECrystal:
 /
 &cell
     cell_dynamics="bfgs",
-    cell_dofree="ibrav",
+    press=0.001,
+    press_conv_thr=0.0005,
+    cell_dofree="ibrav{"shape" if fix_volume else ""}",
 /
 {self.crystal()}
 {self.k_grid(relax_k_grid_size)}
 """)
         print(f"running the vc-relax calculation for {self.name}")
-        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.relax.in | tee {self.name}.relax.out")
+        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.relax.in | tee {self.name}.relax.out")
     
     # calculate band structure
     # k_points is the string given to QUANTUM ESPRESSO, which can be generated using
@@ -714,7 +749,7 @@ class QECrystal:
     disk_io='low',
 /
 &system
-    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))}, celldm(1)={self.cell_scale},
+    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff}, nbnd = {band_count},
 /
 &electrons
@@ -724,7 +759,7 @@ class QECrystal:
 {str(k_points)}
 """)
         print(f"running the band-structure calculation for {self.name}")
-        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.band.in | tee {self.name}.band.out")
+        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.band.in | tee {self.name}.band.out")
 
     # use QUANTUM ESPRESSO's bands.x to convert bands output to workable data.
     # -> slow and buggy... for k-grids use my function for direct access instead
@@ -739,7 +774,7 @@ filband='{self.name}.Bandx.dat'
 """)
         # doesn't completely work for high resolutions...
         print(f"converting data for {self.name} to a plottable format")
-        os.system(mpi_run + f"bands.x < {self.name}.bandx.in | tee {self.name}.bandx.out")
+        os.system(mpi_run + f"bands{"" if platform == "win32" else ".x"} < {self.name}.bandx.in | tee {self.name}.bandx.out")
 
     # compute the fermi energy from the density of states (dos)
     def dos(self):
@@ -757,7 +792,7 @@ filband='{self.name}.Bandx.dat'
     fildos = '{self.name}.Dos.dat',
 /
 """)
-        os.system(mpi_run + f"dos.x < {self.name}.dos.in > {self.name}.dos.out")
+        os.system(mpi_run + f"dos{"" if platform == "win32" else ".x"} < {self.name}.dos.in > {self.name}.dos.out")
 
     # calculate band structure
     # k_points is the string given to QUANTUM ESPRESSO, which can be generated using
@@ -777,7 +812,7 @@ filband='{self.name}.Bandx.dat'
     verbosity='high',
 /
 &system
-    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))}, celldm(1)={self.cell_scale},
+    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff},
     nbnd={band_count},
     force_symmorphic = true,
@@ -790,7 +825,7 @@ filband='{self.name}.Bandx.dat'
 {self.crystal()}
 {str(k_points)}
 """)
-        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.nscf.in | tee {self.name}.nscf.out")
+        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.nscf.in | tee {self.name}.nscf.out")
 
     # non self consistent field calculation with nosym=true, noinv=true for processing by further tools
     def nscf_nosym(self, k_points, band_count):
@@ -807,7 +842,7 @@ filband='{self.name}.Bandx.dat'
     verbosity='high',
 /
 &system
-    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))}, celldm(1)={self.cell_scale},
+    ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff},
     nosym = true,
     noinv = true,
@@ -821,7 +856,7 @@ filband='{self.name}.Bandx.dat'
 {self.crystal()}
 {str(k_points)}
 """)
-        os.system(mpi_run + f"pw.x -nk 1 -nd 1 -nb 1 -nt 1 < {self.name}.nscf.in | tee {self.name}.nscf.out")
+        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.nscf.in | tee {self.name}.nscf.out")
 
     def crystal_wannier(self):
         crystal = f"""begin unit_cell_cart
@@ -858,7 +893,7 @@ begin atoms_frac
 """)
         # doesn't completely work for high resolutions...
         print(f"computing dielectric function for {self.name}")
-        os.system(mpi_run + f"epsilon.x < {self.name}.epsilon.in | tee {self.name}.epsilon.out")
+        os.system(mpi_run + f"epsilon{"" if platform == "win32" else ".x"} < {self.name}.epsilon.in | tee {self.name}.epsilon.out")
     
     def read_epsilon(self):
         data_r = np.loadtxt(f'epsr_{self.name}.dat', skiprows=3)
@@ -912,7 +947,7 @@ dis_win_min = 11.0
 !dis_froz_min = 11.0
 
 spinors = false
-!auto_projections = true !there is a warning about this not always working with pw2wannier90.x
+!auto_projections = true !there is a warning about this not always working with pw2wannier90
 !use_bloch_phases = true ! doesn't work :(
 
 begin projections
@@ -944,7 +979,7 @@ mp_grid = {grid_size} {grid_size} {grid_size}
         # generate a list of required overlaps (written to {name}.nnkp)
         # for some reason mpirun doesn't work...
         #os.system(mpi_run + f"wannier90.x -pp {self.name}")
-        os.system(f"wannier90.x -pp {self.name}")
+        os.system(f"wannier90{"" if platform == "win32" else ".x"} -pp {self.name}")
     
     # use QUANTUM ESPRESSO's bands.x to convert bands output to workable data.
     # -> slow and buggy... for k-grids use my function for direct access instead
@@ -959,7 +994,7 @@ lwrite_overlaps={lwrite_overlaps}
 """)
         # doesn't completely work for high resolutions...
         print(f"computing projections onto atomic orbitals for {self.name}")
-        os.system(mpi_run + f"projwfc.x < {self.name}.projwfc.in | tee {self.name}.projwfc.out")
+        os.system(mpi_run + f"projwfc{"" if platform == "win32" else ".x"} < {self.name}.projwfc.in | tee {self.name}.projwfc.out")
 
 
     # compute the overlaps of the wavefunctions from the nscf calculation, to be used by wannierization
@@ -980,7 +1015,7 @@ lwrite_overlaps={lwrite_overlaps}
    irr_bz = true
 /
 """)
-        os.system(mpi_run + f"pw2wannier90.x -in {self.name}.pw2wan.in | tee {self.name}.pw2wan.out")
+        os.system(mpi_run + f"pw2wannier90{"" if platform == "win32" else ".x"} -in {self.name}.pw2wan.in | tee {self.name}.pw2wan.out")
     
     # compute the maximally localized wave functions (MLWFs)
     # use this after using overlaps_for_wannier()
@@ -988,7 +1023,7 @@ lwrite_overlaps={lwrite_overlaps}
         # written to {name}.mmn and {name}.amn
         # parallel execution doesn't work for some reason...
         #os.system(mpi_run + f"wannier90.x {self.name}")
-        os.system(f"wannier90.x {self.name}")
+        os.system(f"wannier90{"" if platform == "win32" else ".x"} {self.name}")
 
     def plot_wannier(self):
         pass
@@ -1005,7 +1040,7 @@ outdir='./qe-data/'
 /
 """)
 
-        os.system(mpi_run + f"fs.x -in {self.name}.fs.in > {self.name}.fs.out")
+        os.system(mpi_run + f"fs{"" if platform == "win32" else ".x"} -in {self.name}.fs.in > {self.name}.fs.out")
 
         os.system(f"xcrysden --bxsf {self.name}_fs.bxsf > /dev/null")
 

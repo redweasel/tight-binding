@@ -4,52 +4,73 @@ from . import symmetry as _sym
 import _collections_abc
 
 points = {}
-points['G'] = np.array([[0, 0, 0]])
-points['O'] = np.array([[0, 0, 0]])
+points['G'] = (np.array([0, 0, 0]), 'Γ')
+points['O'] = (np.array([0, 0, 0]), 'Γ')
 # face centered cubic in tpiba_b units:
-points['X2'] = np.array([[0, 1, 0]]) # Delta line
-points['K'] = np.array([[3/4, 3/4, 0]]) # Sigma line
-points['L'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
-points['W'] = np.array([[1/2, 1, 0]]) # between X and K
-points['U'] = np.array([[1/4, 1, 1/4]]) # between X and L
+points['X2'] = (np.array([0, 1, 0]), 'X') # Delta line
+points['K'] = (np.array([3/4, 3/4, 0]), 'K') # Sigma line
+points['L'] = (np.array([1/2, 1/2, 1/2]), 'L') # Lambda line
+points['W'] = (np.array([1/2, 1, 0]), 'W') # between X and K
+points['U'] = (np.array([1/4, 1, 1/4]), 'U') # between X and L
 # simple cubic points:
-points['X'] = 0.5*np.array([[0, 1, 0]]) # Delta line
-points['M'] = 0.5*np.array([[1, 1, 0]]) # Sigma line
-points['R'] = 0.5*np.array([[1, 1, 1]]) # Lambda line
+points['X'] = (0.5*np.array([0, 1, 0]), 'X') # Delta line
+points['M'] = (0.5*np.array([1, 1, 0]), 'M') # Sigma line
+points['R'] = (0.5*np.array([1, 1, 1]), 'R') # Lambda line
 # body centered points:
-points['H'] = np.array([[1, 0, 0]]) # Delta line
-points['N'] = np.array([[1/2, 1/2, 0]]) # Sigma line
-points['P'] = np.array([[1/2, 1/2, 1/2]]) # Lambda line
+points['H'] = (np.array([1, 0, 0]), 'H') # Delta line
+points['H1'] = (np.array([0, 1, 0]), '$H_1$')
+points['N'] = (np.array([1/2, 1/2, 0]), 'N') # Sigma line
+points['P'] = (np.array([1/2, 1/2, 1/2]), 'P') # Lambda line
 # 2D square symmetry points:
-points['G2d'] = 0.5*np.array([[0, 0]])
-points['X2d'] = 0.5*np.array([[0, 1]]) # Delta line
-points['M2d'] = 0.5*np.array([[1, 1]]) # Sigma line
+points['G2d'] = (0.5*np.array([0, 0]), 'Γ')
+points['X2d'] = (0.5*np.array([0, 1]), 'X') # Delta line
+points['X12d'] = (0.5*np.array([1, 0]), '$X_1$')
+points['M2d'] = (0.5*np.array([1, 1]), 'M') # Sigma line
 
 class KPath(_collections_abc.Sequence):
-    def __init__(self, start):
+    def __init__(self, start, name=None, points=points):
         """create new path in k-space.
         The dimension of the k-space is inferred from the start point.
 
         Args:
-            start (str, array-like): Either a pointname from `kpath.points.keys()` like "G" or an explicit point in k-space like (0, 0, 0).
+            start (str, array-like): Either a pointname from `kpaths.points.keys()` like "G" or an explicit point in k-space like (0, 0, 0). A full list of those types is also accepted and will be filled with the default point density.
+            name (str, optional): The name of the point. This is only needed if the point is given as an array. Defaults to None.
+            points (dict): High-symmetry-point name/position dictionary. Defaults to a dictionary with sc, fcc, bcc, square symmetries.
         """
-        # TODO accept a list of points instead of start
-        self.path = [(points[start] if start in points else np.array(start)).reshape(-1)]
+        self.points = points # no copy, be careful!
         self.indices = [0] # symmetry point indices
-        self.names = [str(start).replace("G", "Γ")]
+        additional = []
+        if type(start) == list or type(start) == tuple:
+            # accept a list of points instead of start
+            additional = start[1:]
+            start = start[0]
+        if type(start) == str:
+            self.path = [points[start][0].reshape(-1)]
+            self.names = [name if name is not None else points[start][1]]
+        else:
+            self.path = [np.array(start).reshape(-1)]
+            self.names = [name if name is not None else str(np.array(start).reshape(-1)).replace("  ", " ")]
+        for point in additional:
+            self.to(point)
     
-    def to(self, point, N=32):
+    def to(self, point, name=None, N=32):
         """add a new (symmetry) waypoint to the end of the path.
 
         Args:
             point (str, array-like): Either a pointname from `kpath.points.keys()` or an explicit point in k-space.
             N (int, optional): The number of interpolated points from the last point in the path. Defaults to 32.
+            name (str, optional): The name of the point. This is only needed if the point is given as an array. Defaults to None.
 
         Returns:
             Self: self
         """
-        self.names.append(str(point).replace("G", "Γ"))
-        point = points[point] if point in points else np.array(point).reshape(1,-1)
+        if type(point) == str:
+            self.names.append(name if name is not None else self.points[point][1])
+            point = self.points[point][0].reshape(1, -1)
+        else:
+            self.names.append(name if name is not None else str(np.array(point).reshape(-1)).replace("  ", " "))
+            point = np.array(point).reshape(1, -1)
+        assert len(point[0]) == len(self.path[0]), f"All points in the path need to have the same dimension. Tried to add a {len(point[0])}d point to a {len(self.path[0])}d path."
         t = np.linspace(0, 1, N, endpoint=False).reshape(-1, 1) + 1/N
         self.path.extend(self.path[-1] + t * (point - self.path[-1]))
         self.indices.append(len(self.path) - 1)
@@ -100,11 +121,8 @@ class KPath(_collections_abc.Sequence):
             label_bands (str, optional): either "left", "right" or "", None. Specifies where to annotate bandindex numbers. Defaults to None.
             ylim (tuple, optional): y-axis limits for the plot. Defaults to None.
 
-        Raises:
-            ValueError: _description_
-
         Returns:
-            _type_: _description_
+            None | (ax1, ax2): if label_bands is used, the two axes are returned. Otherwise None.
         """
         if label_bands not in {None, "", "left", "right"}:
             raise ValueError("label_bands must be left or right")
@@ -134,7 +152,11 @@ class KPath(_collections_abc.Sequence):
                 plt.sca(ax1)
             else:
                 ax2 = plt.gca().twinx() # plot to twinx (now the gca)
-            edge_bands = np.round(ibands[-1 if label_bands == "right" else 0], 1) # rounded to display precision to avoid label overlap
+            # compute the textsize in axis units
+            # (the results are a little unprecise, because rounding
+            # isn't quite the optimal solution.. just the simplest)
+            textsize = 8 * (ylim[1] - ylim[0]) / plt.gcf().get_figheight() * 0.15
+            edge_bands = np.round(ibands[-1 if label_bands == "right" else 0] / textsize, 1) * textsize # rounded to display precision to avoid label overlap
             y_ticks, inv = np.unique(edge_bands, return_inverse=True)
             y_bands = [[] for i in range(len(y_ticks))]
             for i, j in enumerate(inv):
@@ -157,6 +179,14 @@ class KPath(_collections_abc.Sequence):
             return ax1, ax2
         elif ylim != None:
             plt.ylim(*ylim)
+
+    def dim(self) -> int:
+        """Get the dimension of the k-space of this path.
+
+        Returns:
+            int: k-space dimension
+        """
+        return len(self.path[0])
 
     def __iter__(self) -> Iterator:
         return self.path.__iter__()
@@ -214,13 +244,14 @@ def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", period
     if periodic:
         # TODO make it work for k outside of the original k_smpl range by
         # 1. extending the range of the data using periodic points
+        #   -> this is done more than necessary to accomodate for larger interpolation kernels like the cubic one.
         # 2. wrapping the function argument of the returned function using % 1.0
         for i in range(dim):
             vec = np.zeros(dim)
             vec[i] = 1.0
             vec = vec.reshape((dim,) + (1,)*dim)
-            used_k_smpl = np.concatenate([used_k_smpl.take([-1], axis=i+1, mode="wrap") - vec, used_k_smpl, used_k_smpl.take([0], axis=i+1, mode="wrap") + vec], axis=i+1)
-            used_bands = np.concatenate([used_bands.take([-1], axis=i, mode="wrap"), used_bands, used_bands.take([0], axis=i, mode="wrap")], axis=i)
+            used_k_smpl = np.concatenate([used_k_smpl.take([-1], axis=i+1, mode="wrap") - vec, used_k_smpl, used_k_smpl.take([0, 1], axis=i+1, mode="wrap") + vec], axis=i+1)
+            used_bands = np.concatenate([used_bands.take([-1], axis=i, mode="wrap"), used_bands, used_bands.take([0, 1], axis=i, mode="wrap")], axis=i)
     
     if dim == 1:
         interp_f = interp.RegularGridInterpolator(used_k_smpl, used_bands, method=method)
@@ -261,3 +292,93 @@ FCC_PATH = KPath('G').to('X2').to('W').to('L').to('G').to('K')
 BCC_PATH = KPath('G').to('H').to('P').to('G').to('N').to('P')
 DIAMOND_PATH = KPath('L').to('G').to('X2').to('U').to('G').to('K')
 SC_2D_PATH = KPath('G2d').to('X2d').to('M2d').to('G2d')
+
+# internal function to compute the more complicated
+# symmetry points from the face centered points
+# hsp = high symmetry point (abbreviated because it is internal and used often)
+def _hsp(a, b=None, c=None):
+    res = [np.linalg.norm(a)**2]
+    mat = [a]
+    if b is not None:
+        res.append(np.linalg.norm(b)**2)
+        mat.append(b)
+    if c is not None:
+        res.append(np.linalg.norm(c)**2)
+        mat.append(c)
+    x = np.linalg.lstsq(mat, res, rcond=None)[0]
+    return x
+
+
+def hexagonal_points(r: float, h: float) -> dict:
+    """Generate the symmetry points for a hexagonal reciprocal lattice.
+
+    Args:
+        r (float): distance between reciprocal lattice points in the hexagon.
+        h (float): height of the hexagon in reciprocal space
+
+    Returns:
+        dict: A dictionary with the points G, A, K, H, M, L for this particular hexagonal model.
+    """
+    points = {}
+    points['G'] = (np.zeros(3), 'Γ')
+    points['A'] = (np.array([0, 0, h/2]), 'A')
+    points['K'] = (np.array([r/3**.5, 0, 0]), 'K')
+    points['H'] = (np.array([r/3**.5, 0, h/2]), 'H')
+    points['M'] = (np.array([0.5*r, 0.5/3**.5*r, 0]), 'M')
+    points['L'] = (np.array([0.5*r, 0.5/3**.5*r, h/2]), 'L')
+    return points
+
+
+def trigonal_points(alpha: float, mirror_x=False) -> dict:
+    """Generate the symmetry points for a trigonal/rhombohedral reciprocal lattice of a real trigonal with lattice constant 1.
+    There are two possible shapes of the Brilouin zone for alpha < 90° and alpha >= 90°.
+
+    Args:
+        alpha (float): Angle (in radians) of the trigonal structure in real space
+        mirror_x (bool, optional): Align the mirror symmetry to the x-axis if True or the y-axis if False.
+            The matrix created with `qespresso_interface.rhombohedral` will lead to the y-alignment, hence the default.
+            Quantum Espresso usually uses the other convention (x-axis mirror symmetry, True). Defaults to False.
+
+    Returns:
+        dict: A dictionary with the symmetry points for the correct trigonal model.
+    """
+    # The points are taken from the QE documentation
+    # Good paths are F, G, L, X, G, Z, P1, F, Q, L
+    # and P, G, Q, Q1, P1, F, G, Z ???
+    # sin theta = sqrt(2/3) sqrt(1-cos alpha) = sqrt(4/3) sin(alpha/2)
+    #theta = np.arcsin((4/3)**.5*np.sin(alpha/2)) # works, but results are inprecise
+    #c, s = np.cos(theta), np.sin(theta)
+    c, s = ((1 + 2*np.cos(alpha))/3)**.5, (4/3)**.5*np.sin(alpha/2)
+    h = 1/c
+    points = {}
+    points['G'] = (np.zeros(3), 'Γ')
+    if alpha < 90/180*np.pi:
+        #l2 = np.linalg.norm([1/3**.5/s/2, 1/6/s, -h/6])**2
+        l2 = 1/9/s**2 + 1/36/c**2
+        points['Z'] = (np.array([0, 0, h/2]), 'Z')
+        points['L'] = (np.array([1/3**.5/s/2, -1/3/s/2, h/6]), 'L')
+        points['L1'] = (np.array([1/3**.5/s/2, 1/3/s/2, -h/6]), '$L_1$')
+        points['F'] = (np.array([1/3**.5/s/2, 1/3/s/2, h/3]), 'F')
+        points['X'] = (np.array([l2 / (1/3**.5/s/2), 0, 0]), 'X') # complicated, but easy enough for direct computation
+        points['P'] = (_hsp(points['Z'][0], points['L'][0]), 'P')
+        points['P1'] = (_hsp(points['Z'][0], points['F'][0]), '$P_1$')
+        points['P2'] = (_hsp(points['F'][0], points['L1'][0]), '$P_2$')
+        points['Q'] = (_hsp(points['F'][0], points['L'][0]), 'Q')
+        points['B'] = (_hsp(points['Z'][0], points['F'][0], points['L'][0]), 'B')
+        points['B1'] = (_hsp(points['L1'][0], points['F'][0], points['L'][0]), '$B_1$')
+    else:
+        assert alpha < 120/180*np.pi
+        l2 = (1/s/3)**2 + (h/6)**2
+        points['X'] = (np.array([1/3**.5/s, 0, 0]), 'X')
+        points['F'] = (np.array([1/3**.5/s/2, 1/s/2, 0]), 'F')
+        points['F1'] = (np.array([-1/3**.5/s/2, 1/s/2, 0]), '$F_1$')
+        points['L'] = (np.array([0, 1/s/3, h/6]), 'L')
+        points['Z'] = (np.array([1/3**.5/s, 1/s/3, h/6]), 'Z')
+        points['Q'] = (np.array([0, 0, l2 / (h/6)]), 'Q')
+        points['Q1'] = (np.array([0, 2/3/s, h/3 - l2 / (h/6)]), '$Q_1$')
+        points['P1'] = (np.array([0, 2/3/s, (h/6 - l2 / (h/6))/2]), '$P_1$')
+        points['P'] = (np.array([1/3**.5/s, 1/s/3, -(h/6 - l2 / (h/6))/2]), 'P')
+    if not mirror_x:
+        # switch xy of the points
+        points = {k: (np.array(v[0][[1, 0, 2]]), v[1]) for k, v in points.items()}
+    return points
