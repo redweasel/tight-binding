@@ -691,7 +691,7 @@ class QECrystal:
 {self.k_grid(k_grid_size, k_grid_size2, k_grid_size3)}
 """)
         print(f"running the scf calculation for {self.name}")
-        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.scf.in | tee {self.name}.scf.out")
+        os.system(mpi_run + f'pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.scf.in | tee {self.name}.scf.out')
     
     def relax(self, relax_k_grid_size = 4, fix_volume=False):
         with open(f"{self.name}.relax.in", "w") as file:
@@ -732,7 +732,7 @@ class QECrystal:
 {self.k_grid(relax_k_grid_size)}
 """)
         print(f"running the vc-relax calculation for {self.name}")
-        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.relax.in | tee {self.name}.relax.out")
+        os.system(mpi_run + f'pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.relax.in | tee {self.name}.relax.out')
     
     # calculate band structure
     # k_points is the string given to QUANTUM ESPRESSO, which can be generated using
@@ -759,7 +759,7 @@ class QECrystal:
 {str(k_points)}
 """)
         print(f"running the band-structure calculation for {self.name}")
-        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.band.in | tee {self.name}.band.out")
+        os.system(mpi_run + f'pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.band.in | tee {self.name}.band.out')
 
     # use QUANTUM ESPRESSO's bands.x to convert bands output to workable data.
     # -> slow and buggy... for k-grids use my function for direct access instead
@@ -774,7 +774,7 @@ filband='{self.name}.Bandx.dat'
 """)
         # doesn't completely work for high resolutions...
         print(f"converting data for {self.name} to a plottable format")
-        os.system(mpi_run + f"bands{"" if platform == "win32" else ".x"} < {self.name}.bandx.in | tee {self.name}.bandx.out")
+        os.system(mpi_run + f'bands{"" if platform == "win32" else ".x"} < {self.name}.bandx.in | tee {self.name}.bandx.out')
 
     # compute the fermi energy from the density of states (dos)
     def dos(self):
@@ -792,7 +792,7 @@ filband='{self.name}.Bandx.dat'
     fildos = '{self.name}.Dos.dat',
 /
 """)
-        os.system(mpi_run + f"dos{"" if platform == "win32" else ".x"} < {self.name}.dos.in > {self.name}.dos.out")
+        os.system(mpi_run + f'dos{"" if platform == "win32" else ".x"} < {self.name}.dos.in > {self.name}.dos.out')
 
     # calculate band structure
     # k_points is the string given to QUANTUM ESPRESSO, which can be generated using
@@ -825,7 +825,7 @@ filband='{self.name}.Bandx.dat'
 {self.crystal()}
 {str(k_points)}
 """)
-        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.nscf.in | tee {self.name}.nscf.out")
+        os.system(mpi_run + f'pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.nscf.in | tee {self.name}.nscf.out')
 
     # non self consistent field calculation with nosym=true, noinv=true for processing by further tools
     def nscf_nosym(self, k_points, band_count):
@@ -856,7 +856,7 @@ filband='{self.name}.Bandx.dat'
 {self.crystal()}
 {str(k_points)}
 """)
-        os.system(mpi_run + f"pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.nscf.in | tee {self.name}.nscf.out")
+        os.system(mpi_run + f'pw{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} < {self.name}.nscf.in | tee {self.name}.nscf.out')
 
     def crystal_wannier(self):
         crystal = f"""begin unit_cell_cart
@@ -893,7 +893,7 @@ begin atoms_frac
 """)
         # doesn't completely work for high resolutions...
         print(f"computing dielectric function for {self.name}")
-        os.system(mpi_run + f"epsilon{"" if platform == "win32" else ".x"} < {self.name}.epsilon.in | tee {self.name}.epsilon.out")
+        os.system(mpi_run + f'epsilon{"" if platform == "win32" else ".x"} < {self.name}.epsilon.in | tee {self.name}.epsilon.out')
     
     def read_epsilon(self):
         data_r = np.loadtxt(f'epsr_{self.name}.dat', skiprows=3)
@@ -979,7 +979,7 @@ mp_grid = {grid_size} {grid_size} {grid_size}
         # generate a list of required overlaps (written to {name}.nnkp)
         # for some reason mpirun doesn't work...
         #os.system(mpi_run + f"wannier90.x -pp {self.name}")
-        os.system(f"wannier90{"" if platform == "win32" else ".x"} -pp {self.name}")
+        os.system(f'wannier90{"" if platform == "win32" else ".x"} -pp {self.name}')
     
     # use QUANTUM ESPRESSO's bands.x to convert bands output to workable data.
     # -> slow and buggy... for k-grids use my function for direct access instead
@@ -994,7 +994,7 @@ lwrite_overlaps={lwrite_overlaps}
 """)
         # doesn't completely work for high resolutions...
         print(f"computing projections onto atomic orbitals for {self.name}")
-        os.system(mpi_run + f"projwfc{"" if platform == "win32" else ".x"} < {self.name}.projwfc.in | tee {self.name}.projwfc.out")
+        os.system(mpi_run + f'projwfc{"" if platform == "win32" else ".x"} < {self.name}.projwfc.in | tee {self.name}.projwfc.out')
 
 
     # compute the overlaps of the wavefunctions from the nscf calculation, to be used by wannierization
@@ -1015,7 +1015,7 @@ lwrite_overlaps={lwrite_overlaps}
    irr_bz = true
 /
 """)
-        os.system(mpi_run + f"pw2wannier90{"" if platform == "win32" else ".x"} -in {self.name}.pw2wan.in | tee {self.name}.pw2wan.out")
+        os.system(mpi_run + f'pw2wannier90{"" if platform == "win32" else ".x"} -in {self.name}.pw2wan.in | tee {self.name}.pw2wan.out')
     
     # compute the maximally localized wave functions (MLWFs)
     # use this after using overlaps_for_wannier()
@@ -1023,7 +1023,7 @@ lwrite_overlaps={lwrite_overlaps}
         # written to {name}.mmn and {name}.amn
         # parallel execution doesn't work for some reason...
         #os.system(mpi_run + f"wannier90.x {self.name}")
-        os.system(f"wannier90{"" if platform == "win32" else ".x"} {self.name}")
+        os.system(f'wannier90{"" if platform == "win32" else ".x"} {self.name}')
 
     def plot_wannier(self):
         pass
@@ -1040,7 +1040,7 @@ outdir='./qe-data/'
 /
 """)
 
-        os.system(mpi_run + f"fs{"" if platform == "win32" else ".x"} -in {self.name}.fs.in > {self.name}.fs.out")
+        os.system(mpi_run + f'fs{"" if platform == "win32" else ".x"} -in {self.name}.fs.in > {self.name}.fs.out')
 
         os.system(f"xcrysden --bxsf {self.name}_fs.bxsf > /dev/null")
 
