@@ -86,6 +86,11 @@ class Symmetry:
                 # here inversion can be a problem, as it may be in the center, but it's not always a normal subgroup!
                 # for now, disable the inversion symmetry reduction in even dimensions.
                 pass
+        elif inversion and len(S[0]) % 2 == 0:
+            # realize inversion in even dimensions
+            self.S = np.concatenate([self.S, -self.S], axis=0)
+            self.inversion = False
+
         # TODO add lists for broken symmetries
         # each symmetry(except for inversion) has a line or a plane on which it's unbroken
         # -> add information about that and add a way to get all the unbroken/broken symmetries for a point
@@ -199,35 +204,12 @@ class Symmetry:
             Self: The transformed symmetry group
         """
         assert np.shape(basis_transform) == (self.dim(),)*2, "basis_transform needs to be a square matrix with matching dimension"
-        self.S = np.einsum("nij,mi,jk->nmk", self.S,
+        S = np.einsum("nij,mi,jk->nmk", self.S,
                            basis_transform, np.linalg.inv(basis_transform))
-        return 
-
-    def one_dim(inversion: bool) -> Self:
-        """1D lattice symmetry (inversion or nothing)"""
-        S = [np.array(((1,),))]
-        return Symmetry(S, inversion)
-
-    def two_dim_rotation(count: int) -> Self:
-        """2D lattice rotation symmetry (n-fold rotation symmetry (includes inversion) where n is from {1, 2, 3, 4, 6})"""
-        assert count in {1, 2, 3, 4, 6}
-        inversion = False
-        if count % 2 == 0:
-            inversion = True
-            count /= 2
-        if count == 2:
-            S = [np.eye(2), np.array(((0, 1), (-1, 0)))]
-        elif count == 3:
-            c = np.cos(2*np.pi/3)
-            s = np.sin(2*np.pi/3)
-            S = [np.eye(2), np.array(((c, s), (-s, c))),
-                 np.array(((c, -s), (s, c)))]
-        else:
-            S = [np.eye(2)]
-        return Symmetry(S, inversion)
+        return Symmetry(S, self.inversion)
 
     def from_generator(G, inversion: bool) -> Self:
-        """Create the symmetry group from a set of unique generators.
+        """Create the symmetry group from a set of generators.
 
         Args:
             G (arraylike(n, dim, dim)): n generating elements for the symmetry group.
@@ -251,25 +233,25 @@ class Symmetry:
         if [s for s in G if abs(abs(np.linalg.det(s)) - 1) > 1e-10]:
             raise ValueError(
                 "invalid matrix in parameter. All matrices need to have |det| = 1, otherwise the group is infinite")
-        # TODO check uniqueness of G
+        # check uniqueness of G
+        G_unique = [G[0]]
+        for s in G[1:]:
+            if not np.any(np.linalg.norm(s[None] - G_unique, axis=(1, 2)) < 1e-7):
+                G_unique.append(s)
         # add the neutral element back in
-        S = [np.eye(d)] + G
+        S = [np.eye(d)] + G_unique
         # exponentiate the group n times to form the full group
-        for _ in range(1000):
+        for _ in range(200):
             prev_len = len(S)
             S_new = np.array(S)
             S_new = np.reshape(S_new.reshape(-1, 1, N, N) @
                                S_new.reshape(1, -1, N, N), (-1, N, N))
             # find unique with a margin of error, assuming the S where unique before
             for s in S_new:
-                is_new = True
-                for s2 in S:
-                    if np.linalg.norm(s - s2) < 1e-7:
-                        is_new = False
-                        break
-                if is_new:
+                if not np.any(np.linalg.norm(s[None] - S, axis=(1, 2)) < 1e-7):
                     S.append(s)
-            if len(S) >= 1000:
+            # 120 is the largest simple group for 3 dimensions
+            if len(S) >= 200:
                 raise ValueError("group size limitation to avoid endless loops")
             if len(S) <= prev_len:
                 break
@@ -296,6 +278,38 @@ class Symmetry:
             Self: The inversion symmetry group
         """
         return Symmetry([np.eye(dim)], True)
+    
+    def o1(inversion: bool) -> Self:
+        """1D lattice (rotation/mirror) symmetry (inversion or nothing)"""
+        S = [np.array(((1,),))]
+        return Symmetry(S, inversion)
+
+    def o2(count: int) -> Self:
+        """2D rotation symmetry (n-fold rotation symmetry (includes inversion) where n is from {1, 2, 3, 4, 6} for lattice symmetries)"""
+        S = []
+        for i in range(count):
+            c = np.cos(i*2*np.pi/count)
+            s = np.sin(i*2*np.pi/count)
+            S.append(((c, s), (-s, c)))
+        return Symmetry(S, False)
+    
+    def cyclic(count: int, inversion: bool) -> Self:
+        """3D rotation and inversion symmetry (n-fold rotation symmetry where n is from {1, 2, 3, 4, 6} for lattice symmetries)"""
+        S = []
+        for i in range(count):
+            c = np.cos(i*2*np.pi/count)
+            s = np.sin(i*2*np.pi/count)
+            S.append(((c, s, 0), (-s, c, 0), (0, 0, 1)))
+        return Symmetry(S, inversion)
+    
+    def dihedral(count: int, inversion: bool) -> Self:
+        """3D rotation, mirror and inversion symmetry (n-fold rotation and mirror symmetry where n is from {1, 2, 3, 4, 6} for lattice symmetries)"""
+        S = []
+        for i in range(count):
+            c = np.cos(i*2*np.pi/count)
+            s = np.sin(i*2*np.pi/count)
+            S.append(((c, s, 0), (-s, c, 0), (0, 0, 1)))
+        return Symmetry(S, inversion) * Symmetry.mirror_x(False, 3)
 
     def cubic(inversion: bool) -> Self:
         """Octahedral group https://en.wikipedia.org/wiki/Octahedral_symmetry
@@ -380,6 +394,21 @@ class Symmetry:
         S = [np.eye(dim), np.eye(dim)]
         S[1][0,0] = -1
         return Symmetry(S, inversion=inversion)
+    
+    def mirror_xy(inversion=False, dim=3) -> Self:
+        """Point reflection symmetry in xy-plane.
+
+        Args:
+            inversion (bool, optional): If True, add inversion symmetry. Defaults to False.
+            dim (int, optional): Dimension of the symmetry. Defaults to 3.
+
+        Returns:
+            Self: The xy-plane point reflection symmetry group with 2/4 elements.
+        """
+        S = [np.eye(dim), np.eye(dim)]
+        S[1][0,0] = -1
+        S[1][1,1] = -1
+        return Symmetry(S, inversion=inversion)
 
     def square() -> Self:
         """The symmetry of a 2D square.
@@ -390,21 +419,33 @@ class Symmetry:
         S = [((0, 1), (-1, 0)),
              ((1, 0), (0, -1))]
         return Symmetry.from_generator(S, False)
+    
+    def icosahedral(inversion=False) -> Self:
+        """The (full) icosahedral group of order 60 (120) aligned along the z-axis.
+        The top off-axis vertex is aligned towards the x-axis.
 
-    def monoclinic_x(inversion: bool) -> Self:
-        """Monoclinic crystal (inversion symmetry + 180° rotation in yz)"""
-        D = [np.eye(3), np.diag((1, -1, -1))]
-        return Symmetry(D, inversion)
+        Args:
+            inversion (bool, optional): If True, the full icosahedral group will be returned. Defaults to False.
 
-    def monoclinic_y(inversion: bool) -> Self:
-        """Monoclinic crystal (inversion symmetry + 180° rotation in xz)"""
-        D = [np.eye(3), np.diag((-1, 1, -1))]
-        return Symmetry(D, inversion)
+        Returns:
+            Self: The (full) icosahedral symmetry group
+        """
+        c = Symmetry.cyclic(5, inversion)
+        m = ((0, 1, 0), (-5**-.5, 0, 2*5**-.5), (2*5**-.5, 0, 5**-.5))
+        return c * c.transform(m)
+    
+    def tetrahedral(inversion=False) -> Self:
+        """The (full) tetrahedral group of order 12 (24) rotated to be a subgroup of the octahedral group.
 
-    def monoclinic_z(inversion: bool) -> Self:
-        """Monoclinic crystal (inversion symmetry + 180° rotation in yz)"""
-        D = [np.eye(3), np.diag((-1, -1, 1))]
-        return Symmetry(D, inversion)
+        Args:
+            inversion (bool, optional): If True, the full tetrahedral group will be returned. Defaults to False.
+
+        Returns:
+            Self: The (full) tetrahedral symmetry group
+        """
+        S = [((-1, 0, 0), (0, -1, 0), (0, 0, 1)),
+             ((0, -1, 0), (0, 0, 1), (-1, 0, 0))]
+        return Symmetry.from_generator(S, inversion)
 
     def check_symmetry(self, foo: Callable, verbose=True) -> bool:
         """Check if a space dependent function satisfies the symmetry.
@@ -767,6 +808,21 @@ class Symmetry:
                     return True
             return False
         return self.equivalence_classes(conjugated)
+
+    def __contains__(self, other: Self) -> bool:
+        """Check if other is a subgroup of self"""
+        if len(self) < len(other):
+            return False
+        # Lagranges Theorem says the subgroup size must divide the group size
+        if len(self) % len(other) != 0:
+            return False
+        if other.inversion and not self.inversion:
+            return False
+        # now check if all matrices of other are contained in self
+        for s in other.S:
+            if not np.any(np.linalg.norm(s[None] - self.S, axis=(1, 2)) < 1e-7):
+                return False
+        return True
 
     def __mul__(self, other: Self) -> Self:
         """Combine two symmetries by finding the smallest symmetry group, that is generated by them."""

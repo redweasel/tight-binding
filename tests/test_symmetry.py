@@ -3,38 +3,56 @@ import numpy as np
 from tight_binding_redweasel.symmetry import *
 from tight_binding_redweasel.unitary_representations import *
 from tight_binding_redweasel.hamiltonian_symmetry import *
+from tight_binding_redweasel.qespresso_interface import hexagonal
 
 def test_symmetry():
     assert pointcloud_distance([(1, 2), (3, 4)], [(1, 2), (1, 2)]) > 2
     assert pointcloud_distance([(1, 2), (3, 4)], [(3, 4), (1, 3)]) == 1
     assert pointcloud_distance([(1, 2), (3, 4)], [(3, 4), (1, 2)]) == 0
-    # TODO add automated tests for realize_symmetric_data, reduce_symmetric_data
 
     # smallest set of generators for O
     S = [[[0,1,0], [-1,0,0], [0,0,1]],
         [[0,0,1], [1,0,0], [0,1,0]]]
     O = Symmetry.from_generator(S, False)
+    assert O.check()
     assert len(O) == 24
     assert Symmetry.cubic(False) == O
     # generators for a klein four subgroup V_4
     S = [[[-1,0,0], [0,-1,0], [0,0,1]],
         [[1,0,0], [0,-1,0], [0,0,-1]]]
     V_4 = Symmetry.from_generator(S, False)
+    assert V_4.check()
     assert len(V_4) == 4
+    assert V_4 == Symmetry.mirror3(False)
     # generators for the factor group ig
     S = [[[0,0,1], [0,-1,0], [1,0,0]],
         [[-1,0,0], [0,0,1], [0,1,0]]]
     F = Symmetry.from_generator(S, False)
+    assert F.check()
     assert len(F) == 6
     assert Symmetry.even_perm3(False) == F
     assert V_4 * F == O
-    assert O / V_4 == F
+    O_div_V_4 = O / V_4
+    assert O_div_V_4.check()
+    assert O_div_V_4 == F
     assert O / Symmetry.mirror3(False) == F
+    # cyclic and dihedral group
+    C5 = Symmetry.cyclic(5, False)
+    assert C5 == C5.transform([[0.6, 0.8, 0], [-0.8, 0.6, 0], [0, 0, 1]])
+    assert len(Symmetry.dihedral(5, True) / C5) == 4 # not = mirror_x as the factor group is not unique
+    assert Symmetry.mirror3(False) == Symmetry.mirror_xy(False) * Symmetry.mirror_xy(False).transform(((0, 1, 0), (0, 0, 1), (1, 0, 0))) * Symmetry.mirror_xy(False).transform(((1, 0, 0), (0, 1, 0), (0, 0, 1)))
+    # icosahedral group
+    assert len(Symmetry.icosahedral(False)) == 60
+    assert len(Symmetry.icosahedral(True)) == 120
+    # tetrahedral group
+    assert len(Symmetry.cubic(False) / Symmetry.tetrahedral(False)) == 2
+    assert Symmetry.tetrahedral(True) in Symmetry.cubic(True)
     # 2D rotation
     S = [((0, 1), (-1, 0))]
     R = Symmetry.from_generator(S, False)
-    assert Symmetry.o2() == R
-    assert len(Symmetry.square() / Symmetry.o2()) == 2
+    assert R.check()
+    assert Symmetry.o2(4) == R
+    assert len(Symmetry.square() / Symmetry.o2(4)) == 2
 
     # test realize_symmetric
     neighbors = ((0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1))
@@ -55,6 +73,37 @@ def test_symmetry():
     classes = Symmetry.cubic(True).conjugacy_classes()
     assert sorted([len(c) for c in classes]) == [1, 1, 3, 3, 6, 6, 6, 6, 8, 8]
 
+def test_symmetry_extras():
+    # test neighbor functions
+    sym = Symmetry.cyclic(6, True) # type: Symmetry
+    neighbors_orig = ((0, 0, 1), (0, 0, 0), (1, 0, 0), (1, 0, 1))
+    neighbors = sym.complete_neighbors(neighbors_orig)
+    assert len(neighbors) == 11, "Wrong number of neighbors generated"
+    assert np.linalg.norm(neighbors[0]) <= 1e-8, "First neighbor isn't 0"
+    # the neighbor lookups are tested with the hamiltonian symmetry
+    
+    # test Symmetry.transform(...)
+    r_smpl = sym.realize_symmetric(neighbors_orig)[0]
+    A = hexagonal(1, 1)
+    crystal_r = (np.linalg.inv(A) @ np.array(r_smpl).T).T
+    assert np.linalg.norm(np.round(crystal_r) - crystal_r) < 1e-8, "real lattice transformation didn't work. Error in qe.hexagonal?"
+    crystal_sym = sym.transform(np.linalg.inv(A))
+    crystal_r2 = crystal_sym.realize_symmetric((np.linalg.inv(A) @ np.array(neighbors_orig).T).T)[0]
+    assert len(crystal_r) == len(crystal_r2), "Symmetry.transform didn't work (1)"
+    assert np.linalg.norm(crystal_r - crystal_r2) < 1e-8, "Symmetry.transform didn't work (2)"
+    assert np.linalg.norm(np.round(crystal_sym.S) - crystal_sym.S) < 1e-8, "Symmetry.transform didn't work (3)"
+    
+    # TODO test weight functions
+    
+    # tests for realize_symmetric_data, reduce_symmetric_data
+    data = np.arange(len(neighbors_orig))
+    r1, d1 = sym.realize_symmetric_data(neighbors_orig, data)
+    r2, d2 = sym.reduce_symmetric_data(r1, d1)
+    assert np.linalg.norm(r2[0]) <= 1e-8, "First position from reduce_symmetric_data wasn't 0"
+    r3, d3 = sym.realize_symmetric_data(r2, d2)
+    assert np.linalg.norm(r1 - r3) < 1e-8, "positions were not recovered after reduction realisation cycle"
+    assert np.all(d1 == d3), "positions was not recovered after reduction realisation cycle"
+    assert len(r2) == len(d2) and len(d2) == len(neighbors_orig), "positions was not recovered after reduction realisation cycle"
 
 def test_unitary_representations():
     UR = UnitaryRepresentation
@@ -142,7 +191,7 @@ def test_hamiltonian_symmetry():
     assert np.linalg.norm(H_r_sym - H_r_sym3) < 1e-7
 
     # test a 2D problem with rotation symmetry
-    sym = Symmetry.o2()
+    sym = Symmetry.o2(4)
     hsym = HamiltonianSymmetry(sym)
     hsym.append_s((0,0), "s")
     hsym.append_p((0.5,0.5), "p")
