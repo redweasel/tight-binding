@@ -627,6 +627,18 @@ class BandStructureModel:
           - np.einsum("aki, bkj, bnj -> abnij", ev_c[k1_indices], ev[k2_indices], v[k2_indices])
         return bands, v, g
 
+    def transform(self, A):
+        """Apply a transformation on the neighbors in the fourier series.
+        This is useful to go from a crystal space fit to the reciprocal space fit.
+        For that, put the lattice matrix A with the lattice vectors in the argument.
+
+        Args:
+            A (arraylike(dim, dim)): Transformation matrix for the neighbors. E.g. matrix with the real lattice vectors in the columns.
+        """
+        if self.neighbors is None:
+            raise ValueError("This function can only be used on default tight binding models")
+        self.neighbors = np.einsum("ji,ni->nj", A, self.neighbors)
+        
     
     def supercell(self, A_original, A_new, cos_reduced=False, exp=True) -> Self:
         """
@@ -642,6 +654,8 @@ class BandStructureModel:
         Returns:
             Self: BandStructureModel that describes the same solid, but using a bigger cell.
         """
+        if self.neighbors is None:
+            raise ValueError("This function can only be used on default tight binding models")
         A_original = np.asarray(A_original)
         A_new = np.asarray(A_new)
         dim = len(self.neighbors[0])

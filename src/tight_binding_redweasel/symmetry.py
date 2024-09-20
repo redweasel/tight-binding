@@ -1,5 +1,7 @@
 import numpy as np
 from scipy.spatial import KDTree
+from typing import Self, Callable, Tuple
+import warnings
 
 # My own symmetries.
 # The following has a lot of it, but is missing a part which I deemed crucial for the performance.
@@ -25,7 +27,7 @@ def pointcloud_distance(pointcloud1, pointcloud2):
 # and raises a ValueError if the neighbor isn't found.
 
 
-def neighbor_function(neighbors, err=1e-4):
+def neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]]:
     kdtree = KDTree(neighbors)
 
     def find(r):
@@ -43,7 +45,7 @@ def neighbor_function(neighbors, err=1e-4):
 # and returns None, None if the neighbor isn't found
 
 
-def try_neighbor_function(neighbors, err=1e-4):
+def try_neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]]:
     kdtree = KDTree(neighbors)
 
     def find(r):
@@ -88,17 +90,28 @@ class Symmetry:
         # each symmetry(except for inversion) has a line or a plane on which it's unbroken
         # -> add information about that and add a way to get all the unbroken/broken symmetries for a point
 
-    def copy(self):
+    def copy(self) -> Self:
+        """Deep copy of the symmetry group."""
         return Symmetry(np.array(self.S), self.inversion)
 
-    def dim(self):
+    def dim(self) -> int:
+        """Dimension of the symmetry operations"""
         return len(self.S[0])
 
     def check(self) -> bool:
+        """Check if the symmetry group is closed."""
         gen_sym = Symmetry.from_generator(self.S, self.inversion)
         return self == gen_sym
 
-    def __eq__(self, other):
+    def is_orthogonal(self) -> bool:
+        """Check if the symmetry operations are orthogonal/unitary matrices"""
+        return np.linalg.norm(np.einsum("nij,nkj->nik", self.S, np.conj(self.S)) - np.eye(self.dim())[None,...]) < 1e-6
+
+    def transpose(self) -> Self:
+        """Get the symmetry with all the symmetry operations transposed. That is the symmetry group for the dual lattice/vector space."""
+        return Symmetry(np.array(np.swapaxes(self.S, -1, -2)), self.inversion)
+
+    def __eq__(self, other: Self) -> bool:
         if self.dim() != other.dim():
             return False
         if self.inversion != other.inversion:
@@ -107,18 +120,33 @@ class Symmetry:
             return False
         return pointcloud_distance(self.S, other.S) < len(self.S) * 1e-7
 
-    # cardinality of the group (including inversion symmetry if present!)
-    def __len__(self):
+    def __len__(self) -> int:
+        """Cardinality of the group (including inversion symmetry if present!)"""
         return len(self.S) * (2 if self.inversion else 1)
+
+    def get_symmetry_operations(self) -> np.ndarray:
+        """Get all symmetry operations, including inversion symmetry.
+
+        Returns:
+            ndarray(len, dim, dim): All symmetry operation matrices
+        """
+        S = list(self.S)
+        if self.inversion:
+            S = S + list(-self.S)
+        return np.array(S)
 
     # initialize the symmetry group from the lattice matrix A and the basis atoms b
     # b is a list of lists of basis positions with the meaning bpos = b[type][index]
     # TODO unfinished
-    def from_lattice(A, b):
+    def from_lattice(A, b) -> Self:
         assert False
-        # simplify the problem using qr and length normalizsation
+        # TODO find the integer valued symmetry operations in crystal space,
+        # which get transformed to orthogonal symmetries using A
+        # TODO find translational symmetries
+
+        # simplify the problem using qr
         _, A = np.linalg.qr(A)
-        A /= A[0, 0]
+        A /= A[0, 0] # scaling doesn't change symmetries
         if len(A) == 2:
             S = [np.eye(2)]
             # check which rotation symmetry is given by just testing them
@@ -154,20 +182,34 @@ class Symmetry:
             raise NotImplementedError(
                 f"not implemented for dimension {len(A)}")
 
-    # apply a basis transformation to all symmetry operations.
-    # S' = inv(B) @ S @ B
-    def transform(self, basis_transform):
-        self.S = np.einsum("nij,mi,jk->nmk", self.S,
-                           np.linalg.inv(basis_transform), basis_transform)
-        return self
+    def transform(self, basis_transform) -> Self:
+        """Apply a basis transformation to all symmetry operations.
+        This is useful to convert reciprocal crystal space symmetries, which only contain integer entries,
+        into reciprocal space symmetries using `transform(B)` where
+        B is the matrix with the reciprocal lattice vectors as columns.
 
-    # one dimensional symmetry (inversion or nothing)
-    def one_dim(inversion):
+        `S' = B @ S @ inv(B)`
+
+        NOTE: this does not change the instance it is called on.
+        
+        Args:
+            basis_transform (matrix): Transform matrix B
+        
+        Returns:
+            Self: The transformed symmetry group
+        """
+        assert np.shape(basis_transform) == (self.dim(),)*2, "basis_transform needs to be a square matrix with matching dimension"
+        self.S = np.einsum("nij,mi,jk->nmk", self.S,
+                           basis_transform, np.linalg.inv(basis_transform))
+        return 
+
+    def one_dim(inversion: bool) -> Self:
+        """1D lattice symmetry (inversion or nothing)"""
         S = [np.array(((1,),))]
         return Symmetry(S, inversion)
 
-    # two dimensional symmetry (n-fold rotation symmetry (includes inversion) where n in {1, 2, 3, 4, 6})
-    def two_dim(count):
+    def two_dim_rotation(count: int) -> Self:
+        """2D lattice rotation symmetry (n-fold rotation symmetry (includes inversion) where n is from {1, 2, 3, 4, 6})"""
         assert count in {1, 2, 3, 4, 6}
         inversion = False
         if count % 2 == 0:
@@ -184,8 +226,19 @@ class Symmetry:
             S = [np.eye(2)]
         return Symmetry(S, inversion)
 
-    # create the symmetry group from a set of unique generators.
-    def from_generator(G, inversion):
+    def from_generator(G, inversion: bool) -> Self:
+        """Create the symmetry group from a set of unique generators.
+
+        Args:
+            G (arraylike(n, dim, dim)): n generating elements for the symmetry group.
+            inversion (bool): If True, add inversion as a generating element
+
+        Raises:
+            ValueError: Raised if the group is not closed.
+
+        Returns:
+            Self: The symmetry generated by the generating set
+        """
         N = len(G[0])
         G = np.array(G) + 0.0
         assert len(
@@ -216,25 +269,54 @@ class Symmetry:
                         break
                 if is_new:
                     S.append(s)
-            assert len(S) < 1000, "group size limitation to avoid endless loops"
+            if len(S) >= 1000:
+                raise ValueError("group size limitation to avoid endless loops")
             if len(S) <= prev_len:
                 break
         return Symmetry(np.array(S), inversion)
 
-    # no symmetry
-    def none(dim=3):
+    def none(dim=3) -> Self:
+        """No symmetry for any dimension.
+
+        Args:
+            dim (int, optional): Dimension of the symmetry. Defaults to 3.
+
+        Returns:
+            Self: The empty symmetry group
+        """
         return Symmetry([np.eye(dim)], False)
 
-    # inversion symmetry
-    def inv(dim=3):
+    def inv(dim=3) -> Self:
+        """Inversion symmetry for any dimension.
+
+        Args:
+            dim (int, optional): Dimension of the symmetry. Defaults to 3.
+
+        Returns:
+            Self: The inversion symmetry group
+        """
         return Symmetry([np.eye(dim)], True)
 
-    # octahedral group https://en.wikipedia.org/wiki/Octahedral_symmetry
-    def cubic(inversion):
+    def cubic(inversion: bool) -> Self:
+        """Octahedral group https://en.wikipedia.org/wiki/Octahedral_symmetry
+
+        Args:
+            inversion (bool): If True, the inversion symmetry is included (O_h group instead of O).
+
+        Returns:
+            Self: The cubic symmetry group
+        """
         return Symmetry.even_perm3() * Symmetry.mirror3(inversion)
 
-    # permutation symmetry in the 3 axis
-    def perm3(inversion=False):
+    def perm3(inversion=False) -> Self:
+        """The 3D symmetry created by permuting the axes.
+
+        Args:
+            inversion (bool, optional): If True, inversion symmetry is added. Defaults to False.
+
+        Returns:
+            Self: The 3D permutation group
+        """
         S = [((1, 0, 0), (0, 1, 0), (0, 0, 1)),
              ((0, 1, 0), (0, 0, 1), (1, 0, 0)),
              ((0, 0, 1), (1, 0, 0), (0, 1, 0)),
@@ -243,8 +325,24 @@ class Symmetry:
              ((0, 0, 1), (0, 1, 0), (1, 0, 0))]
         return Symmetry(S, inversion=inversion)
 
-    # group generated by [[0,0,1], [0,-1,0], [1,0,0]], [[-1,0,0], [0,0,1], [0,1,0]]
-    def even_perm3(inversion=False):
+    def even_perm3(inversion=False) -> Self:
+        """The 3D permutation group with positive determinant.
+        This group is generated by
+        ```
+        [[[ 0, 0, 1],
+          [ 0,-1, 0],
+          [ 1, 0, 0]],
+         [[-1, 0, 0],
+          [ 0, 0, 1],
+          [ 0, 1, 0]]]
+        ```
+
+        Args:
+            inversion (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            Self: The positive 3D permutation symmetry group
+        """
         S = [((1, 0, 0), (0, 1, 0), (0, 0, 1)),
              ((0, 1, 0), (0, 0, -1), (-1, 0, 0)),
              ((0, 0, -1), (1, 0, 0), (0, -1, 0)),
@@ -253,52 +351,72 @@ class Symmetry:
              ((0, 0, 1), (0, -1, 0), (1, 0, 0))]
         return Symmetry(S, inversion=inversion)
 
-    # point reflections in all 3 planes (Klein four group V_4), or mirror symmetries for all axes if inversion = True
-    def mirror3(inversion=False):
+    def mirror3(inversion=False) -> Self:
+        """3D Point reflections in all 3 planes (Klein four group V_4),
+        or mirror symmetries for all axes if inversion is added.
+
+        Args:
+            inversion (bool, optional): If True, add inversion symmetry -> full xyz mirror symmetry. Defaults to False.
+
+        Returns:
+            Self: The klein four symmetry group (V_4) or the full xyz-mirror symmetry group
+        """
         S = [((1, 0, 0), (0, 1, 0), (0, 0, 1)),
              ((1, 0, 0), (0, -1, 0), (0, 0, -1)),
              ((-1, 0, 0), (0, -1, 0), (0, 0, 1)),
              ((-1, 0, 0), (0, 1, 0), (0, 0, -1))]
         return Symmetry(S, inversion=inversion)
 
-    # mirror symmetry along x axis
-    def mirror_x(inversion=False):
-        S = [((1, 0, 0), (0, 1, 0), (0, 0, 1)),
-             ((-1, 0, 0), (0, 1, 0), (0, 0, 1))]
+    def mirror_x(inversion=False, dim=3) -> Self:
+        """Mirror symmetry on x-axis.
+
+        Args:
+            inversion (bool, optional): If True, add inversion symmetry. Defaults to False.
+            dim (int, optional): Dimension of the symmetry. Defaults to 3.
+
+        Returns:
+            Self: The x-mirror symmetry group with 2/4 elements.
+        """
+        S = [np.eye(dim), np.eye(dim)]
+        S[1][0,0] = -1
         return Symmetry(S, inversion=inversion)
 
-    # symmetries of a 2D square
-    def square():
+    def square() -> Self:
+        """The symmetry of a 2D square.
+
+        Returns:
+            Self: The square symmetry group
+        """
         S = [((0, 1), (-1, 0)),
              ((1, 0), (0, -1))]
         return Symmetry.from_generator(S, False)
 
-    # 2D rotation symmetry
-    def o2():
-        S = [((1, 0), (0, 1)),
-             ((0, 1), (-1, 0)),
-             ((-1, 0), (0, -1)),
-             ((0, -1), (1, 0))]
-        return Symmetry(S, False)
-
-    def monoclinic_x(inversion):
-        # monoclinic crystal (inversion symmetry + 180° rotation in yz)
+    def monoclinic_x(inversion: bool) -> Self:
+        """Monoclinic crystal (inversion symmetry + 180° rotation in yz)"""
         D = [np.eye(3), np.diag((1, -1, -1))]
         return Symmetry(D, inversion)
 
-    def monoclinic_y(inversion):
-        # monoclinic crystal (inversion symmetry + 180° rotation in xz)
+    def monoclinic_y(inversion: bool) -> Self:
+        """Monoclinic crystal (inversion symmetry + 180° rotation in xz)"""
         D = [np.eye(3), np.diag((-1, 1, -1))]
         return Symmetry(D, inversion)
 
-    def monoclinic_z(inversion):
-        # monoclinic crystal (inversion symmetry + 180° rotation in yz)
+    def monoclinic_z(inversion: bool) -> Self:
+        """Monoclinic crystal (inversion symmetry + 180° rotation in yz)"""
         D = [np.eye(3), np.diag((-1, -1, 1))]
         return Symmetry(D, inversion)
 
-    # check if space dependent function satisfies the symmetry
-    # foo is a function k -> matrix
-    def check_symmetry(self, foo):
+    def check_symmetry(self, foo: Callable, verbose=True) -> bool:
+        """Check if a space dependent function satisfies the symmetry.
+        
+        Args:
+            foo (Callable[[arraylike(dim)], arraylike(...)]): The function to be checked. Takes a spacial position and returns some kind of value.
+            verbose (bool, optional): If True, a message is printed showing the standard deviation
+                of the output for all symmetrically equivalent positions of a random position. Defaults to True.
+
+        Returns:
+            bool: True if the symmetry wasn't broken, otherwise False.
+        """
         # random sample points
         r_smpl = np.random.random((50, len(self.S[0])))
         for r in r_smpl:
@@ -306,26 +424,25 @@ class Symmetry:
             for s in self.S:
                 values.append(foo(s @ r))
             if np.linalg.norm(np.std(values, axis=0)) > 1e-7:
-                print("symmetry error")
-                print(np.std(values, axis=0))
+                if verbose:
+                    print("symmetry error")
+                    print(np.std(values, axis=0))
                 return False
         return True
 
-    # fill in symmetric k-points in symmetry reduced points.
-    # -> creates an ordered grid for cubic symmetry
-    # NOTE this method ONLY works for symmetry reduced points, otherwise it will create duplicates
-    # returns a list of k-points and an index list for how to get the k-points.
-    def realize_symmetric(self, k_smpl, unit_cell=False):
+    def realize_symmetric(self, k_smpl, unit_cell=False) -> Tuple[np.ndarray, np.ndarray]:
         """Takes a reduced set of k-points and computes
         the full set of k points that can be inferred using symmetry.
-        The result is sorted, such that if it's a grid,
-        it will be ordered appropriately for a reshape into a grid (useful for interpolation).
+        The result is sorted, such that if it's a grid.
+        It will be ordered appropriately for a reshape into a grid (useful for interpolation).
+        
         If the input list of k-points contains symmetrically equivalent points,
         the output will have duplicates! There is a warning printed if this happens.
 
         Args:
             k_smpl (arraylike(N_k, dim(k))): List of points, that this symmetry is applied to.
-            This is not allowed to contain symmetric equivalent points.
+                This is not allowed to contain symmetric equivalent points.
+            unit_cell (bool, optional): If True, the results will be transformed into the unit cell [-1/2, 1/2[^dim. No duplicates are introduced by this.
 
         Returns:
             array(N'_k, dim(k)): List of points with the symmetric k-points added and sorted.
@@ -386,32 +503,56 @@ class Symmetry:
             unique_order.append(order[i])
         # warn if duplicates fromm different k_smpl are found
         if bad_duplicates:
-            print("WARNING: duplicate k points generated in realize_symmetric")
+            warnings.warn("duplicate k-points generated in realize_symmetric")
         return np.asarray(unique_full_k), np.asarray(unique_order)
 
-    # fill symmetry reduced data up to the full dataset
-    # -> creates a grid for cubic symmetry
-    def realize_symmetric_data(self, k_smpl, reduced, unit_cell=False):
-        full_k, order = self.realize_symmetric(k_smpl, unit_cell=unit_cell)
-        return full_k, np.array(np.asarray(reduced)[order])
+    def realize_symmetric_data(self, k_smpl, data, unit_cell=False) -> Tuple[np.ndarray, np.ndarray]:
+        """Same as `realize_symmetric` but instead of returning the source indices,
+        the information is immediately used to copy the given data for the new k-points.
 
-    # reduce symmetric data to only included representants for each k equivalence class
-    # NOTE: the result can be unstable but usually it's good
-    def reduce_symmetric_data(self, k_smpl, full, checked=False):
+        Args:
+            k_smpl (arraylike(N_k, dim)): List of points, that this symmetry is applied to.
+                This is not allowed to contain symmetric equivalent points. 
+            data (arraylike(N_k, ...)): Data to be copied along with the k-points.
+            unit_cell (bool, optional): If True, the results will be transformed into the unit cell [-1/2, 1/2[^dim. No duplicates are introduced by this.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: new k-points, data at the new k-points
+        """
+        full_k, order = self.realize_symmetric(k_smpl, unit_cell=unit_cell)
+        return full_k, np.array(np.asarray(data)[order])
+
+    def reduce_symmetric_data(self, k_smpl, data, checked=True) -> Tuple[np.ndarray, np.ndarray]:
+        """Reduce symmetric data to only include one representant for each k equivalence class.
+        NOTE: the result can be unstable but usually it's good.
+
+        Args:
+            k_smpl (arraylike(N_k, dim)): The spacial positions of the data
+            data (arraylike(N_k, ...)): The data for each k-point
+            checked (bool, optional): If True, the data gets checked for symmetry and an exception is raises if it is not symmetric. This costs almost no extra time. Defaults to True.
+
+        Raises:
+            ValueError: Raised if the data didn't respect the symmetry.
+
+        Returns:
+            array(N'_k, dim(k)): List of points with the symmetric k-points removed.
+            array(N'_k, ...): List of data values for the reduced points.
+        """
         # same sort as in realize_symmetric_data
         k_smpl = np.asarray(k_smpl)
-        full = np.asarray(full)
+        data = np.asarray(data)
         for i in range(len(k_smpl[0])):
             order = np.argsort(
                 np.round(k_smpl[:, i] + np.pi, 4), kind='stable')
             k_smpl = k_smpl[order]
-            full = full[order]
+            data = data[order]
         reduced_k = np.asarray(k_smpl)
-        reduced = np.asarray(full)
+        reduced = np.asarray(data)
         # sort by length of k, since all symmetry operations keep length equal
+        assert self.is_orthogonal(), "The algorithm here only works for orthogonal symmetry operations"
         # this stable works really well
-        order = np.argsort(np.linalg.norm(
-            reduced_k, axis=-1)**2, kind='stable')
+        order = np.argsort(np.round(np.linalg.norm(
+            reduced_k, axis=-1)**2, 2), kind='stable')
         reduced_k = list(reduced_k[order])
         reduced = list(reduced[order])
         i = 0
@@ -444,7 +585,18 @@ class Symmetry:
         return np.array(reduced_k), np.array(reduced)
 
     def complete_neighbors(self, neighbors, return_order=False):
-        neighbors, order = self.realize_symmetric(neighbors)
+        """Make a complete set of neighbors for this symmetry based on the given neighbor positions.
+
+        Args:
+            neighbors (arraylike(N_R, dim)): A list of real lattice points.
+            return_order (bool, optional): If True, the source index for each of the result indices is returned as well. Defaults to False.
+
+        Returns:
+            list: List of real lattice positions, but reduced by inversion symmetry. The 0 position is at index 0.
+            list: Returned if return_order=True, List of source indices for each of the returned positions.
+        """
+        # this is done with the transposed symmetries, as the whole symmetry is supposed to be for k-space.
+        neighbors, order = self.transpose().realize_symmetric(neighbors)
         # deduplicate (but keep the original ordering if there is no duplicates)
         new_neighbors = []
         used_neighbors = set()
@@ -463,6 +615,14 @@ class Symmetry:
         return neighbors
 
     def check_neighbors(self, neighbors):
+        """Check 3D real lattice positions, if they fit the symmetry.
+
+        Args:
+            neighbors (arraylike(N_R, 3)): The real lattice positions to be checked.
+
+        Raises:
+            ValueError: Raised if the given positions don't fit the symmetry.
+        """
         assert self.dim() == 3
         # only half of the neighbor terms are present, but the symmetry is important
         neighbors = np.asarray(neighbors)
@@ -470,7 +630,8 @@ class Symmetry:
         count = [0]*len(neighbors)
         for i, r in enumerate(neighbors):
             for s in zip(self.S):
-                r_ = s @ r
+                # using transposed symmetry operations, as the whole symmetry is meant to be in k-space
+                r_ = s.T @ r
                 # here only the neighbors with an index similar to i need to be checked
                 # TODO replace this search by the KD-Trees
                 start = max(i - len(self.S) * 3, 0)
@@ -483,8 +644,17 @@ class Symmetry:
                 raise ValueError(
                     "neighbors need to be choosen to fit the symmetry, however counting occurences has found the numbers " + str(count))
 
-    # calculate the weight of a k point (percent of the space angle around the point) in a 1-periodic lattice with this symmetry
-    def k_weight(self, k_smpl):
+    def k_weight(self, k_smpl) -> np.ndarray:
+        """Calculate the weight of a k-point in a 1-periodic lattice with this symmetry.
+        The weight is the fraction of space angle around the point, which is owned by the point.
+        E.g. the weight of the point 0 is always 1/len(self).
+
+        Args:
+            k_smpl (arraylike(N_k, dim)): A list of k-points for which to compute the weight. Each k-point is considered unique.
+
+        Returns:
+            ndarray(N_k): List of weights
+        """
         weights = np.zeros(len(k_smpl), dtype=np.int32)
 
         def pingpong_distance(x):
@@ -496,9 +666,15 @@ class Symmetry:
                                              sign*s - np.eye(len(s)), k_smpl)).sum(-1) < 1e-7
         return 1 / weights
 
-    # calculate the number of unique symmetric points from a given representant.
-    # Same as k_weight, but without periodicity
     def r_class_size(self, k_smpl):
+        """Number of points in the symmetry equivalence class for each k-point without periodicity.
+
+        Args:
+            k_smpl (arraylike(N_k, dim)): A list of k-points for which to compute the size of the equivalence class.
+
+        Returns:
+            ndarray(N_k): An integer (the format is float) for each point.
+        """
         # instead of generating the symmetric points, check how many symmetries fail to produce new points.
         # NOTE every symmetric point can be generated from using the application of just one symmetry operation,
         # therefore the number of points is the number of symmetries divided by the symmetries which leave the initial point invariant.
@@ -510,6 +686,14 @@ class Symmetry:
         return len(self) / weights
 
     def find_classes(self, points):
+        """Find the groups of symmetrically equivalent points.
+
+        Args:
+            points (arraylike(N, dim)): The point array to find equivalent sets in.
+
+        Returns:
+            dict: {representative_index: { all indices of the equivalence group } }
+        """
         points = np.asarray(points)
         classes = {}  # {representative_index: { index }}
         covered = set()
@@ -527,8 +711,16 @@ class Symmetry:
             covered = covered.union(rep_class)
         return classes
 
-    # symmetrize a tensor accoding to this symmetry. This is a projection.
     def symmetrize(self, tensor):
+        """Symmetrize a tensor accoding to this symmetry using the group mean.
+        This is a linear operation, which is a projection.
+
+        Args:
+            tensor (arraylike(dim, dim)): The input tensor to be symmetrized.
+
+        Returns:
+            ndarray(dim, dim): The symmetrized tensor
+        """
         orig = np.array(tensor) * 1.0
         res = np.zeros_like(orig)
         for s in self.S:
@@ -536,9 +728,16 @@ class Symmetry:
         res /= len(self.S)
         return res
 
-    # compute equivalence classes with a given equivalence relation.
-    # This realizes the inversion symmetry for the result
-    def equivalence_classes(self, equiv_relation):
+    def equivalence_classes(self, equiv_relation: Callable[[np.ndarray, np.ndarray], bool]) -> list:
+        """Compute equivalence classes with a given equivalence relation.
+        This function realizes the inversion symmetry for the result.
+
+        Args:
+            equiv_relation (Callable[[ndarray(dim, dim), ndarray(dim, dim)], bool]): _description_
+
+        Returns:
+            list: List of equivalence classes, which are represented as lists with the symmetry operations.
+        """
         rem = list(self.S)
         if self.inversion:
             rem = rem + list(-self.S)
@@ -555,7 +754,12 @@ class Symmetry:
             classes.append(unique)
         return classes
 
-    def conjugacy_classes(self):
+    def conjugacy_classes(self) -> list:
+        """Compute the conjugacy classes of the symmetry group.
+
+        Returns:
+            list: List of equivalence classes, which are represented as lists with the symmetry operations.
+        """
         def conjugated(a, b):
             cc = np.einsum("nij,jm,nmk->nik", self.S, a, np.linalg.inv(self.S))
             for c in cc:
@@ -564,13 +768,13 @@ class Symmetry:
             return False
         return self.equivalence_classes(conjugated)
 
-    # combine two symmetries by finding the smallest symmetry group, that is generated by them
-    def __mul__(self, other):
+    def __mul__(self, other: Self) -> Self:
+        """Combine two symmetries by finding the smallest symmetry group, that is generated by them."""
         assert self.dim() == other.dim()
         return Symmetry.from_generator(list(self.S) + list(other.S), inversion=(self.inversion or other.inversion))
 
     # find the factor group or raise a ValueError
-    def __truediv__(self, rhs):
+    def __truediv__(self, rhs: Self) -> Self:
         assert self.dim() == rhs.dim()
         d = self.dim()
         assert (self.inversion or not rhs.inversion) and len(self.S) % len(

@@ -706,6 +706,18 @@ class AsymTightBindingModel:
             self.S.S_r[i] = self.S.S_r[i][order]
             self.S.S_r[i] = self.S.S_r[i][:,order]
     
+    def transform(self, A):
+        """Apply a transformation on the neighbors in the fourier series.
+        This is useful to go from a crystal space fit to the reciprocal space fit.
+        For that, put the lattice matrix A with the lattice vectors in the argument.
+
+        Args:
+            A (arraylike(dim, dim)): Transformation matrix for the neighbors. E.g. matrix with the real lattice vectors in the columns.
+        """
+        self.H.neighbors = np.einsum("ji,ni->nj", A, self.H.neighbors)
+        self.S.neighbors = np.einsum("ji,ni->nj", A, self.S.neighbors)
+        
+
     def params_complex(self):
         """
         Get the complex fourier coefficients $H_r$.
