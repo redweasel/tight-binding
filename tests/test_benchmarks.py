@@ -74,6 +74,8 @@ def optimize_example():
     ref_model = BandStructureModel.init_tight_binding(Symmetry.none(), neighbors, N_B, cos_reduced=False, exp=True)
     ref_model.set_params_complex(H_r)
     ref_bands = ref_model.bands(k_smpl)
+    assert len(ref_bands[0]) == N_B
+    assert len(band_weights) == N_B
 
     start_H_r = np.random.random((len(neighbors), N_B, N_B)) + 0j
     start_H_r[0] += np.conj(start_H_r[0].T)

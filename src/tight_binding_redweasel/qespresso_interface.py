@@ -402,6 +402,8 @@ class QECrystal:
                 if len(trans):
                     content = trans[0].firstChild.nodeValue
                     S_trans.append(np.array([float(x) for x in content.strip().split()]))
+                else:
+                    S_trans.append(np.zeros(3))
             ks_energies = document.getElementsByTagName("ks_energies")
             for ks_e in ks_energies:
                 k_point = ks_e.getElementsByTagName("k_point")[0]
@@ -424,14 +426,13 @@ class QECrystal:
                 S = np.array(S).swapaxes(-1, -2)
                 S = np.linalg.inv(S)
             # symmetries should be orthogonal in this basis. TODO sometimes they are not??? Related to fractional symmetries...
-            if len(S_trans) == 0:
-                assert np.linalg.norm(np.einsum("nij,nik->njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
-            else:
-                assert len(S_trans) == len(S), "every symmetry needs an associated translational part if one of them has one."
-                # only return the symmetries without translational part
-                S = [S for S, t in zip(S, S_trans) if np.linalg.norm(t) < 1e-10]
-                if len(S) != len(S_trans):
-                    print("WARNING: fractional symmetries dropped")
+            # assert np.linalg.norm(np.einsum("nij,nik->njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
+            assert np.linalg.norm(np.round(S) - S) < 1e-8, "symmetries in crystal space are not integers"
+            assert len(S_trans) == len(S), "every symmetry needs an associated translational part if one of them has one."
+            # only return the symmetries without translational part
+            S = [S for S, t in zip(S, S_trans) if np.linalg.norm(t) < 1e-10]
+            if len(S) != len(S_trans):
+                print("WARNING: fractional symmetries dropped")
             fermi_energy_node = document.getElementsByTagName("fermi_energy")[0]
             fermi_energy = float(fermi_energy_node.firstChild.nodeValue.strip()) * to_eV
         return np.array(k_points), np.array(bands), S, fermi_energy, A

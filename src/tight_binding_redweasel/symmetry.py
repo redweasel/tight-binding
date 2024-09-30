@@ -1,32 +1,15 @@
 import numpy as np
 from scipy.spatial import KDTree
 from typing import Self, Callable, Tuple
+from .linalg import pointcloud_distance
 import warnings
 
 # My own symmetries.
 # The following has a lot of it, but is missing a part which I deemed crucial for the performance.
 # https://qsymm.readthedocs.io/en/latest/tutorial/bloch_generator.html
 
-
-def pointcloud_distance(pointcloud1, pointcloud2):
-    # TODO try using scipy.optimize.linear_sum_assignment
-    pointcloud1 = np.asarray(pointcloud1)
-    pointcloud1 = pointcloud1.reshape(pointcloud1.shape[0], -1)
-    pointcloud2 = np.asarray(pointcloud2)
-    pointcloud2 = pointcloud2.reshape(pointcloud2.shape[0], -1)
-    # for each point in pointcloud1 find the closest in pointcloud2, add the distance, then remove that
-    dist = 0.0
-    for i, p1 in enumerate(pointcloud1):
-        d = np.linalg.norm(p1 - pointcloud2, axis=-1)
-        min_index = np.argmin(d.flat)
-        dist += d.flat[min_index]
-        d = np.delete(d.flat, min_index)
-    return dist
-
 # a function that returns a function that maps positions to (neighbor_index, is_mirrored)
 # and raises a ValueError if the neighbor isn't found.
-
-
 def neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]]:
     kdtree = KDTree(neighbors)
 
@@ -43,8 +26,6 @@ def neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]]:
 
 # a function that returns a function that maps positions to (neighbor_index, is_mirrored)
 # and returns None, None if the neighbor isn't found
-
-
 def try_neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]]:
     kdtree = KDTree(neighbors)
 

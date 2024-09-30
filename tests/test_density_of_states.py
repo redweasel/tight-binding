@@ -38,7 +38,7 @@ def test_linear_density_of_states():
                 return self(k_smpl), base * [1, 2, 3, 4]
 
         linear = LinearModel()
-        dos_model = dos.DensityOfStates(linear, N=11, ranges=((0.0, 0.5),)*3, wrap=False)
+        dos_model = dos.DensityOfStates(linear, N=17, ranges=((0.0, 0.5),)*3, wrap=False)
         assert np.linalg.norm(np.array(dos_model.bands_range)-offset_b - [(1.0, 2.5), (2.0, 5.0), (3.0, 7.5), (4.0, 10.0)]) < 1e-10, f"band ranges are detected wrong: {dos_model.bands_range}"
         energy_smpl, _states, density = dos_model.full_curve(N=30)
 
@@ -57,9 +57,22 @@ def test_linear_density_of_states():
             density2.append(sum(b))
             density_bands.append(b)
         # test the contributions of the individual bands
-        # error is due to the added epsilon in dos.cube_cut_volume
-        assert np.linalg.norm(density2 - density) < 1e-6, "total dos doesn't match"
-        assert np.linalg.norm([dos_model.density_bands(e) for e in energy_smpl] - np.array(density_bands)) < 1e-6, "band resolved dos doesn't match"
+        assert np.linalg.norm(density2 - density) < 1e-12, f"total dos doesn't match, error {np.linalg.norm(density2 - density)}"
+        density_bands2 = np.array([dos_model.density_bands(e) for e in energy_smpl])
+        assert np.linalg.norm(density_bands2 - density_bands) < 1e-12, f"band resolved dos doesn't match, error {np.linalg.norm(density_bands2 - density_bands)}"
+        # TODO compare states as well!
+
+        # test area measure in fermi_surface_samples
+        for weight_by_gradient in [False, True]:
+            _, _, _, area = dos_model.fermi_surface_samples(offset_b + 2*offset_a, improved_points=False, improved_weights=False, weight_by_gradient=weight_by_gradient, normalize=None)
+            assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples is wrong, {area} != {offset_a**2*3**.5}"
+            _, _, _, area = dos_model.fermi_surface_samples(offset_b + 2*offset_a, improved_points=True, improved_weights=False, weight_by_gradient=weight_by_gradient, normalize=None)
+            assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples is wrong, {area} != {offset_a**2*3**.5}"
+            _, _, _, area = dos_model.fermi_surface_samples(offset_b + 2*offset_a, improved_points=False, improved_weights=True, weight_by_gradient=weight_by_gradient, normalize=None)
+            assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples is wrong, {area} != {offset_a**2*3**.5}"
+            _, _, _, area = dos_model.fermi_surface_samples(offset_b + 2*offset_a, improved_points=True, improved_weights=True, weight_by_gradient=weight_by_gradient, normalize=None)
+            assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples is wrong, {area} != {offset_a**2*3**.5}"
+        # TODO test more!
 
         # analytic drude factor
         T = 300
@@ -80,7 +93,9 @@ def test_linear_density_of_states():
         sigma_T0 = dos.gauss_7_df(foo, mu, beta)
         
         sigma1 = (2 * bulk.elementary_charge**2/bulk.eV / cell_length**3) * sigma_T0
-        sigma2 = bulk.KIntegral(dos_model, 2, T).drude_factor(np.eye(3)*cell_length*1e10, 2)[0,0]
+        sigma2 = bulk.KIntegral(dos_model, 2, T).drude_factor(np.eye(3)*cell_length*1e10, 2)[0][0,0]
         sigma3 = bulk.KIntegral(dos_model, 2, T).conductivity_over_tau(cell_length, 2)[0,0]
         assert abs(sigma1 - sigma2) / abs(sigma1) < 1e-4, f"error in sigma {(sigma1 - sigma2)/sigma1:%}"
         assert abs(sigma2 - sigma3) / abs(sigma2) < 1e-6, f"error in sigma {(sigma2 - sigma3)/sigma2:%}"
+
+test_linear_density_of_states()

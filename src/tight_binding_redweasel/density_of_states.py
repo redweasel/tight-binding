@@ -2,6 +2,7 @@
 # and the fermi energy at finite temperatures
 
 import numpy as np
+from typing import Callable, Tuple, Self
 
 k_B = 8.61733326214518e-5 # eV/K
 
@@ -17,6 +18,7 @@ def cubes_preprocessing(band, wrap):
     #ayz = (a[0] + a[1] - a[2] - a[3] - a[4] - a[5] + a[6] + a[7]) / 2
     #axz = (a[0] - a[1] + a[2] - a[3] - a[4] + a[5] - a[6] + a[7]) / 2
     #axyz = (-a[0] + a[1] + a[2] - a[3] + a[4] - a[5] - a[6] + a[7])
+    # TODO move the normalisation into here as well
     if wrap:
         return a0, ax, ay, az
     else:
@@ -27,17 +29,17 @@ EPSILON = 1e-6
 # cheap approximation of volume in cuboid using cube cuts
 def cube_cut_volume(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
-    # TODO get rid of these added constants (they are added to make the axial case work without if's)
-    ax, ay, az = np.abs(ax) + EPSILON, np.abs(ay) + EPSILON, np.abs(az) + EPSILON
+    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
     # cube cuts = sum of tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5
-    ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
+    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
+    ax /= norm; ay /= norm; az /= norm; a0 /= norm
+    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
     volume = 0
     volume += np.maximum(0, ( ax + ay + az)/2 + a0)**3
     volume -= np.maximum(0, (-ax + ay + az)/2 + a0)**3
     volume -= np.maximum(0, ( ax - ay + az)/2 + a0)**3
-    volume -= np.maximum(0, ( ax + ay - az)/2 + a0)**3
     volume += np.maximum(0, ( ax - ay - az)/2 + a0)**3
+    volume -= np.maximum(0, ( ax + ay - az)/2 + a0)**3
     volume += np.maximum(0, (-ax + ay - az)/2 + a0)**3
     volume += np.maximum(0, (-ax - ay + az)/2 + a0)**3
     volume -= np.maximum(0, (-ax - ay - az)/2 + a0)**3
@@ -48,16 +50,17 @@ def cube_cut_volume(a0, ax, ay, az):
 # cheap approximation using cube cuts (direct derivative of cube_cut_volume, not the actual area!)
 def cube_cut_dvolume(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
-    ax, ay, az = np.abs(ax) + EPSILON, np.abs(ay) + EPSILON, np.abs(az) + EPSILON
+    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
     # cube cuts = sum of tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5
-    ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
+    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
+    ax /= norm; ay /= norm; az /= norm; a0 /= norm
+    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
     area = 0
     area += np.maximum(0, ( ax + ay + az)/2 + a0)**2
     area -= np.maximum(0, (-ax + ay + az)/2 + a0)**2
     area -= np.maximum(0, ( ax - ay + az)/2 + a0)**2
-    area -= np.maximum(0, ( ax + ay - az)/2 + a0)**2
     area += np.maximum(0, ( ax - ay - az)/2 + a0)**2
+    area -= np.maximum(0, ( ax + ay - az)/2 + a0)**2
     area += np.maximum(0, (-ax + ay - az)/2 + a0)**2
     area += np.maximum(0, (-ax - ay + az)/2 + a0)**2
     area -= np.maximum(0, (-ax - ay - az)/2 + a0)**2
@@ -66,12 +69,13 @@ def cube_cut_dvolume(a0, ax, ay, az):
     return np.where(np.abs(a0) < 3**.5/2, area / (2 * axyzn), 0)
 
 # cheap approximation of volume and area in cuboid using cube cuts
-def cube_cut_volume_area(a0, ax, ay, az):
+def cube_cut_volume_dvolume(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
-    ax, ay, az = np.abs(ax) + EPSILON, np.abs(ay) + EPSILON, np.abs(az) + EPSILON
     # cube cuts = sum of tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5
-    ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
+    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
+    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
+    ax /= norm; ay /= norm; az /= norm; a0 /= norm
+    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
     v0 = np.maximum(0, ( ax + ay + az)/2 + a0)
     v1 = np.maximum(0, (-ax + ay + az)/2 + a0)
     v2 = np.maximum(0, ( ax - ay + az)/2 + a0)
@@ -80,8 +84,8 @@ def cube_cut_volume_area(a0, ax, ay, az):
     v5 = np.maximum(0, (-ax + ay - az)/2 + a0)
     v6 = np.maximum(0, (-ax - ay + az)/2 + a0)
     v7 = np.maximum(0, (-ax - ay - az)/2 + a0)
-    volume = v0**3 - v1**3 - v2**3 - v3**3 + v4**3 + v5**3 + v6**3 - v7**3
-    area = v0**2 - v1**2 - v2**2 - v3**2 + v4**2 + v5**2 + v6**2 - v7**2
+    volume = v0**3 - v1**3 - v2**3 + v4**3 - v3**3 + v5**3 + v6**3 - v7**3
+    area = v0**2 - v1**2 - v2**2 + v4**2 - v3**2 + v5**2 + v6**2 - v7**2
     axyz = ax * ay * az
     # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
     return np.where(np.abs(a0) < 3**.5/2, volume / (6 * axyz), a0 > 0), np.where(np.abs(a0) < 3**.5/2, area / (2 * axyz * norm), 0)
@@ -90,10 +94,11 @@ def cube_cut_volume_area(a0, ax, ay, az):
 def cube_cut_area_com(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
     sx, sy, sz = np.sign(ax), np.sign(ay), np.sign(az)
-    ax, ay, az = np.abs(ax) + EPSILON, np.abs(ay) + EPSILON, np.abs(az) + EPSILON
+    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
     # cube cuts = sum of tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5
-    ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
+    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
+    ax /= norm; ay /= norm; az /= norm; a0 /= norm
+    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
     v0 = np.maximum(0, ( ax + ay + az)/2 + a0)
     v1 = np.maximum(0, (-ax + ay + az)/2 + a0)
     v2 = np.maximum(0, ( ax - ay + az)/2 + a0)
@@ -102,15 +107,15 @@ def cube_cut_area_com(a0, ax, ay, az):
     v5 = np.maximum(0, (-ax + ay - az)/2 + a0)
     v6 = np.maximum(0, (-ax - ay + az)/2 + a0)
     v7 = np.maximum(0, (-ax - ay - az)/2 + a0)
-    area = np.where(np.abs(a0) < 3**.5/2, v0**2 - v1**2 - v2**2 - v3**2 + v4**2 + v5**2 + v6**2 - v7**2, 0)
+    area = np.where(np.abs(a0) < 3**.5/2, v0**2 - v1**2 - v2**2 + v4**2 - v3**2 + v5**2 + v6**2 - v7**2, 0)
     shape = (1,) * len(np.shape(a0)) + (3,)
     com = np.reshape((0, 0, 0), shape)
     d = (1/3) / np.stack((ax, ay, az), axis=-1)
     com=com+v0[...,None]**2 * (np.reshape((-1, -1, -1), shape)/2 + d * v0[...,None])
     com -=  v1[...,None]**2 * (np.reshape(( 1, -1, -1), shape)/2 + d * v1[...,None])
     com -=  v2[...,None]**2 * (np.reshape((-1,  1, -1), shape)/2 + d * v2[...,None])
-    com -=  v3[...,None]**2 * (np.reshape((-1, -1,  1), shape)/2 + d * v3[...,None])
     com +=  v4[...,None]**2 * (np.reshape((-1,  1,  1), shape)/2 + d * v4[...,None])
+    com -=  v3[...,None]**2 * (np.reshape((-1, -1,  1), shape)/2 + d * v3[...,None])
     com +=  v5[...,None]**2 * (np.reshape(( 1, -1,  1), shape)/2 + d * v5[...,None])
     com +=  v6[...,None]**2 * (np.reshape(( 1,  1, -1), shape)/2 + d * v6[...,None])
     com -=  v7[...,None]**2 * (np.reshape(( 1,  1,  1), shape)/2 + d * v7[...,None])
@@ -158,7 +163,7 @@ def gauss_6_f(f, mu, beta):
 # and returns the exact convolution.
 def convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=None):
     def f(e):
-        return 1 / (1 + np.exp(beta*e))
+        return 1 / (1 + np.exp(beta*e)) # overflows can be safely ignored here!
     #def F(e):
     #    return -np.log1p(np.exp(-beta*e)) / beta
     def F_diff(e0, e1):
@@ -231,11 +236,30 @@ def naive_energy(bands, T, mu):
     return np.mean(e / (1 + np.exp((e - mu) / (k_B * T)))) * np.shape(bands)[-1]
 
 class DensityOfStates:
-    def __init__(self, model, N=24, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True):
+    """This class represents the density of states for a given 3D bandstructure model.
+    Using this class, one can compute the Fermi-energy or the chemical potential at finite T.
+    It is also the basis for `KIntegral` computations.
+
+    The bandstructure model, used in this class needs to accept crystal coordinates.
+    The cubic cell [-0.5, 0.5]^3 should equal the whole reciprocal crystal cell.
+    """
+    def __init__(self, model: Callable, N=24, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True):
+        """Initialize a density of states model from a bandstructure model.
+
+        Args:
+            model (Callable[[arraylike(N_k, 3)], bands]): The bandstructure model.
+                This class allows any function to be used as a bandstructure model.
+                However there are special features, that use `model.bands_grad_hess` to improve the results if it is available.
+            N (int, optional): Number of k-points per direction. Defaults to 24.
+            ranges (tuple, optional): _description_. Defaults to ((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)).
+            wrap (bool, optional): _description_. Defaults to True.
+        """
+        assert len(ranges) == 3, "This class can only be used for 3D models. Therefore 3 ranges need to be specified."
         if wrap:
             xyz = [np.linspace(*r, N, endpoint=False) + 1/2/N*(r[1] - r[0]) for r in ranges]
         else:
             xyz = [np.linspace(*r, N+1) for r in ranges]
+        self.step_sizes = np.array([x[1] - x[0] for x in xyz])
         self.k_smpl = np.stack(np.meshgrid(*xyz, indexing='ij'), axis=-1)
         self.wrap = wrap
         shape = np.shape(self.k_smpl)
@@ -254,15 +278,23 @@ class DensityOfStates:
                 for _ in range(2):
                     _, grad, hess = model.bands_grad_hess(np.array([min_k]))
                     eigvals = np.linalg.eigvalsh(hess[0, :, :, i])
-                    if np.all(eigvals >= 0):
-                        min_k -= np.linalg.pinv(hess[0, :, :, i]) @ grad[0, :, i]
+                    if np.any(eigvals < 0):
+                        break
+                    step = np.linalg.pinv(hess[0, :, :, i]) @ grad[0, :, i]
+                    if np.max(np.abs(step / self.step_sizes)) > 0.55:
+                        break # don't follow too big steps (e.g. at band crossings)
+                    min_k -= step
                 # find maximum
                 max_k = self.k_smpl.reshape(-1, 3)[band_range_indices[1]]
                 for _ in range(2):
                     _, grad, hess = model.bands_grad_hess(np.array([max_k]))
                     eigvals = np.linalg.eigvalsh(hess[0, :, :, i])
-                    if np.all(eigvals <= 0):
-                        max_k -= np.linalg.pinv(hess[0, :, :, i]) @ grad[0, :, i]
+                    if np.any(eigvals > 0):
+                        break
+                    step = np.linalg.pinv(hess[0, :, :, i]) @ grad[0, :, i]
+                    if np.max(np.abs(step / self.step_sizes)) > 0.55:
+                        break # don't follow too big steps (e.g. at band crossings)
+                    max_k -= step
                 # compute min/max values and store them
                 self.bands_range.append(tuple(model(np.array([min_k, max_k]))[:, i]))
         else:
@@ -273,6 +305,14 @@ class DensityOfStates:
     
     def model_bandcount(self):
         return len(self.bands_range)
+
+    def save(self, filename: str):
+        # TODO save without self.model
+        pass
+
+    def load(filename: str, model: Callable=None) -> Self:
+        # TODO load without self.model
+        pass
 
     def states_below(self, energy: float):
         states = 0.0
@@ -289,7 +329,7 @@ class DensityOfStates:
         density = 0.0
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
-                volume, area = cube_cut_volume_area(energy - self.cubes[i][0], *self.cubes[i][1:])
+                volume, area = cube_cut_volume_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:])
                 states += np.mean(volume)
                 density += np.mean(area)
             elif band_range[1] <= energy:
@@ -322,9 +362,16 @@ class DensityOfStates:
                 indices.append(i)
         return indices
     
-    # compute the full density of states curve
-    # returns energy_smpl, states, density
-    def full_curve(self, N=10, T=0):
+    def full_curve(self, N=10, T=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute the full density of states curve for a given electronic temperature.
+
+        Args:
+            N (int, optional): Number of points per band. Defaults to 10.
+            T (float, optional): Temperature for the calculation. Defaults to 0.
+
+        Returns:
+            Tuple[ndarray(N_e), ndarray(N_e), ndarray(N_e)]: energy samples, states, density
+        """
         # compute energy samples based on where the bands start and end
         energy_smpl = []
         for (min_e, max_e) in self.bands_range:
@@ -341,14 +388,14 @@ class DensityOfStates:
             beta = 1 / (k_B * T) # 1/eV
             energy_smpl_T0, states_T0, density_T0 = energy_smpl, states, density
             delta = 5.0 / beta
-            energy_smpl = np.array(list(np.linspace(energy_smpl[0] - delta, energy_smpl[0], N, endpoint=False)) + list(energy_smpl) + list(reversed(list(np.linspace(energy_smpl[-1] + delta, energy_smpl[-1], N, endpoint=False)))))
+            energy_smpl = np.concatenate([np.linspace(energy_smpl[0] - delta, energy_smpl[0], N, endpoint=False), energy_smpl, np.flip(np.linspace(energy_smpl[-1] + delta, energy_smpl[-1], N, endpoint=False))], axis=0)
             states = [convolve_df(x, energy_smpl_T0, states_T0, beta) for x in energy_smpl]
             density = [convolve_df(x, energy_smpl_T0, density_T0, beta) for x in energy_smpl]
         return np.array(energy_smpl), np.array(states), np.array(density)
     
     # for a given number of electrons per cell (float in general)
     # compute the fermi energy (correct for metals and isolators)
-    def fermi_energy(self, electrons: float, tol=1e-8, maxsteps=30):
+    def fermi_energy(self, electrons: float, tol=1e-8, maxsteps=30) -> float:
         assert electrons >= 0 and electrons <= len(self.bands_range), f'"electrons" must be between 0 and the number of bands (here {len(self.bands_range)})'
         # check if the material is an isolator
         e_int = round(electrons)
@@ -378,7 +425,7 @@ class DensityOfStates:
         raise ValueError(f"root search didn't converge in {maxsteps} steps. {abs((states - electrons) / density)} > {tol}.")
 
     # returns the approximate bandgap if the model describes an isolator, 0 if it describes a metal
-    def bandgap(self, electrons: float):
+    def bandgap(self, electrons: float) -> float:
         # first approximation from integer number of electrons
         assert electrons >= 0 and electrons <= len(self.bands_range)
         e_int = round(electrons)
@@ -392,10 +439,10 @@ class DensityOfStates:
         return 0.0 # metal
     
     # returns the minimum and maximum energy in the used band structure
-    def energy_range(self):
+    def energy_range(self) -> Tuple[float, float]:
         return self.bands_range[0][0], self.bands_range[-1][1]
 
-    def chemical_potential(self, electrons: float, T_smpl, N=30, tol=1e-8, maxsteps=30):
+    def chemical_potential(self, electrons: float, T_smpl, N=30, tol=1e-8, maxsteps=30) -> np.ndarray:
         fermi_energy = self.fermi_energy(electrons, tol=tol, maxsteps=maxsteps)
         # use a good distribution for energy_smpl,
         # such that this works for small T!
@@ -431,7 +478,7 @@ class DensityOfStates:
         return np.array(res)
     
     # TODO currently WRONG
-    def energy(self, T: float, electrons: float, mu: float=None, N=30):
+    def energy(self, T: float, electrons: float, mu: float=None, N=30) -> float:
         if mu is None:
             mu = self.chemical_potential(electrons, [T], N=N)
         # energy is integral e f(e) rho(e) de
@@ -467,7 +514,7 @@ class DensityOfStates:
 
     # volumetric heat capacity in eV/K
     # TODO currently WRONG
-    def heat_capacity(self, T: float, mu: float, N=30):
+    def heat_capacity(self, T: float, mu: float, N=30) -> float:
         # The heat capacity is du/dT where u is the energy per unit cell
         # u = integral e*rho(e)*f(e) de = -integral N(e)*(f(e)+e df/de(e)) de
         # du/dT = -integral N(e)*(-(e-mu)/T*df/de(e)+e/T*(-df/de(e) - (e-mu)*d2f/de2(e))) de
@@ -497,11 +544,26 @@ class DensityOfStates:
         states = [self.states_below(energy) for energy in energy_smpl]
         return accumulate(T, energy_smpl, states)
 
-    # compute points on the (fermi) surface at the given (fermi) energy.
-    # if the improved keyword argument is True, the results will be much more precise
-    # at the cost of an integration over the fermi surface.
-    # returns points, weights
-    def fermi_surface_samples(self, energy: float, improved=True, normalize=None):
+    def fermi_surface_samples(self, energy: float, improved_points=True, improved_weights=False, weight_by_gradient=False, normalize=None) -> Tuple[np.ndarray, np.ndarray, float]:
+        """Compute points on the (fermi) surface at the given (fermi) energy.
+        If the improved keyword argument is True, the results will be much more precise
+        at the cost of an integration over the fermi surface.
+
+        Args:
+            energy (float): The chemical potential energy at which the Fermi-surface is computed.
+            improved_points (bool, optional): If True, a Newton step is used to improve the precision of the Fermi-surface. Defaults to True.
+            improved_weights (bool, optional): If True, the weights will be recomputed to make integrals over the Fermi-surface more precise. Defaults to False.
+            weight_by_gradient (bool, optional): If True, the weights will include a reciprocal gradient term as in area/norm(grad). This is useful for integration. Defaults to False.
+            normalize (str, optional): Either of [None, "band", "total"].
+                    None means the weights match the k-space area associated with each point.
+                    "band" means that the weights in a band will sum up to 1.
+                    "total" means that all bands will sum up to 1.
+                    Defaults to None.
+
+        Returns:
+            Tuple[ndarray(N, 3), ndarray(N), ndarray(N), float]: points, band_indices, weights, total area
+        """
+        assert self.model is not None, "This function needs an underlying model"
         assert normalize in [None, "band", "total"], "normalize needs to be None, 'band' or 'total'"
         # use cube_cut_area_com() to get points, then
         # use the approximate gradients to do a newton step
@@ -509,8 +571,9 @@ class DensityOfStates:
         weights = []
         band_indices = []
         points = []
-        # TODO this only works for cubes! What about cuboids? Parallelograms?
-        size = np.linalg.norm(self.k_smpl[1,0,0] - self.k_smpl[0,0,0])
+        grads = None
+        # this only works for cubes! -> the weights only work for cubes
+        size = np.mean(self.step_sizes)
         centers = (self.k_smpl + np.roll(self.k_smpl, shift=(-1, -1, -1), axis=(0, 1, 2))) / 2
         if not self.wrap:
             centers = centers[:-1,:-1,:-1]
@@ -518,28 +581,102 @@ class DensityOfStates:
         for i in self.cut_band_indices(energy):
             w, x = cube_cut_area_com(self.cubes[i][0] - energy, *self.cubes[i][1:])
             # transform x into the the cubes
-            x *= size
+            x *= self.step_sizes
             x += centers
             x = x.reshape(-1, 3)
             w = np.ravel(w)
             select = w > 1e-4
             w = w[select]
             x = x[select]
-            if improved:
-                bands = self.model(x)[:,i:i+1] - energy
-                x += size * np.reshape(self.cubes[i][1:], (3, -1)).T[select] * (bands / (1e-20 + np.linalg.norm(np.reshape(self.cubes[i][1:], (3, -1)), axis=0)[select][...,None]**2))
-            w_sum = np.sum(w)
-            total_w_sum += w_sum
+            if improved_points:
+                if "bands_grad" in dir(self.model):
+                    # if available, evaluate the model with bands and exact gradients (way more precise!)
+                    bands, grads = self.model.bands_grad(x)
+                    bands = bands[:,i:i+1] - energy
+                    grads = grads[...,i]
+                else:
+                    # evaluate model, but take the gradients from the known approximations...
+                    bands = self.model(x)[:,i:i+1] - energy
+                    grads = np.reshape(self.cubes[i][1:], (3, -1)).T[select] / self.step_sizes
+                x += grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1)[...,None]**2))
+                # TODO w needs to change here as well!!!
+            # don't use gradients when computing total area
+            total_w_sum += np.sum(w)
+            if weight_by_gradient and not improved_weights:
+                if grads is None:
+                    grads = np.reshape(self.cubes[i][1:], (3, -1)).T[select] / self.step_sizes
+                # NOTE: the gradients could have changed here if improved_points=True
+                # TODO check if the error in the gradient is significant!
+                w /= np.linalg.norm(grads, axis=-1)
             if normalize == 'band':
-                w /= w_sum
+                w /= np.sum(w)
             points.extend(x)
             weights.extend(w)
             band_indices.extend([i] * len(w))
         assert len(points) == len(weights)
-        w = np.array(weights)
+        total_area = total_w_sum / (len(centers[...,0].flat) * size)
+        points = np.reshape(points, (-1, 3))
+        band_indices = np.array(band_indices, dtype=np.int64)
+        if improved_weights:
+            # The optimal solution here is triangulation, however the whole point of the cutting cubes was to avoid that!
+            
+            # It's not possible to know the results for plane waves...
+            # Some results however are possible to know based on symmetries, if they would be supplied.
+
+            # approximate delta-functions (gaussians) have a known approximate result.
+            # -> maybe that could be enough to improve the weights slightly. (use scipy.sparse)
+            #   -> problem: it becomes a volume integral instead of a surface integral... This is bad for half metals.
+
+            #N = (len(points) + 7) // 8 * 8 # use at least as many test functions as points to make the linear function invertible!
+            #def func(x):
+            #    return x # TODO
+            #w = conjugate_gradient_solve(func, np.ones(), np.array(weights))
+
+            # The cutting cube weight is computes in a fixed grid above. The points and their derivatives are known.
+            # What if one would average over multiple shifted cube grids to get the best weights??? I think that could work well!
+            # -> use the best available gradients for that!
+            # -> I don't think it's a problem if two points share a cube in this context.
+            # -> call this anti-aliasing and do 8 samples (no evaluation of the model = relatively cheap)
+            # -> TODO think about shifting the points as well using this method. Move points to mean COM, Newton step.
+            # -> think about handling duplicate surfaces correctly. I.e. (I'm assumming rare) cases where two cubes produce the same fermi surface points.
+            if "bands_grad" in dir(self.model):
+                # if available, evaluate the model with bands and exact gradients (way more precise!)
+                bands, grads = self.model.bands_grad(points)
+                bands = np.take_along_axis(bands, band_indices[:,None], axis=-1)[...,0]
+                grads = np.take_along_axis(grads, band_indices[:,None,None], axis=-1)[...,0]
+                # do another newton step here for free! (Assume the gradient is constant)
+                points += grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1)**2))[...,None]
+            else:
+                raise NotImplementedError("No implementation to get gradients from the lattice.")
+            ax, ay, az = tuple(grads.T * self.step_sizes[:,None]) # transformed for cubes
+            w = np.zeros(len(weights))
+            n = 2
+            offsets = np.stack(np.meshgrid(*3*[np.linspace(-0.5, 0.5, n, endpoint=False)])).reshape(-1, 3)
+            for offset in offsets:
+                # compute cube indices of the shifted points
+                cube_indices = np.round(offset + points / self.step_sizes) - offset
+                # only use one point per cube, or multiple if the gradients sufficiently disagree.
+                select = np.zeros(len(cube_indices), dtype=bool)
+                select[np.unique(cube_indices, axis=0, return_index=True)[1]] = True
+                # compute a0 (band value at the center of the cube) assuming it's 0 at the known points
+                # TODO figure out the sign here (for weight_by_gradient=True ???)
+                a0 = np.sum(grads * self.step_sizes * (cube_indices * self.step_sizes - points), -1)[select]
+                # TODO figure out how to compute the area for cuboids instead of cubes
+                if weight_by_gradient:
+                    w[select] += cube_cut_dvolume(a0, ax[select], ay[select], az[select])
+                else:
+                    # TODO COM calculation is not needed
+                    w[select] += cube_cut_area_com(a0, ax[select], ay[select], az[select])[0]
+            w /= len(offsets) # mean
+            total_w_sum = np.sum(w)
+            if normalize == 'band':
+                # TODO apply band normalisation
+                raise NotImplementedError("band normalisation with improved_weights is currently not implemented")
+        else:
+            w = np.array(weights)
+        # apply normalisation
         if normalize == 'total':
             w /= total_w_sum
         elif normalize is None:
             w /= len(centers[...,0].flat) * size # correct area measure weights
-        total_area = total_w_sum / (len(centers[...,0].flat) * size)
-        return np.array(points).reshape(-1, 3), np.array(band_indices), w, total_area
+        return points, band_indices, w, total_area

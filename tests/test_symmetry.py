@@ -40,6 +40,7 @@ def test_symmetry():
     C5 = Symmetry.cyclic(5, False)
     assert C5 == C5.transform([[0.6, 0.8, 0], [-0.8, 0.6, 0], [0, 0, 1]])
     assert len(Symmetry.dihedral(5, True) / C5) == 4 # not = mirror_x as the factor group is not unique
+    # the following caused a duplicate in the generator of the combined group -> test it
     assert Symmetry.mirror3(False) == Symmetry.mirror_xy(False) * Symmetry.mirror_xy(False).transform(((0, 1, 0), (0, 0, 1), (1, 0, 0))) * Symmetry.mirror_xy(False).transform(((1, 0, 0), (0, 1, 0), (0, 0, 1)))
     # icosahedral group
     assert len(Symmetry.icosahedral(False)) == 60

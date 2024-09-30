@@ -5,72 +5,7 @@ from .symmetry import *
 from . import logger
 from . import json_tb_format
 from . import wannier90_tb_format as tb_fmt
-
-def random_hermitian(n):
-    h = (np.random.random((n, n)) * 2 - 1) + 1j * (2 * np.random.random((n, n)) - 1)
-    return h + np.conj(h.T)
-
-def geigh(H: np.ndarray, S: np.ndarray):
-    if len(H.shape) == 3:
-        if np.linalg.norm(S - np.eye(S.shape[-1])) < 1e-8:
-            # fast path
-            return np.linalg.eigh(H)
-        else:
-            res_la = np.zeros(H.shape[:2], dtype=H.dtype)
-            res_ev = np.zeros(H.shape, dtype=H.dtype)
-            for i in range(len(H)):
-                la, ev = scipy.linalg.eigh(H[i], S[i])
-                res_la.append(la)
-                res_ev.append(ev)
-            return np.array(res_la), np.array(res_ev)
-    else:
-        return scipy.linalg.eigh(H, S)
-
-def geigvalsh(H, S):
-    if len(np.shape(H)) == 3:
-        res_la = []
-        for i in range(len(H)):
-            la = scipy.linalg.eigvalsh(H[i], S[i])
-            res_la.append(la)
-        return np.array(res_la)
-    else:
-        return scipy.linalg.eigvalsh(H, S)
-
-# A is a linear symmetric python function
-# b is of the same dimension as A(x0)
-# apart from solving a normal linear eq, it can also be used
-# to calculate the pseudo inverse of A efficiently like this:
-# A_pinv = conjugate_gradient_solve(lambda x: A @ x, np.identity(4), np.diag(1/(np.diag(A) + 1e-12)))
-def conjugate_gradient_solve(A, b, err=1e-9, max_i=None):
-    x = np.zeros_like(b)
-    r = -b
-    d = r.copy()
-    r_sqr = np.sum(r.conj() * r)
-    if max_i == None:
-        max_i = int(np.prod(np.shape(x)) * 2.5) + 1
-    i = 0
-    while True:
-        A_d = A(d)
-        d_sqr = np.real(np.sum(d.conj() * A_d)) # real because A is positive definite!
-        if d_sqr == 0:
-            #print("cg", i, "d")
-            return x
-        alpha = r_sqr / d_sqr
-        x -= alpha * d
-        if r_sqr <= err**2:
-            #print("cg", i)
-            return x
-        if i > max_i:
-            #print(f"conjugate gradient didn't converge ({r_sqr**.5:.2e} > {err:.2e})")
-            return x
-        
-        i += 1
-        A_d *= alpha
-        r -= A_d
-        r_sqr_last = r_sqr
-        r_sqr = np.sum(r.conj() * r)
-        d *= r_sqr / r_sqr_last
-        d += r
+from .linalg import *
 
 class HermitianFourierSeries:
     """
@@ -164,9 +99,33 @@ class HermitianFourierSeries:
             Self: identity fourier series
         """
         assert np.linalg.norm(neighbors[0]) == 0, "the first neighbor needs to be the 0 coordinate"
-        S_r = np.zeros((len(neighbors), n, n))
-        S_r[0] = np.eye(n)
-        return HermitianFourierSeries(neighbors, S_r)
+        H_r = np.zeros((len(neighbors), n, n))
+        H_r[0] = np.eye(n)
+        return HermitianFourierSeries(neighbors, H_r)
+    
+    def direct_sum(self, other: Self) -> Self:
+        if np.any(self.neighbors != other.neighbors):
+            raise NotImplementedError("mixing neighbor sets in the direct sum is currently not implemented.")
+        return HermitianFourierSeries(self.neighbors, direct_sum2(self.H_r, other.H_r))
+
+    def add_neighbors(self, neighbors):
+        """Add more neighbors with zero coefficients.
+
+        Args:
+            neighbors (arraylike(N_R, dim)): The neighbors to be added.
+        """
+        self.neighbors = np.concatenate([self.neighbors, neighbors], axis=0)
+        self.H_r = np.concatenate([self.H_r, np.zeros((len(neighbors),) + self.H_r.shape[1:])], axis=0)
+    
+    def limit_neighbors(self, max_length):
+        """Remove all neighbors that have a vector length more than a given threshold length.
+
+        Args:
+            max_length (float): Maximal length/distance for the neighbors. Everything else gets cut off.
+        """
+        keep = np.linalg.norm(self.neighbors, axis=-1) <= max_length + 1e-8
+        self.neighbors = np.array(self.neighbors[keep])
+        self.H_r = np.array(self.H_r[keep])
 
 class AsymTightBindingModel:
     """
@@ -304,6 +263,8 @@ class AsymTightBindingModel:
         Returns:
             (float, ndarray(N_b)): the weighted loss (standard deviation) and the maximal error per band
         """
+        assert len(k_smpl) == len(ref_bands)
+        assert len(band_weights) == len(ref_bands[0])
         bands = self.bands(k_smpl)[:,band_offset:][:,:len(ref_bands[0])]
         err = bands - ref_bands
         max_err = np.max(np.abs(err), axis=0)
@@ -315,6 +276,8 @@ class AsymTightBindingModel:
         Returns:
             float: the weighted loss (standard deviation)
         """
+        assert len(k_smpl) == len(ref_bands)
+        assert len(band_weights) == len(ref_bands[0])
         bands = self.bands(k_smpl)[:,band_offset:][:,:len(ref_bands[0])]
         err = (bands - ref_bands) * np.reshape(band_weights, (1, -1))
         return np.linalg.norm(err) / len(k_smpl)**0.5
@@ -454,7 +417,7 @@ class AsymTightBindingModel:
                 # check if the iteration is already converged
                 if iteration % 100 == 0 or batch_div == 1:
                     if batch_div != 1:
-                        loss, max_err = self.error(k_smpl, ref_bands, band_weights, band_offset)
+                        loss, max_err = self.error(k_smpl, ref_bands, band_weights[0], band_offset)
                     if abs(last_loss / loss - 1) < convergence_threshold or loss < loss_threshold:
                         log.add_message("converged")
                         break
@@ -512,7 +475,7 @@ class AsymTightBindingModel:
         except KeyboardInterrupt:
             log.add_message("aborted")
         self.normalize()
-        l, err = self.error(k_smpl, ref_bands, band_weights, band_offset)
+        l, err = self.error(k_smpl, ref_bands, band_weights[0], band_offset)
         log.add_data(iteration, l, err)
         return log
 
@@ -642,7 +605,9 @@ class AsymTightBindingModel:
                     #return np.einsum("nk,nid,njd,nad,nbd,nab,kl->lij", c_i, eigvecs, eigvecs_c, eigvecs_c, eigvecs, fx, E_mat_c, optimize=combined_path)
                     return np.einsum("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i.conj()], [x, np.swapaxes(x, -1, -2).conj()], optimize=combined_path)
                 # A(x) is close to a projection matrix
-                step = precond(conjugate_gradient_solve(A, b, err=np.linalg.norm(b) * 1e-3, max_i=max_cg_iterations))
+                # tested a different start value to move through saddle points in the optimisation, but it didn't work...
+                x0 = None# (np.random.standard_normal(b.shape) + np.random.standard_normal(b.shape)*1j) * np.linalg.norm(b) * 1e-1
+                step = precond(conjugate_gradient_solve(A, b, x0=x0, err=np.linalg.norm(b) * 1e-3, max_i=max_cg_iterations))
                 step *= 1 / len(k_smpl)
 
                 self.H.H_r -= step
@@ -657,7 +622,7 @@ class AsymTightBindingModel:
         except KeyboardInterrupt:
             log.add_message("aborted")
         self.normalize()
-        l, err = self.error(k_smpl, ref_bands, band_weights, band_offset)
+        l, err = self.error(k_smpl, ref_bands, band_weights[0], band_offset)
         log.add_data(iteration, l, err)
         return log
 
@@ -666,35 +631,39 @@ class AsymTightBindingModel:
         Apply as many transformations as possible to normalize the parameters.
         Sadly this is not enough to guarantee that two models with the same coefficient
         functions (neighbors) and bandstructure will have the same hamiltonian.
-
-        NOTE: CURRENTLY NOT IMPLEMENTED!
         """
         self.H.H_r[0] = (self.H.H_r[0] + self.H.H_r[0].T.conj()) / 2
         self.S.H_r[0] = (self.S.H_r[0] + self.S.H_r[0].T.conj()) / 2
-        if True:
-            # TODO add cholesky decomposition to normalize S to 1 as well
-            return
-        # normalize
+        # first normalize S such that S(0)=1
+        # NOTE: I think using cholestky instead of matrix sqrt can break symmetries...
+        #L = np.conj(np.linalg.inv(np.linalg.cholesky(self.S.f(((0,)*self.dim(),))[0])).T)
+        la, ev = np.linalg.eigh(self.S.f(((0,)*self.dim(),))[0])
+        L = ev @ np.diag(la**-.5) @ np.conj(ev.T)
+        self.H.H_r = np.einsum("ji,njk,kl->nil", np.conj(L), self.H.H_r, L)
+        self.S.H_r = np.einsum("ji,njk,kl->nil", np.conj(L), self.S.H_r, L)
+        # normalize H
         _, ev = np.linalg.eigh(self.H.f(((0,)*self.dim(),))) # this keeps the symmetry intact
         ev = ev[0]
-        #_, ev = np.linalg.eigh(self.H_r[0])
         # stable sort ev such that the 0 structure of H_r[0] is kept (important for symmetry)
         sorting = np.argsort(np.argmin(np.abs(ev) < 1e-7, axis=0))
         ev = ev.T[sorting].T
-        for i in range(len(self.H.H_r)):
-            self.H.H_r[i] = np.conj(ev.T) @ self.H.H_r[i] @ ev
-        # TODO test the following
-        # normalize a little more using complex reflections on the second matrix
-        if len(self.H.H_r) > 1:
-            for i in range(1, len(self.H.H_r[1])):
-                x = self.H.H_r[1][i-1, i]
-                a = np.abs(x)
-                if a != 0:
-                    sign = np.conj(x) / a
-                    self.H.H_r[:, :, i] *= sign
-                    self.H.H_r[:, i, :] *= np.conj(sign)
-                else:
-                    pass # TODO switch to a different cell to normalize
+        self.H.H_r = np.einsum("ji,njk,kl->nil", np.conj(ev), self.H.H_r, ev)
+        self.S.H_r = np.einsum("ji,njk,kl->nil", np.conj(ev), self.S.H_r, ev)
+        # TODO test the following further normalisation
+        if False:
+            # normalize a little more using complex reflections on the second matrix
+            if len(self.H.H_r) > 1:
+                for i in range(1, len(self.H.H_r[1])):
+                    x = self.H.H_r[1][i-1, i]
+                    a = np.abs(x)
+                    if a != 0:
+                        sign = np.conj(x) / a
+                        self.H.H_r[1:, :, i] *= sign
+                        self.H.H_r[1:, i, :] *= np.conj(sign)
+                        self.S.H_r[1:, :, i] *= sign
+                        self.S.H_r[1:, i, :] *= np.conj(sign)
+                    else:
+                        pass # TODO switch to a different cell to normalize
         # normalize continuous DoF (TODO)
 
     def permute(self, order):
@@ -794,7 +763,7 @@ class AsymTightBindingModel:
         db = no_diag / (bands[:,None,:,None] - bands[:,None,None,:] + 1e-40)
         hess2 = np.real(np.einsum("mpik, mqki -> mpqi", df_ev, db))
         return bands, grads, hess1 - 2*hess2
-    
+
     def supercell(self, A_original, A_new):
         """
         Generate a tight binding model (with self.neighbors set) for a supercell defined as A' = A Λ,
@@ -815,7 +784,7 @@ class AsymTightBindingModel:
         assert dim == len(A_original) and dim == len(A_new), "A matrix doesn't match the dimension of the model"
         matrix = np.linalg.inv(A_original) @ A_new
         assert np.all(np.abs(np.round(matrix) - matrix) < 1e-7), "The supercell matrix must be integer valued"
-        matrix = np.round(matrix)
+        matrix = np.round(matrix).astype(np.int64)
         det = round(np.linalg.det(matrix))
         new_neighbors = self.H.neighbors @ matrix.T
         n = len(self.H.H_r[0])
@@ -834,13 +803,28 @@ class AsymTightBindingModel:
         internal_positions = list(p_box[np.all((p_box >= 0-1e-7) & (p_box < 1-1e-7), axis=1)] @ A_new.T)
         assert len(internal_positions) == det
         # now build the new hamiltonian
-        H_r = np.zeros((len(H_r), new_band_count, new_band_count), dtype=np.complex128)
+        H_r2 = np.zeros((len(H_r), new_band_count, new_band_count), dtype=np.complex128)
         neighbor_func = try_neighbor_function(self.H.neighbors)
         for k, nk in enumerate(new_neighbors):
             for i, pi in enumerate(internal_positions):
                 for j, pj in enumerate(internal_positions):
                     m, mirror = neighbor_func(nk + pj - pi)
                     if m is not None:
-                        H_r[k, i*n:(i+1)*n, j*n:(j+1)*n] = H_r[m] if not mirror else np.conj(H_r[m].T)
-        model = AsymTightBindingModel(HermitianFourierSeries(new_neighbors, H_r))
+                        H_r2[k, i*n:(i+1)*n, j*n:(j+1)*n] = H_r[m] if not mirror else np.conj(H_r[m].T)
+        model = AsymTightBindingModel(HermitianFourierSeries(new_neighbors, H_r2))
         return model
+    
+    def __add__(self, other) -> Self:
+        if type(other) == type(self):
+            # direct sum of the models -> combine the bandstructures
+            return AsymTightBindingModel(self.H + other.H, S=self.S + other.S)
+        else:
+            # shift the whole bandstructure
+            # TODO figure out how this actually works wih S(k)
+            H = self.H.copy()
+            H.H_r[0] += self.S.H_r[0] * float(other)
+            return AsymTightBindingModel(H, S=self.S.copy())
+    
+    def __mul__(self, fac: float) -> Self:
+        return AsymTightBindingModel(HermitianFourierSeries(self.H.neighbors, self.H.H_r * fac), S=self.S.copy())
+

@@ -1,28 +1,7 @@
 import numpy as np
 from typing import Self, Callable
 from . import symmetry as _sym
-
-# direct sum of two matrices (block diagonal concatenation)
-def direct_sum2(a, b):
-    return np.block([[a, np.zeros((np.shape(a)[0], np.shape(b)[1]))], [np.zeros((np.shape(b)[0], np.shape(a)[1])), b]])
-
-def kron(*a):
-    if len(a) == 0:
-        raise ValueError("no parameters given")
-    if len(a) == 1:
-        return a[0]
-    if len(a) == 2:
-        return np.kron(*a)
-    return kron(np.kron(a[0], a[1]), *a[2:])
-
-def direct_sum(*a):
-    if len(a) == 0:
-        raise ValueError("no parameters given")
-    if len(a) == 1:
-        return a[0]
-    if len(a) == 2:
-        return direct_sum2(*a)
-    return direct_sum(direct_sum2(a[0], a[1]), *a[2:])
+from .linalg import kron, direct_sum2
 
 
 class UnitaryRepresentation:

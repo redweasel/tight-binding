@@ -26,6 +26,7 @@ def test_bands():
     #np.set_printoptions(precision=3, suppress=True, linewidth=10000)
     #print(band_model.ddf([[0.1, 0.1, 0.1]])[0, :5, :5] - tb_model.ddf([[0.1, 0.1, 0.1]])[0, :5, :5])
     #print(band_model.ddf([[0., 0., 0.]])[0, :5, :5] - tb_model.ddf([[0., 0., 0.]])[0, :5, :5])
+    # TODO compare with numerical derivatives!!!
     # compute the bandstructure and all available derivatives using all models
     bands1, grads1, hess1 = band_model.bands_grad_hess(k_smpl)
     bands2, grads2, hess2 = tb_model.bands_grad_hess(k_smpl)
