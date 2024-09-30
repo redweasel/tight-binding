@@ -639,8 +639,7 @@ class BandStructureModel:
             raise ValueError(
                 "This function can only be used on default tight binding models")
         if len(H_r) != len(self.neighbors):
-            raise ValueError(f"The parameters {np.shape(
-                H_r)} must match the neighbor count {len(self.neighbors)}")
+            raise ValueError(f"The parameters {np.shape(H_r)} must match the neighbor count {len(self.neighbors)}")
         if self.exp:
             self.params = np.array(H_r)
             if self.cos_reduced:
