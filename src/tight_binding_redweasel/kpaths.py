@@ -74,8 +74,7 @@ class KPath(_collections_abc.Sequence):
             self.names.append(name if name is not None else str(
                 np.array(point).reshape(-1)).replace("  ", " "))
             point = np.array(point).reshape(1, -1)
-        assert len(point[0]) == len(self.path[0]), f"All points in the path need to have the same dimension. Tried to add a {
-            len(point[0])}d point to a {len(self.path[0])}d path."
+        assert len(point[0]) == len(self.path[0]), f"All points in the path need to have the same dimension. Tried to add a {len(point[0])}d point to a {len(self.path[0])}d path."
         t = np.linspace(0, 1, N, endpoint=False).reshape(-1, 1) + 1/N
         self.path.extend(self.path[-1] + t * (point - self.path[-1]))
         self.indices.append(len(self.path) - 1)
@@ -261,12 +260,10 @@ def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", period
         scipy.interpolate.RegularGridInterpolator: interpolator for the data
     """
     import scipy.interpolate as interp
-    assert np.shape(k_smpl)[0] == np.shape(bands)[0], f"number of k_smpl and bands needs to match, but was k_smpl: ({
-        np.shape(k_smpl)}), bands: ({np.shape(bands)})"
+    assert np.shape(k_smpl)[0] == np.shape(bands)[0], f"number of k_smpl and bands needs to match, but was k_smpl: ({np.shape(k_smpl)}), bands: ({np.shape(bands)})"
     dim = len(k_smpl[0])
     if sym is not None:
-        assert sym.dim() == dim, f"dimensions of the symmetry and the k_smpl data don't match, symmetry: {
-            sym.dim()}, k_smpl: {dim}"
+        assert sym.dim() == dim, f"dimensions of the symmetry and the k_smpl data don't match, symmetry: {sym.dim()}, k_smpl: {dim}"
         k_smpl_orig = k_smpl
         k_smpl, bands = sym.realize_symmetric_data(
             k_smpl, bands, unit_cell=periodic)
