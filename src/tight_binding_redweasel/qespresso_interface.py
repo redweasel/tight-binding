@@ -166,6 +166,7 @@ class QECrystal:
         #self.ibrav = ibrav_map[symmetry]
         self.ibrav = 0 # use CELL_PARAMETERS instead!
         self.cell_scale = 1.0 # = celldm(1) from pw.x
+        self.T = 0.0 # Temperature in Kelvin
         self.kinetic_energy_cutoff = kinetic_energy_cutoff
         self.set_multitasking_parameters(1)
     
@@ -680,7 +681,7 @@ class QECrystal:
 &system
     ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff},
-    occupations='smearing', smearing='marzari-vanderbilt', degauss=0.02
+    occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6}
 /
 &electrons
     diagonalization='david',
@@ -709,7 +710,7 @@ class QECrystal:
 &system
     ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff},
-    occupations='smearing', smearing='marzari-vanderbilt', degauss=0.02
+    occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6}
 /
 &electrons
     diagonalization='david',
@@ -719,8 +720,8 @@ class QECrystal:
 &ions
     ion_dynamics="bfgs",
     ion_temperature="rescaling",
-    tempw=400,
-    tolp=50,
+    tempw={self.T},
+    tolp=20,
     nraise=1,
 /
 &cell
@@ -788,6 +789,7 @@ filband='{self.name}.Bandx.dat'
 /
 &dos
     prefix='{self.name}',
+    bz_sum='tetrahedra_opt',
     outdir='./qe-data/',
     deltae =  1e-02,
     fildos = '{self.name}.Dos.dat',
@@ -817,7 +819,7 @@ filband='{self.name}.Bandx.dat'
     ecutwfc = {self.kinetic_energy_cutoff},
     nbnd={band_count},
     force_symmorphic = true,
-    occupations='smearing', smearing='marzari-vanderbilt', degauss=0.01
+    occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6}
 /
 &electrons
     diagonalization='david',
@@ -848,7 +850,7 @@ filband='{self.name}.Bandx.dat'
     nosym = true,
     noinv = true,
     nbnd={band_count}
-    occupations='smearing', smearing='marzari-vanderbilt', degauss=0.01
+    occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6}
 /
 &electrons
     diagonalization='david',

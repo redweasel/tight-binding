@@ -48,6 +48,7 @@ def test_symmetry():
     # tetrahedral group
     assert len(Symmetry.cubic(False) / Symmetry.tetrahedral(False)) == 2
     assert Symmetry.tetrahedral(True) in Symmetry.cubic(True)
+    assert Symmetry.tetrahedral(True) == Symmetry.cubic(False)
     # 2D rotation
     S = [((0, 1), (-1, 0))]
     R = Symmetry.from_generator(S, False)

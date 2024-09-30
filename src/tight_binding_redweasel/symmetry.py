@@ -415,18 +415,24 @@ class Symmetry:
         m = ((0, 1, 0), (-5**-.5, 0, 2*5**-.5), (2*5**-.5, 0, 5**-.5))
         return c * c.transform(m)
     
-    def tetrahedral(inversion=False) -> Self:
-        """The (full) tetrahedral group of order 12 (24) rotated to be a subgroup of the octahedral group.
+    def tetrahedral(full=False) -> Self:
+        """The (full) tetrahedral group of order 12 (24 = octahedral group O)
+        isomorphic to the alternating group A_4 (symmetric group S_4)
+        and rotated to be a subgroup of the octahedral group.
 
         Args:
-            inversion (bool, optional): If True, the full tetrahedral group will be returned. Defaults to False.
+            full (bool, optional): If True, the full tetrahedral group will be returned. Defaults to False.
 
         Returns:
             Self: The (full) tetrahedral symmetry group
         """
+        # SO(3) part:
         S = [((-1, 0, 0), (0, -1, 0), (0, 0, 1)),
-             ((0, -1, 0), (0, 0, 1), (-1, 0, 0))]
-        return Symmetry.from_generator(S, inversion)
+             ((0, 1, 0), (0, 0, 1), (1, 0, 0))]
+        if full:
+            # O(3) part
+            S.append(((0, 1, 0), (-1, 0, 0), (0, 0, 1)))
+        return Symmetry.from_generator(S, False)
 
     def check_symmetry(self, foo: Callable, verbose=True) -> bool:
         """Check if a space dependent function satisfies the symmetry.
