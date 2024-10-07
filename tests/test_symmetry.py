@@ -109,6 +109,19 @@ def test_symmetry_extras():
 
 def test_unitary_representations():
     UR = UnitaryRepresentation
+    assert UR.o3().check_U()
+    assert UR.so3().check_U()
+    assert UR.o3r().check_U()
+    assert UR.o3ri().check_U()
+    assert UR.d3(True, True).check_U()
+    assert UR.d3(False, True).check_U()
+    assert UR.d3(True, False).check_U()
+    assert UR.d3(False, False).check_U()
+    for i in range(8):
+        assert UR.one_dim(i % 2 == 0, (i % 4) // 2 == 0, i // 4 == 0).check_U(), f"failed on {(i % 2 == 0, (i % 4) // 2 == 0, i // 4 == 0)}"
+
+def test_unitary_representations_symmetrize():
+    UR = UnitaryRepresentation
     test_u_repr = UR.one_dim(True, True, True) + UR.d3(True) + UR.so3()
     #test_u_repr = UR.one_dim(False, False, True) + UR.d3(False) + UR.so3() + UR.o3()
     assert test_u_repr.check_U()

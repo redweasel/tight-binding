@@ -504,18 +504,20 @@ class UnitaryRepresentation:
         return u_repr
     
     def o3ri() -> Self:
-        """reflected O(3) with inversion -1 for cubic symmetry O_h."""
+        """O(3) with 90° rotation -1 and inversion -1 for cubic symmetry O_h."""
         sym = _sym.Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
-        u_repr.U = -np.asarray(sym.S)
+        u_repr.U = np.array(sym.S)
+        u_repr.U *= np.where((np.abs(np.einsum("nii->n", u_repr.U)) == 1) & (np.prod(np.einsum("nii->ni", u_repr.U), axis=-1) == 0), -1, 1)[:,None,None]
         u_repr.inv_split = 0 # no 1 eigenvalues in inversion
         return u_repr
     
     def o3r() -> Self:
-        """reflected O(3) with 1 on inversion for cubic symmetry O_h."""
+        """O(3) with 90° rotation -1 and 1 on inversion for cubic symmetry O_h."""
         sym = _sym.Symmetry.cubic(True)
         u_repr = UnitaryRepresentation(sym, 3)
-        u_repr.U = -np.asarray(sym.S)
+        u_repr.U = np.array(sym.S)
+        u_repr.U *= np.where((np.abs(np.einsum("nii->n", u_repr.U)) == 1) & (np.prod(np.einsum("nii->ni", u_repr.U), axis=-1) == 0), -1, 1)[:,None,None]
         u_repr.inv_split = 3 # all 1 eigenvalues in inversion
         return u_repr
     

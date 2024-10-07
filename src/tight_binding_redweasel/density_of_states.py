@@ -2,6 +2,7 @@
 # and the fermi energy at finite temperatures
 
 import numpy as np
+import scipy
 from typing import Callable, Tuple, Self
 
 k_B = 8.61733326214518e-5 # eV/K
@@ -204,7 +205,6 @@ def secant(y, f, a, b, tol=1e-16, max_i=100):
     # didn't finish but here is the best available solution
     return (a * fb - b * fa) / (fb - fa)
 
-import scipy
 def _Li2(x):
     return scipy.special.spence(1-x)
 # 0 at x=0
@@ -223,8 +223,8 @@ def _int_xxdf(x):
     ex = np.exp(x) # small
     f = (x*x*ex)/(1 + ex) - 2*x*np.log1p(ex)-(2*_Li2(-ex) + np.pi**2/6)
     return -sign * f
-# integrate (ax^2+bx+c)(-df/de) from x0 to x1 analytically
 def int_poly(x0, x1, a, b, c):
+    """Integrate (ax^2+bx+c)(-df/de) from x0 to x1 analytically with f(x)=1/(1+e^x)."""
     return a * (_int_xxdf(x1) - _int_xxdf(x0)) + b * (_int_xdf(x1) - _int_xdf(x0)) + c * (_int_df(x1) - _int_df(x0))
 
 def naive_fermi_energy(bands, electrons):

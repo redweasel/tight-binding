@@ -534,11 +534,6 @@ L 306.26625 149.599219
 " clip-path="url\(\)" style="fill: none; stroke: #d62728; stroke-width: 1.5; stroke-linecap: square"/>
    </g>
    <g >
-    <path d="M 27.26625 288.199219 
-L 27.26625 10.999219 
-" clip-path="url\(\)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
-   </g>
-   <g >
     <path d="M 69.793639 288.199219 
 L 69.793639 10.999219 
 " clip-path="url\(\)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
@@ -556,11 +551,6 @@ L 172.46384 10.999219
    <g >
     <path d="M 246.123439 288.199219 
 L 246.123439 10.999219 
-" clip-path="url\(\)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
-   </g>
-   <g >
-    <path d="M 306.26625 288.199219 
-L 306.26625 10.999219 
 " clip-path="url\(\)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
    </g>
    <g >

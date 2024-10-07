@@ -142,6 +142,16 @@ class HamiltonianSymmetry:
         urepr.inv_split = self.sym.dim() # don't use -1 on inversion
         self.append(urepr, pos, name)
     
+    def get_band_name(self, index):
+        for u, name in zip(self.U, self.names):
+            if index < u.dim():
+                if u.dim() == 1:
+                    return name
+                else:
+                    return f"{name}{index}"
+            index -= u.dim()
+        raise IndexError(f"index {index} is out of bounds")
+
     def apply(self, k, hamiltonian, s_index, inversion=False):
         """Apply the unitary transformation for one symmetry operation
         at the given k-point to the hermitian operator to get

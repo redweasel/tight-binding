@@ -100,7 +100,7 @@ class BandStructureModel:
         f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = _get_tight_binding_coeff_funcs(
             symmetry, neighbors, cos_reduced=cos_reduced, exp=exp)
         model = BandStructureModel(f_i_tb, df_i_tb, np.zeros(
-            (term_count, band_count, band_count)), ddf_i=ddf_i_tb)
+            (term_count, band_count, band_count), dtype=complex), ddf_i=ddf_i_tb)
         model.sym = symmetry
         model.neighbors = neighbors
         model.cos_reduced = cos_reduced
@@ -287,6 +287,8 @@ class BandStructureModel:
         band_weights = np.broadcast_to(np.reshape(
             [band_weights], (1, -1)), (1, len(ref_bands[0])))
         # normalize band_weights for the stepsize
+        # NOTE: This is completely wrong for use_pinv=True. Use bandweights with care...
+        # also it's wrong for use_pinv=False, as technically no band_weights_normalized should be larger than 1.
         band_weights_normalized = band_weights / np.mean(band_weights)
         # memoize self.f_i here using a rectangular matrix
         f_i = np.zeros((len(k_smpl), len(self.params)), dtype=np.complex128)
@@ -545,7 +547,7 @@ class BandStructureModel:
         except KeyboardInterrupt:
             log.add_message("aborted")
         self.normalize()
-        l, err = self.error(k_smpl, ref_bands, band_weights, band_offset)
+        l, err = self.error(k_smpl, ref_bands, band_weights[0], band_offset)
         log.add_data(iteration, l, err)
         return log
 

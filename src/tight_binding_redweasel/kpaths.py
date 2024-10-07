@@ -26,7 +26,9 @@ points['G2d'] = (0.5*np.array([0, 0]), 'Γ')
 points['X2d'] = (0.5*np.array([0, 1]), 'X')  # Delta line
 points['X12d'] = (0.5*np.array([1, 0]), '$X_1$')
 points['M2d'] = (0.5*np.array([1, 1]), 'M')  # Sigma line
-
+# 1D points
+points['G1d'] = (0.5*np.array([0]), 'Γ')
+points['X1d'] = (0.5*np.array([1]), 'X')
 
 class KPath(_collections_abc.Sequence):
     def __init__(self, start, name=None, points=points):
@@ -144,7 +146,8 @@ class KPath(_collections_abc.Sequence):
             plt.plot([], [])
         for i in range(len(ibands[0])):
             plt.plot(x_smpl, ibands[:, i], *args, **kwargs)
-        for sym_x in sym_x_smpl:
+        # plot vertical lines for all symmetry positions, that are not at the boundary
+        for sym_x in sym_x_smpl[1:-1]:
             plt.axvline(sym_x, color="k", linestyle="dashed")
         plt.xticks(sym_x_smpl, self.names)
         plt.xlim(x_smpl[0], x_smpl[-1])
@@ -340,7 +343,8 @@ SC_PATH = KPath('G').to('X').to('M').to('G').to('R').to('X')
 FCC_PATH = KPath('G').to('X2').to('W').to('L').to('G').to('K')
 BCC_PATH = KPath('G').to('H').to('P').to('G').to('N').to('P')
 DIAMOND_PATH = KPath('L').to('G').to('X2').to('U').to('G').to('K')
-SC_2D_PATH = KPath('G2d').to('X2d').to('M2d').to('G2d')
+SC_PATH_2D = KPath('G2d').to('X2d').to('M2d').to('G2d')
+PATH_1D = KPath('G1d').to('X1d', N=100)
 
 # internal function to compute the more complicated
 # symmetry points from the face centered points

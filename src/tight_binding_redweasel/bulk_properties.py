@@ -45,13 +45,15 @@ class KIntegral:
         self.metal = self.bandgap == 0.0
         self.model = dos_model.model
         self.mu = dos_model.chemical_potential(electrons, [T], N=50) # compute mu here with good enough precision
-        self.beta = 1 / (_dos.k_B * T) # in 1/eV
+        self.beta = 1 / (_dos.k_B * T) if T > 0 else 0.0 # in 1/eV
         self.e_smpl = []
         # prepared data for the integration
         self.k_smpl = []
         self.band_indices = []
         self.weights = []
         # function to collect the fermi surface data
+        # TODO allow the use of the dos grid instead of the exact fermi surface
+        # -> faster, less precise
         def collect_smpl(e_smpl):
             for e in e_smpl:
                 k_smpl, band_indices, weights, _ = dos_model.fermi_surface_samples(e, improved_points=True, improved_weights=False, normalize=None)
@@ -60,18 +62,27 @@ class KIntegral:
                 self.band_indices.append(band_indices)
                 self.weights.append(weights)
             return e_smpl
-        if self.metal:
-            # this only really works for metals for low temperatures with smooth state density.
-            _dos.gauss_7_df(collect_smpl, self.mu, self.beta)
-            if errors:
-                # for estimating the error
-                # - overestimated if the integral method is good
-                # - randomly underestimated if the integral method is bad
-                _dos.gauss_5_df(collect_smpl, self.mu, self.beta)
+        if T > 0:
+            if self.metal:
+                # this only really works for metals for low temperatures with smooth state density.
+                _dos.gauss_7_df(collect_smpl, self.mu, self.beta)
+                if errors:
+                    # for estimating the error
+                    # - overestimated if the integral method is good
+                    # - randomly underestimated if the integral method is bad
+                    _dos.gauss_5_df(collect_smpl, self.mu, self.beta)
+            else:
+                # do two (3 point and 2 point) Gauss-Laguerre integrations at the upper and lower bandgap boundary
+                # TODO
+                raise NotImplementedError("integrals for isolators (semiconductors) are currently not implemented")
         else:
-            # do two (3 point and 2 point) Gauss-Laguerre integrations at the upper and lower bandgap boundary
-            # TODO
-            raise NotImplementedError("integrals for isolators (semiconductors) are currently not implemented")
+            assert T == 0, "No negative temperatures allowed"
+            if self.metal:
+                # just the Fermi-surface
+                collect_smpl(self.mu)
+            else:
+                # isolator at 0 temperature has no Fermi-surface -> all integrals 0
+                pass
         self.e_smpl = np.array(self.e_smpl)
         self.v = None # group velocities
         self.h = None # hessians
@@ -136,7 +147,7 @@ class KIntegral:
             for e in e_smpl:
                 # 1. find index of e in self.e_smpl
                 index = np.argmin(np.abs(self.e_smpl - e))
-                assert np.abs(self.e_smpl[index] - e) < 1e-8
+                assert np.abs(self.e_smpl[index] - e) < 1e-8, "internal error, precomputed energies don't match used energies"
                 # 2. use data for that precomputed case
                 if hessians:
                     f_res = g(e, self.v[index], self.h[index], self.k_smpl[index])
@@ -147,18 +158,31 @@ class KIntegral:
             return res
 
         error = 0.0
-        if self.metal:
-            # this only really works for metals for low temperatures with smooth state density.
-            I = _dos.gauss_7_df(int_e, self.mu, self.beta)
-            if self.errors:
-                # for estimating the error
-                # - overestimated if the integral method is good
-                # - randomly underestimated if the integral method is bad
-                I2 = _dos.gauss_5_df(int_e, self.mu, self.beta)
-                error = np.abs(I - I2)
+        if self.beta == 0:
+            # zero temperature case
+            if self.metal:
+                I = int_e(self.mu)
+                # TODO error estimation
+            else:
+                # no fermi surface!
+                # to get the output shape right, evaluate g at one point
+                if hessians:
+                    I = 0.0 * g(self.mu, np.zeros((1, 3)), np.eye(3)[None], np.zeros((1, 3)))
+                else:
+                    I = 0.0 * g(self.mu, np.zeros((1, 3)), np.zeros((1, 3)))
         else:
-            # TODO see comment in __init__
-            raise NotImplementedError("integrals for isolators (semiconductors) are currently not implemented")
+            if self.metal:
+                # this only really works for metals for low temperatures with smooth state density.
+                I = _dos.gauss_7_df(int_e, self.mu, self.beta)
+                if self.errors:
+                    # for estimating the error
+                    # - overestimated if the integral method is good
+                    # - randomly underestimated if the integral method is bad
+                    I2 = _dos.gauss_5_df(int_e, self.mu, self.beta)
+                    error = np.abs(I - I2)
+            else:
+                # TODO see comment in __init__
+                raise NotImplementedError("integrals for isolators (semiconductors) are currently not implemented")
         return I, error
     
     def integrate_df_A(self, A, g: Callable, hessians=False):

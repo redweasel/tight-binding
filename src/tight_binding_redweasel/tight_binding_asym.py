@@ -302,7 +302,6 @@ class AsymTightBindingModel:
             # logger that prints
             log = logger.OptimisationLogger(print_loss=True, update_line=True, verbose=True)
         # reshape normalized band_weights
-        # TODO normalisation changes the loss!
         band_weights_norm = np.max(band_weights)**2
         band_weights = np.broadcast_to(np.reshape([band_weights], (1, -1)), (1, len(ref_bands[0])))
         # mask for keep_zeros
@@ -537,7 +536,6 @@ class AsymTightBindingModel:
             #print(E_mat)
 
             def precond(x):
-                # TODO preconditioning based on band_weights!
                 np.einsum("lk,kij->lij", E_mat, x, out=x)
                 return x
         else:
