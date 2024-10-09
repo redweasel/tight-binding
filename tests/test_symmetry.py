@@ -185,7 +185,7 @@ def test_hamiltonian_symmetry():
     sym = Symmetry.inv(1)
     hsym = HamiltonianSymmetry(sym)
     hsym.append_s((0,), "s")
-    hsym.append_p((0.5,), "p")
+    hsym.append_p((-0.5,), "p")
     # now symmetrize a parameterset where I already know the correct symmetrized version
     neighbors = [(0,), (1,), (2,)]
     H_r = np.random.random((3, 2, 2))

@@ -36,6 +36,7 @@ class UnitaryRepresentation:
         u_repr.U = np.array(self.U)
         return u_repr
     
+    @staticmethod
     def from_generator(S_G, U_G, inversion=True, negate_inversion=False) -> Self:
         """Create the symmetry group and the representation from a generator set of size N_G.
         Fails if the generators structure is not closed.
@@ -487,6 +488,7 @@ class UnitaryRepresentation:
 
     ### examples for unitary irreducible representations
 
+    @staticmethod
     def o3() -> Self:
         """O(3) with inversion -1 for cubic symmetry O_h."""
         sym = _sym.Symmetry.cubic(True)
@@ -495,6 +497,7 @@ class UnitaryRepresentation:
         u_repr.inv_split = 0 # no 1 eigenvalues in inversion
         return u_repr
     
+    @staticmethod
     def so3() -> Self:
         """SO(3) with 1 on inversion for cubic symmetry O_h."""
         sym = _sym.Symmetry.cubic(True)
@@ -503,6 +506,7 @@ class UnitaryRepresentation:
         u_repr.inv_split = 3 # all 1 eigenvalues in inversion
         return u_repr
     
+    @staticmethod
     def o3ri() -> Self:
         """O(3) with 90° rotation -1 and inversion -1 for cubic symmetry O_h."""
         sym = _sym.Symmetry.cubic(True)
@@ -512,6 +516,7 @@ class UnitaryRepresentation:
         u_repr.inv_split = 0 # no 1 eigenvalues in inversion
         return u_repr
     
+    @staticmethod
     def o3r() -> Self:
         """O(3) with 90° rotation -1 and 1 on inversion for cubic symmetry O_h."""
         sym = _sym.Symmetry.cubic(True)
@@ -521,6 +526,7 @@ class UnitaryRepresentation:
         u_repr.inv_split = 3 # all 1 eigenvalues in inversion
         return u_repr
     
+    @staticmethod
     def d3(negate_inversion: bool, inversion=True, sqrt3=3**.5) -> Self:
         """D_3 dihedral triangle symmetry for cubic symmetry O_h.
         sqrt3 can be given in arbitrary precision if needed."""
@@ -534,6 +540,7 @@ class UnitaryRepresentation:
              ((-.5,-.5*sqrt3), (-.5*sqrt3,.5))]
         return UnitaryRepresentation.from_generator(S, U, inversion, negate_inversion)
     
+    @staticmethod
     def one_dim(invert: bool, negate_inversion: bool, inversion=True) -> Self:
         """1d representations for cubic symmetry O_h."""
         S = [((1,0,0), (0,1,0), (0,0,1)),

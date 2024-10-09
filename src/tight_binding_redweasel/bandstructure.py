@@ -80,7 +80,7 @@ class BandStructureModel:
 
     def copy(self) -> Self:
         model = BandStructureModel(self.f_i, self.df_i, self.params.copy())
-        self.symmetrizer = self.symmetrizer
+        model.symmetrizer = self.symmetrizer
         model.sym = self.sym
         model.neighbors = self.neighbors
         model.cos_reduced = self.cos_reduced

@@ -179,7 +179,7 @@ class HamiltonianSymmetry:
                 hamiltonian_inv[:,n1:n1+d1] *= -1
         # now apply the symmetry operation
         result = np.zeros_like(hamiltonian)
-        s = np.linalg.inv(self.sym.S[s_index])
+        s = np.swapaxes(self.sym.S[s_index], -1, -2)
         n1 = 0
         for u1, r1 in zip(self.U, self.pos):
             d1 = u1.dim()
@@ -188,7 +188,7 @@ class HamiltonianSymmetry:
                 d2 = u2.dim()
                 u1_ = u1.U[s_index]
                 u2_ = u2.U[s_index]
-                fac = np.exp(2j*np.pi * k @ (r1 - s @ r2))
+                fac = np.exp(2j*np.pi * k @ (r1 - s @ r2)) # TODO check again!
                 fac *= np.exp(-2j*np.pi * k @ (r2 - s @ r1))
                 result[n1:n1+d1,n2:n2+d2] += fac * u1_ @ hamiltonian_inv[n1:n1+d1,n2:n2+d2] @ np.conj(u2_.T)
                 n2 += d2
@@ -245,7 +245,7 @@ class HamiltonianSymmetry:
                     for u2, r2 in zip(self.U, self.pos):
                         d2 = u2.dim()
                         u2 = 1 if u2.inv_split > 0 else -1
-                        j, mirror = neighbor_func(-r + 2*(r2 - r1))
+                        j, mirror = neighbor_func(-r - 2*(r2 - r1))
                         if j is not None:
                             h = H_r[j]
                             if mirror:
@@ -269,6 +269,7 @@ class HamiltonianSymmetry:
         #H_r3 /= self.sym.dim()
         H_r3 = H_r2
         result = np.zeros_like(H_r3) # all U_S are real, so no worries about type here
+        S_inv = np.swapaxes(np.linalg.inv(self.sym.S), -1, -2) # S is on k -> transform für R
         # symmetrise with the subgroup sym/inversion (inversion is always a normal subgroup)
         for i, r in enumerate(neighbors):
             # the neighbors are reduced by inversion symmetry
@@ -297,10 +298,10 @@ class HamiltonianSymmetry:
                 for u2, r2 in zip(self.U, self.pos):
                     d2 = u2.dim()
                     p = np.zeros_like(H_r3[i,n1:n1+d1,n2:n2+d2])
-                    for k, s in enumerate(self.sym.S):
+                    for k, s in enumerate(S_inv):
                         u1_ = u1.U[k]
                         u2_ = u2.U[k]
-                        j, mirror = neighbor_func(s @ (r + r1 - r2) - r1 + r2)
+                        j, mirror = neighbor_func(s @ (r + r2 - r1) - r2 + r1)
                         if j is not None:
                             h = H_r3[j]
                             if mirror:
@@ -362,7 +363,7 @@ class HamiltonianSymmetry:
                     if self.sym.inversion:
                         u2 = self.U[i2].inv_split
                         u2 = 1 if u2 > 0 else -1
-                        j, mirror = neighbor_func(-(r + r1 - r2) - r1 + r2)
+                        j, mirror = neighbor_func(-(r - r1 + r2) + r1 - r2)
                         if j is not None:
                             inv_table.append((i, i1, i2, j, 1 if mirror else 0, u1 * u2))
                         else:
@@ -370,7 +371,7 @@ class HamiltonianSymmetry:
                             inv_table.append((i, i1, i2, i, 0, -1))
                     s_table = {}
                     for k, s in enumerate(self.sym.S):
-                        j, mirror = neighbor_func(s @ (r + r1 - r2) - r1 + r2)
+                        j, mirror = neighbor_func(s @ (r - r1 + r2) + r1 - r2)
                         if j is not None:
                             # reduce total_table by merging entries which have the same effect (based on the given self.U)
                             # doing this makes it go from 8448 to 8019 entries in my testcase
