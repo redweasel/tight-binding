@@ -3,8 +3,9 @@ from . import bandstructure as _bands
 from . import symmetry as _sym
 from . import hamiltonian_symmetry as _hsym
 from . import kpaths as _kpaths
+from . import unitary_representations as _urepr
 from . import linalg as _lin
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Self
 
 # This is an implementation of a pure Slater-Koster
 # tight-binding interpolation model.
@@ -13,10 +14,6 @@ from typing import Callable, Tuple
 # The core are functions to convert from matrices to Slater and Koster parameters and back.
 
 # TODO implement this stuff to test it against the other models.
-
-def to_fcc(H_r, neighbors):
-    # normalize the H_r first, such that H_0 is diagonal
-    return ...
 
 class SlaterKoster:
     """A simple class to make a Slater-Koster type tight-binding model.
@@ -36,7 +33,7 @@ class SlaterKoster:
         self.model.symmetrizer = self.symmetrizer
     
     @staticmethod
-    def from_orbitals(A, sym: _sym.Symmetry, basis, orbital_integrals: dict, max_distance):
+    def from_orbitals(A, sym: _sym.Symmetry, basis, orbital_integrals: dict, max_distance) -> Self:
         """Initialize the Hamiltonian from Orbital Integrals.
         This allows s, p and d orbitals to be used with a given basis.
         The Lattice is arbitrary. The functions for the orbitals integrals
@@ -45,7 +42,8 @@ class SlaterKoster:
         Note, the HamilonianSymmetry does currently not support translation symmetries.
 
         Args:
-            A (arraylike(dim, dim)): The real lattice vectors (as columns of the matrix).
+            A (arraylike(dim, dim)): The real lattice vectors (as columns of the matrix). It's best to use a normalized/scaled version here,
+                as many tolerance checks are fixed to work for values around 1.0.
             sym (Symmetry): The reciprocal space symmetry associated with the bandstructure.
             basis (list): Atoms per cell like '[("Si", "sp", (0, 0, 0)), ("Si", "sp", (0.5, 0.5, 0.5))]'.
                 This is a list of tuples with (name of atom, orbitals, crystal space position).
@@ -57,7 +55,9 @@ class SlaterKoster:
             max_distance (float): The real space distance of the neighbor term. This applied to the neighbors computed by A @ n.
         """
         # TODO document d orbitals
+        # TODO check if the symmetry is projective and check if it matches the basis!
         assert sym.is_orthogonal(), "only orthogonal symmetries allowed. Remember this is the symmetry of the reciprocal space, not the reciprocal crystal-unit space."
+        # -> sym = sym.dual()
         # find all lattice points in a sphere.
         neighbors = _lin.lattice_in_sphere(A, max_distance)
         # check what types of values are given in orbital_integrals
@@ -87,83 +87,143 @@ class SlaterKoster:
                     return 100
         
         dim = len(A)
-        # TODO get rid of the warning for duplicate k points...
-        neighbors = _sym.Symmetry.inv(dim).complete_neighbors(neighbors)
+        neighbors = _sym.Symmetry.none(dim).complete_neighbors(neighbors)
         # now create the parameters
         band_count = sum((sum(({'s': 1, 'p': dim, 'd': [1,2,5][dim-1]}[letter] for letter in orbitals)) for _, orbitals, _ in basis))
         params = np.zeros((len(neighbors), band_count, band_count), dtype=np.complex128)
         suborbitals = {'s': ['s'], 'p': ['px','py','pz'][:dim], 'd': ['dyz','dxz','dxy','dx2y2','dz'][:[1,2,5][dim-1]]}
+        urepr = {'s': _urepr.UnitaryRepresentation(sym, 1)}
+        urepr['p'] = _urepr.UnitaryRepresentation(sym, 3)
+        urepr['p'].U = sym.S
+        urepr['p'].inv_split = 0
+        urepr['d'] = _urepr.UnitaryRepresentation(sym, 3)
+        urepr['d'].U = sym.S
+        urepr['d'].inv_split = 3
+        # TODO make the following work for all symmetries...
+        urepr['d'] = urepr['d'] + _urepr.UnitaryRepresentation.d3(False, inversion=sym.inversion)
+        inv_urepr = {'s': 1, 'p': -1, 'd': 1, 'f': -1}
+
+        # fill up orbital_integrals
+        for name1, orbitals1, pos1 in basis:
+            pos1 = np.array(pos1)
+            for orbital1 in orbitals1:
+                for sub1_i, sub1 in enumerate(suborbitals[orbital1]):
+                    for name2, orbitals2, pos2 in basis:
+                        pos2 = np.array(pos2)
+                        for orbital2 in orbitals2:
+                            inv = inv_urepr[orbital1] * inv_urepr[orbital2]
+                            for sub2_i, sub2 in enumerate(suborbitals[orbital2]):
+                                func = None
+                                # extend search to symmetric orbitals
+                                for s_i, (s_op, urepr1, urepr2) in enumerate(zip(sym.S, urepr[orbital1].U, urepr[orbital2].U)):
+                                    #assert abs(np.linalg.det(s_op) - 1) < 1e-5
+                                    #if np.any(s_op < 0): # TODO prefer these by sorting the loop
+                                    #    continue
+                                    suborb1_rot = np.array(urepr1[:,sub1_i])
+                                    suborb2_rot = np.array(urepr2[:,sub2_i])
+                                    sub1_rot = np.argmax(np.abs(suborb1_rot))
+                                    sub2_rot = np.argmax(np.abs(suborb2_rot))
+                                    # first extract the value before setting it to 0
+                                    s_inv = suborb1_rot[sub1_rot] * suborb2_rot[sub2_rot]
+                                    # TODO the following is what I assume works, but probably doesn't...
+                                    suborb1_rot[sub1_rot] = 0
+                                    if np.linalg.norm(suborb1_rot) > 1e-5:
+                                        continue
+                                    #assert np.linalg.norm(suborb1_rot) < 1e-5, f"{suborb1_rot}"
+                                    suborb2_rot[sub2_rot] = 0
+                                    if np.linalg.norm(suborb2_rot) > 1e-5:
+                                        continue
+                                    #assert np.linalg.norm(suborb2_rot) < 1e-5, f"{suborb2_rot}"
+                                    # get the names of the orbitals
+                                    sub1_rot = suborbitals[orbital1][sub1_rot]
+                                    sub2_rot = suborbitals[orbital2][sub2_rot]
+                                    # generate the name of the orbital integral (try all permutations)
+                                    for names in [f"{name1}/{name2}", f"{name2}/{name1}"]:
+                                        for orbital_integral_name, swap in [(f"{names}:V_{sub1_rot}_{sub2_rot}", False), (f"{names}:V_{sub2_rot}_{sub1_rot}", True)]:
+                                            if orbital_integral_name in orbital_integrals:
+                                                res_inv = inv * s_inv if swap else s_inv
+                                                func = orbital_integrals[orbital_integral_name]
+                                                if s_i > 0:
+                                                    # set func to the transformed value
+                                                    if type(func) == list:
+                                                        func = [res_inv * v for v in func]
+                                                    elif type(func) == dict:
+                                                        func = {tuple(s_op.T @ pos): res_inv * v for pos, v in func.items()}
+                                                    else:
+                                                        # package "func" inside a function to build the lambda expression independend of the local variable with name "func"
+                                                        def pack(func):
+                                                            return lambda x: res_inv * func(s_op @ x)
+                                                        func = pack(func)
+                                                    # save the transformed func in orbital_integrals
+                                                    # (no copy of the dict -> the instance of the input dict will get extended)
+                                                    orbital_integrals[f"{name1}/{name2}:V_{sub1}_{sub2}"] = func
+                                                break
+                                        if func is not None: break
+                                    if func is not None: break
+                                    # TODO keep searching and if there is a second func found, that doesn't match, report that as an error
+                                assert func is not None, f"Orbital function {name1}/{name2}:V_{sub1}_{sub2} is missing"
+
+        # now compute the parameter matrices H_r
         k1 = 0
         for name1, orbitals1, pos1 in basis:
             pos1 = np.array(pos1)
             for orbital1 in orbitals1:
-                for sub1 in suborbitals[orbital1]:
+                for sub1_i, sub1 in enumerate(suborbitals[orbital1]):
                     k2 = 0
                     for name2, orbitals2, pos2 in basis:
                         pos2 = np.array(pos2)
                         for orbital2 in orbitals2:
-                            for sub2 in suborbitals[orbital2]:
-                                # generate the name of the orbital integral (try all permutations)
-                                orbital_integral_name11 = f"{name1}/{name2}:V_{sub1}_{sub2}"
-                                orbital_integral_name21 = f"{name2}/{name1}:V_{sub1}_{sub2}"
-                                # switched orbitals mean complex conjugate of the result!
-                                orbital_integral_name12 = f"{name1}/{name2}:V_{sub2}_{sub1}"
-                                orbital_integral_name22 = f"{name2}/{name1}:V_{sub2}_{sub1}"
-                                # find the function to use
+                            inv = inv_urepr[orbital1] * inv_urepr[orbital2]
+                            for sub2_i, sub2 in enumerate(suborbitals[orbital2]):
                                 func = None
-                                for orbital_integral_name, swap in [(orbital_integral_name11, False), (orbital_integral_name21, False), (orbital_integral_name12, True), (orbital_integral_name22, True)]:
-                                    if orbital_integral_name in orbital_integrals:
-                                        func = orbital_integrals[orbital_integral_name]
-                                        break
-                                assert func is not None, f"Orbital function {orbital_integral_name11} is missing"
-                                inv = {'s':1,'p':-1,'d':1}[orbital1] * {'s':1,'p':-1,'d':1}[orbital2]
-                                if type(func) is list:
+                                # generate the name of the orbital integral (try all permutations)
+                                for names in [f"{name1}/{name2}", f"{name2}/{name1}"]:
+                                    for orbital_integral_name, swap in [(f"{names}:V_{sub1}_{sub2}", False), (f"{names}:V_{sub2}_{sub1}", True)]:
+                                        if orbital_integral_name in orbital_integrals:
+                                            res_inv = inv if swap else 1
+                                            func = orbital_integrals[orbital_integral_name]
+                                            break
+                                    if func is not None: break
+                                assert func is not None, f"Orbital function {name1}/{name2}:V_{sub1}_{sub2} is missing (internal error)"
+                                if type(func) == list:
                                     assert inv == 1, f"can't specify the orbital integral of {orbital1}{orbital2} just by distance"
-                                elif type(func) is dict:
-                                    # here func has x-offsets and values.
-                                    # However the dict is reduced by symmetry,
-                                    # so that needs to be realized here
-                                    axes = set()
-                                    axes.add({'s':-1,'px':0,'py':1,'pz':2,'dyz':0,'dxz':1,'dxy':2}[sub1])
-                                    axes.add({'s':-1,'px':0,'py':1,'pz':2,'dyz':0,'dxz':1,'dxy':2}[sub2])
-                                    if -1 in axes:
-                                        axes.remove(-1)
-                                    axes = list(axes)
-                                    proj = np.zeros(dim)
-                                    proj[axes] = 1
-                                    proj = np.diag(proj)
+                                elif type(func) == dict:
+                                    suborb1 = np.zeros(len(suborbitals[orbital1]))
+                                    suborb1[sub1_i] = 1
+                                    suborb2 = np.zeros(len(suborbitals[orbital2]))
+                                    suborb2[sub2_i] = 1
                                 for i1, n1 in enumerate(neighbors):
-                                    # TODO how does this work? Is this correct? Check!
                                     x = n1 + A @ (pos1 - pos2)
                                     if type(func) is list:
                                         index = index_from_r(np.linalg.norm(x))
                                         p = func[index] if index < len(func) else 0.0
                                     elif type(func) is dict:
-                                        p = 0.0 # if no value is found
+                                        p = None # if no value is found
                                         r = np.linalg.norm(x)
                                         for pos, value in func.items():
                                             rpos = np.linalg.norm(pos)
                                             # TODO these thresholds assume A is normalized...
-                                            if abs(rpos - r) < 1e-4:
-                                                if np.linalg.norm(proj @ (pos - x)) < 1e-4:
-                                                    p = value
-                                                    break
-                                                elif np.linalg.norm(proj @ (pos + x)) < 1e-4:
-                                                    p = np.conj(value) * inv
-                                                    break
-                                                if inv == 1 and len(axes) == 2:
-                                                    # use more symmetries... px py has an additional symmetry with a negative sign!
-                                                    proj2 = np.array(proj)
-                                                    proj2[axes[0], axes[0]] = -1
-                                                    if np.linalg.norm(proj @ pos - proj2 @ x) < 1e-4:
-                                                        p = -np.conj(value)
-                                                        break
-                                                    elif np.linalg.norm(proj @ pos + proj2 @ x) < 1e-4:
-                                                        p = -np.conj(value)
-                                                        break
+                                            if abs(rpos - r) < 1e-5:
+                                                for s_op2, urepr1, urepr2 in zip(sym.S, urepr[orbital1].U, urepr[orbital2].U):
+                                                    suborb1_rot = urepr1 @ suborb1
+                                                    suborb2_rot = urepr2 @ suborb2
+                                                    # here suborb1_rot = ±suborb1, suborb2_rot = ±suborb2
+                                                    s_inv = (suborb1_rot @ suborb1) * (suborb2_rot @ suborb2)
+                                                    #assert abs(abs(s_inv) - 1) < 1e-5, f"{suborb1_rot} {suborb2_rot}"
+                                                    if abs(abs(s_inv) - 1) < 1e-5:
+                                                        if np.linalg.norm(s_op2 @ pos - x) < 1e-5:
+                                                            p = value * s_inv
+                                                            break
+                                                        if np.linalg.norm(s_op2 @ pos + x) < 1e-5:
+                                                            p = value * s_inv * inv
+                                                            break
+                                            if p is not None:
+                                                break
+                                        if p is None:
+                                            p = 0.0
                                     else:
                                         p = func(x)
-                                    params[i1, k1, k2] = np.conj(p)*inv if swap else p
+                                    params[i1, k1, k2] = p * res_inv
                                 k2 += 1
                     k1 += 1
         # for the slater koster model, we also need a HamiltonianSymmetry.
@@ -179,6 +239,11 @@ class SlaterKoster:
                     hsym.append_d3(pos, name)
                     if dim >= 3:
                         hsym.append_d2(pos, name)
+        # remove all neighbors which are completely zero
+        select = np.linalg.norm(params, axis=(-1, -2)) > 0.0
+        neighbors = np.array(np.asarray(neighbors)[select])
+        params = np.array(params[select])
+        # construct the model and return it
         sk = SlaterKoster(hsym, neighbors)
         sk.model.params[:] = params
         # TODO check symmetry of params (of model.f()) here!
@@ -280,3 +345,80 @@ class SlaterKoster:
             widgets.VBox(list(sliders.values())),
             widgets.interactive_output(update, sliders),
         ])
+
+class SlaterKosterOriginal:
+    """Slater-Koster model for cubic crystals.
+    Implementated exactly like in the original paper.
+    """
+    def __init__(self, s_s_000, x_x_000, xy_xy_000, d2_d2_000, s_s_110, s_x_110, s_xy_110, s_d2_110, x_x_110, x_x_011, x_y_110, x_xy_110, x_xy_011, z_d2_011, z_d1_011, xy_xy_110, xy_xy_011, xy_xz_011, xy_d2_110, d2_d2_110, d1_d1_110, s_s_200=0, s_x_200=0, s_d2_002=0, x_x_200=0, y_y_200=0, x_xy_020=0, z_d2_002=0, xy_xy_200=0, xy_xy_002=0, d2_d2_002=0, d1_d1_002=0):
+        # TODO add missing sc variables...
+        self.__dict__ |= locals()
+    
+    @staticmethod
+    def fcc(s_s_000, x_x_000, xy_xy_000, d2_d2_000, s_s_110, s_x_110, s_xy_110, s_d2_110, x_x_110, x_x_011, x_y_110, x_xy_110, x_xy_011, z_d2_011, z_d1_011, xy_xy_110, xy_xy_011, xy_xz_011, xy_d2_110, d2_d2_110, d1_d1_110, s_s_200=0, s_x_200=0, s_d2_002=0, x_x_200=0, y_y_200=0, x_xy_020=0, z_d2_002=0, xy_xy_200=0, xy_xy_002=0, d2_d2_002=0, d1_d1_002=0) -> Self:
+        return SlaterKosterOriginal()
+
+    def f(self, k):
+        cos = np.cos(k).T
+        sin = np.sin(k).T
+        cos2 = np.cos(2*k).T
+        sin2 = np.sin(2*k).T
+        # TODO check if all terms are correctly symmetrized
+        s_s = self.s_s_000 + 2*self.s_s_100*(cos[0]+cos[1]+cos[2]) + 4*self.s_s_110*(cos[0]*cos[1]+cos[0]*cos[2]+cos[1]*cos[2]) + 8*self.s_s_111*cos[0]*cos[1]*cos[2] + 2*self.s_s_200*(cos2[0]+cos2[1]+cos2[2])
+        s_x = 2j*self.s_x_100*sin[0] + 2j*self.s_x_200*sin2[0] + 4j*self.s_x_110*(sin[0]*cos[1]+sin[0]*cos[2]) + 8j*self.s_x_111*sin[0]*cos[1]*cos[2]
+        s_y = 2j*self.s_x_100*sin[1] + 2j*self.s_x_200*sin2[1] + 4j*self.s_x_110*(sin[1]*cos[0]+sin[1]*cos[2]) + 8j*self.s_x_111*cos[0]*sin[1]*cos[2]
+        s_z = 2j*self.s_x_100*sin[2] + 2j*self.s_x_200*sin2[2] + 4j*self.s_x_110*(sin[2]*cos[0]+sin[2]*cos[1]) + 8j*self.s_x_111*cos[0]*cos[1]*sin[2]
+        s_xy = -4*self.s_xy_110*sin[0]*sin[1] - 8*self.s_xy_111*sin[0]*sin[1]*cos[2]
+        s_xz = -4*self.s_xy_110*sin[0]*sin[2] - 8*self.s_xy_111*sin[0]*cos[1]*sin[2]
+        s_yz = -4*self.s_xy_110*sin[1]*sin[2] - 8*self.s_xy_111*cos[0]*sin[1]*sin[2]
+        s_d1 = 3**.5*(self.s_d2_001*(cos[0]-cos[1]) + self.s_d2_002*(cos2[0]-cos2[1]) + 2*self.s_d2_110*(-cos[0]*cos[2]+cos[1]*cos[2]))
+        s_d2 = self.s_d2_001*(-cos[0]-cos[1]+2*cos[2]) + self.s_d2_002*(-cos2[0]-cos2[1]+2*cos2[2]) - 2*self.s_d2_110*(-2*cos[0]*cos[1]+cos[0]*cos[2]+cos[1]*cos[2])
+        x_x = self.x_x_000 + 2*self.x_x_100*cos[0] + 2*self.y_y_100*(cos[1]+cos[2]) + 2*self.x_x_200*cos2[0] + 2*self.y_y_200*(cos2[1]+cos2[2]) + 4*self.x_x_110*(cos[0]*cos[1]+cos[0]*cos[2]) + 4*self.x_x_011*cos[1]*cos[2] + 8*self.x_x_111*cos[0]*cos[1]*cos[2]
+        y_y = self.x_x_000 + 2*self.x_x_100*cos[1] + 2*self.y_y_100*(cos[0]+cos[2]) + 2*self.x_x_200*cos2[1] + 2*self.y_y_200*(cos2[0]+cos2[2]) + 4*self.x_x_110*(cos[1]*cos[0]+cos[1]*cos[2]) + 4*self.x_x_011*cos[0]*cos[2] + 8*self.x_x_111*cos[0]*cos[1]*cos[2]
+        z_z = self.x_x_000 + 2*self.x_x_100*cos[2] + 2*self.y_y_100*(cos[0]+cos[1]) + 2*self.x_x_200*cos2[2] + 2*self.y_y_200*(cos2[0]+cos2[1]) + 4*self.x_x_110*(cos[2]*cos[1]+cos[2]*cos[0]) + 4*self.x_x_011*cos[1]*cos[0] + 8*self.x_x_111*cos[0]*cos[1]*cos[2]
+        x_y = -4*self.x_y_110*sin[0]*sin[1] - 8*self.x_y_111*sin[0]*sin[1]*cos[2]
+        y_z = -4*self.x_y_110*sin[1]*sin[2] - 8*self.x_y_111*cos[0]*sin[1]*sin[2]
+        z_x = -4*self.x_y_110*sin[2]*sin[0] - 8*self.x_y_111*sin[0]*cos[1]*sin[2]
+        x_xy = 2j*self.x_xy_010*sin[1] + 4j*self.x_xy_110*cos[0]*sin[1] + 4j*self.x_xy_011*sin[1]*cos[2] + 8j*self.x_xy_111*cos[0]*sin[1]*cos[2]
+        x_xz = 2j*self.x_xy_010*sin[2] + 4j*self.x_xy_110*cos[0]*sin[2] - 4j*self.x_xy_011*sin[2]*cos[1] + 8j*self.x_xy_111*cos[0]*cos[1]*sin[2]
+        # TODO symmetric y_xy, y_yz, z_yz, z_xz
+        x_yz = -8j*self.x_yz_111*sin[0]*cos[1]*cos[2]
+        y_xz = -8j*self.x_yz_111*cos[0]*sin[1]*cos[2]
+        z_xy = -8j*self.x_yz_111*cos[0]*cos[1]*sin[2]
+        x_d1 = 3**.5*1j*(self.z_d2_001*sin[0] + self.z_d2_002*sin2[0] + 2*self.z_d2_011*(sin[0]*cos[1]+sin[0]*cos[2])) + 2j*self.z_d1_011*(sin[0]*cos[1]-sin[0]*cos[2]) + 8j*self.x_d1_111*sin[0]*cos[1]*cos[2]
+        y_d1 = 3**.5*1j*(self.z_d2_001*sin[1] + self.z_d2_002*sin2[1] + 2*self.z_d2_011*(sin[1]*cos[0]+sin[1]*cos[2])) + 2j*self.z_d1_011*(sin[1]*cos[0]-sin[1]*cos[2]) + 8j*self.x_d1_111*cos[0]*sin[1]*cos[2]
+        x_d2 = -1j*self.z_d2_001*sin[0] - 1j*self.z_d2_002*sin2[0] - 2j*self.z_d2_011*(sin[0]*cos[1]+sin[0]*cos[2]) + 2j*3**.5*self.z_d1_011*(sin[0]*cos[1]-sin[0]*cos[2]) - 8/3**.5*self.x_d1_111*sin[0]*cos[1]*cos[2]
+        y_d2 = -1j*self.z_d2_001*sin[1] - 1j*self.z_d2_002*sin2[1] - 2j*self.z_d2_011*(sin[1]*cos[0]+sin[1]*cos[2]) + 2j*3**.5*self.z_d1_011*(sin[1]*cos[0]-sin[1]*cos[2]) - 8/3**.5*self.x_d1_111*cos[0]*sin[1]*cos[2]
+        z_d2 =  2j*self.z_d2_001*sin[2] + 2j*self.z_d2_002*sin2[2] + 4j*self.z_d2_011*(cos[0]*sin[2]+cos[1]*sin[2]) + (16/3**.5)*1j*self.x_d1_111*cos[0]*sin[2]
+        z_d1 = z_d2 # not described in the SK paper...
+        xy_xy = self.xy_xy_000 + 2*self.xy_xy_100*(cos[0]+cos[1]) + 2*self.xy_xy_200*(cos2[0]+cos2[1]) + 2*self.xy_xy_001*cos[2] + 2*self.xy_xy_002*cos2[2] + 4*self.xy_xy_110*cos[0]*cos[1] + 4*self.xy_xy_011*(cos[0]*cos[2]+cos[1]*cos[2]) + 8*self.xy_xy_111*cos[0]*cos[1]*cos[2]
+        yz_yz = self.xy_xy_000 + 2*self.xy_xy_100*(cos[1]+cos[2]) + 2*self.xy_xy_200*(cos2[1]+cos2[2]) + 2*self.xy_xy_001*cos[0] + 2*self.xy_xy_002*cos2[0] + 4*self.xy_xy_110*cos[1]*cos[2] + 4*self.xy_xy_011*(cos[1]*cos[0]+cos[2]*cos[0]) + 8*self.xy_xy_111*cos[0]*cos[1]*cos[2]
+        xz_xz = self.xy_xy_000 + 2*self.xy_xy_100*(cos[0]+cos[2]) + 2*self.xy_xy_200*(cos2[0]+cos2[2]) + 2*self.xy_xy_001*cos[1] + 2*self.xy_xy_002*cos2[1] + 4*self.xy_xy_110*cos[0]*cos[2] + 4*self.xy_xy_011*(cos[0]*cos[1]+cos[2]*cos[1]) + 8*self.xy_xy_111*cos[0]*cos[1]*cos[2]
+        xy_xz = -4*self.xy_xz_011*sin[1]*sin[2] - 8*self.xy_xz_111*cos[0]*sin[1]*sin[2]
+        xy_yz = -4*self.xy_xz_011*sin[0]*sin[2] - 8*self.xy_xz_111*sin[0]*cos[1]*sin[2]
+        xz_yz = -4*self.xy_xz_011*sin[0]*sin[1] - 8*self.xy_xz_111*sin[0]*sin[1]*cos[2]
+        xy_d1 = 0 # what about third neighbors?
+        xy_d2 = -4*self.xy_d2_110*sin[0]*sin[1] - 8*self.xy_d2_111*sin[0]*sin[1]*cos[2] # why did it say yx in the SK paper?
+        xz_d1 = 2*3**.5*self.xy_d2_110*sin[0]*sin[2] + 4*3**.5*self.xy_d2_111*sin[0]*cos[1]*sin[2]
+        yz_d1 = 2*3**.5*self.xy_d2_110*sin[1]*sin[2] + 4*3**.5*self.xy_d2_111*cos[0]*sin[1]*sin[2]
+        xz_d2 = 2*self.xy_d2_110*sin[0]*sin[2] + 4*self.xy_d2_111*sin[0]*cos[1]*sin[2]
+        yz_d2 = 2*self.xy_d2_110*sin[1]*sin[2] + 4*self.xy_d2_111*cos[0]*sin[1]*sin[2]
+        d1_d1 = self.d2_d2_000 + 3/2*self.d2_d2_1001*(cos[0]+cos[1]) + 2*self.d1_d1_001*(cos[0]/4+cos[1]/4+cos[2]) + 2*self.d1_d1_002*(cos2[0]/4+cos2[1]/4+cos2[2]) + 3*self.d2_d2_110*(cos[0]*cos[2]+cos[1]*cos[2]) + 3*self.d1_d1_110*(cos[0]*cos[1]+cos[0]*cos[2]/4+cos[1]*cos[2]/4) + 8*self.d2_d2_111*cos[0]*cos[1]*cos[2]
+        d2_d2 = self.d2_d2_000 + 2*self.d2_d2_001*(cos[0]/4+cos[1]/4+cos[2]) + 3/2*self.d1_d1_001*(cos[0]+cos[1]) + 3/2*self.d1_d1_002*(cos2[0]+cos2[1]) + 4*self.d2_d2_110*(cos[0]*cos[2]+cos[0]*cos[2]/4+cos[1]*cos[2]/4) + 3*self.d1_d1_110*(cos[0]*cos[1]+cos[1]*cos[2]) + 8*self.d2_d2_111*cos[0]*cos[1]*cos[2]
+        d1_d2 = 3**.5/2*self.d2_d2_001*(-cos[0]+cos[1]) - 3**.5/2*self.d1_d1_001*(-cos[0]+cos[1]) - 3**.5/2*self.d1_d1_002*(-cos2[0]+cos2[1]) + 3**.5*self.d2_d2_110*(cos[0]*cos[2]-cos[1]*cos[2]) - 3**.5*self.d1_d1_110*(cos[0]*cos[2]-cos[1]*cos[2])
+        H = np.array([
+            #  s     x     y     z     yz     xz     xy     d1     d2
+            [ s_s,  s_x,  s_y,  s_z,  s_yz,  s_xz,  s_xy,  s_d1,  s_d2], # s
+            [ s_x,  x_x,  x_y,  z_x,  x_yz,  x_xz,  x_xy,  x_d1,  x_d2], # x
+            [ s_y,  x_y,  y_y,  y_z,  x_xy,  y_xz,  x_xy,  y_d1,  y_d2], # y
+            [ s_z,  z_x,  y_z,  z_z,  x_xy,  x_xy,  z_xy,  z_d1,  z_d2], # z
+            [s_yz, x_yz, x_xy, x_xy, yz_yz, xz_yz, xy_yz, yz_d1, yz_d2], # yz
+            [s_xz, x_xz, y_xz, x_xy, xz_yz, xz_xz, xy_xz, xz_d1, xz_d2], # xz
+            [s_xy, x_xy, x_xy, z_xy, xy_yz, xy_xz, xy_xy, xy_d1, xy_d2], # xy
+            [s_d1, x_d1, y_d1, z_d1, yz_d1, xz_d1, xy_d1, d1_d1, d1_d2], # d1
+            [s_d2, x_d2, y_d2, z_d2, yz_d2, xz_d2, xy_d2, d1_d2, d2_d2], # d2
+        ])
+        for i in range(1+3+5):
+            for j in range(i):
+                H[i,j] = np.conj(H[i,j])
+        return H

@@ -419,21 +419,17 @@ class QECrystal:
             if len(S) == 0:
                 # ???
                 S = np.eye(3)[None,...]
-            else:
-                #S = np.einsum("ik,nkl,lj->nij", inv_reciprocal, S, reciprocal)
-                # TODO translations should also be transformed!
-
-                # transform S from the real space symmetries to the reciprocal space symmetries.
-                S = np.array(S).swapaxes(-1, -2)
-                S = np.linalg.inv(S)
             # symmetries should be orthogonal in this basis. TODO sometimes they are not??? Related to fractional symmetries...
             # assert np.linalg.norm(np.einsum("nij,nik->njk", S, S) - np.eye(len(S[0]))) < 1e-5, "symmetries in crystal space are not orthogonal"
             assert np.linalg.norm(np.round(S) - S) < 1e-8, "symmetries in crystal space are not integers"
             assert len(S_trans) == len(S), "every symmetry needs an associated translational part if one of them has one."
             # only return the symmetries without translational part
-            S = [S for S, t in zip(S, S_trans) if np.linalg.norm(t) < 1e-10]
-            if len(S) != len(S_trans):
-                print("WARNING: fractional symmetries dropped")
+            if not all((np.linalg.norm(t) < 1e-10 for t in S_trans)):
+                # adding translational part as projective part!
+                S = [np.block([[s, t[:,None]], [np.zeros((1, 3)), np.eye(1)]]) for s, t in zip(S, S_trans)]
+            # transform S from the real space symmetries to the reciprocal space symmetries.
+            S = np.swapaxes(S, -1, -2)
+            S = np.linalg.inv(S)
             fermi_energy_node = document.getElementsByTagName("fermi_energy")[0]
             fermi_energy = float(fermi_energy_node.firstChild.nodeValue.strip()) * to_eV
         return np.array(k_points), np.array(bands), S, fermi_energy, A

@@ -4,7 +4,7 @@ from typing import Tuple, Callable
 
 
 # direct sum of two matrices (block diagonal concatenation)
-def direct_sum2(a, b):
+def _direct_sum(a, b):
     a = np.asanyarray(a)
     b = np.asanyarray(b)
     a_shape = np.shape(a)
@@ -40,8 +40,8 @@ def direct_sum(*a):
     if len(a) == 1:
         return a[0]
     if len(a) == 2:
-        return direct_sum2(*a)
-    return direct_sum(direct_sum2(a[0], a[1]), *a[2:])
+        return _direct_sum(*a)
+    return direct_sum(_direct_sum(a[0], a[1]), *a[2:])
 
 
 def random_hermitian(n):

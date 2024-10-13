@@ -106,7 +106,7 @@ class HermitianFourierSeries:
     def direct_sum(self, other: Self) -> Self:
         if np.any(self.neighbors != other.neighbors):
             raise NotImplementedError("mixing neighbor sets in the direct sum is currently not implemented.")
-        return HermitianFourierSeries(self.neighbors, direct_sum2(self.H_r, other.H_r))
+        return HermitianFourierSeries(self.neighbors, direct_sum(self.H_r, other.H_r))
 
     def add_neighbors(self, neighbors):
         """Add more neighbors with zero coefficients.

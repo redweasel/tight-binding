@@ -109,22 +109,22 @@ def test_symmetry_extras():
 
 def test_unitary_representations():
     UR = UnitaryRepresentation
-    assert UR.o3().check_U()
-    assert UR.so3().check_U()
-    assert UR.o3r().check_U()
-    assert UR.o3ri().check_U()
-    assert UR.d3(True, True).check_U()
-    assert UR.d3(False, True).check_U()
-    assert UR.d3(True, False).check_U()
-    assert UR.d3(False, False).check_U()
+    assert UR.o3().check()
+    assert UR.so3().check()
+    assert UR.o3r().check()
+    assert UR.o3ri().check()
+    assert UR.d3(True, True).check()
+    assert UR.d3(False, True).check()
+    assert UR.d3(True, False).check()
+    assert UR.d3(False, False).check()
     for i in range(8):
-        assert UR.one_dim(i % 2 == 0, (i % 4) // 2 == 0, i // 4 == 0).check_U(), f"failed on {(i % 2 == 0, (i % 4) // 2 == 0, i // 4 == 0)}"
+        assert UR.one_dim(i % 2 == 0, (i % 4) // 2 == 0, i // 4 == 0).check(), f"failed on {(i % 2 == 0, (i % 4) // 2 == 0, i // 4 == 0)}"
 
 def test_unitary_representations_symmetrize():
     UR = UnitaryRepresentation
     test_u_repr = UR.one_dim(True, True, True) + UR.d3(True) + UR.so3()
     #test_u_repr = UR.one_dim(False, False, True) + UR.d3(False) + UR.so3() + UR.o3()
-    assert test_u_repr.check_U()
+    assert test_u_repr.check()
     neighbors = test_u_repr.sym.complete_neighbors([(0,0,0), (0,0,1), (1,1,1), (2,1,0)]) # with 2,1,3 it will use invcopy
     test_params = np.random.random((len(neighbors),)+(test_u_repr.dim(),)*2)
     test_params = test_params + np.random.random((len(neighbors),)+(test_u_repr.dim(),)*2) * 1j
@@ -147,7 +147,7 @@ def test_hamiltonian_symmetry():
     UR = UnitaryRepresentation
     # make equivalent unitary representation and hamilton symmetry
     test_u_repr = UR.one_dim(True, False) + UR.d3(False) + UR.o3()
-    assert test_u_repr.check_U()
+    assert test_u_repr.check()
     test_h_sym = HamiltonianSymmetry(Symmetry.cubic(True))
     # append all at rho=0 to compare with the unitary repr directly
     test_h_sym.append(UR.one_dim(True, False), [0, 0, 0], "")

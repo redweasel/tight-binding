@@ -588,7 +588,7 @@ class BandStructureModel:
                     self.params[1][i-1, i] = 0.0
 
     def permute(self, order):
-        """apply a permutation to the basis of the hamiltonian"""
+        """Apply a permutation to the basis of the hamiltonian"""
         for i in range(len(self.params)):
             self.params[i] = self.params[i][order]
             self.params[i] = self.params[i][:, order]
@@ -923,7 +923,7 @@ class BandStructureModel:
             assert np.linalg.norm(
                 self.neighbors - other.neighbors) < 1e-8, "Bandstructure needs to be of the same type (neighbors are different)"
             res = self.copy()
-            res.params = direct_sum2(self.params, other.params)
+            res.params = direct_sum(self.params, other.params)
             return res
         else:
             # shift the whole bandstructure

@@ -45,9 +45,12 @@ def try_neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]
 # TODO do they need to be orthogonal? Why not SL(3) or -SL(3)? Those would also create closed sets of symmetries.
 class Symmetry:
     # initialize symmetry from orthogonal matrices
-    def __init__(self, S, inversion=False):
+    def __init__(self, S, inversion=False, projective=False):
         self.S = np.asarray(S)
         self.inversion = inversion
+        # just a flag for notifying other parts of the code that this represents a symmetry with a translational component
+        self.projective = projective
+        # important consistency checks
         if np.linalg.norm(self.S[0] - np.eye(len(self.S[0]))) > 1e-7:
             raise ValueError(
                 "The first entry in the symmetry list needs to be the identity element")
@@ -78,11 +81,15 @@ class Symmetry:
 
     def copy(self) -> Self:
         """Deep copy of the symmetry group."""
-        return Symmetry(np.array(self.S), self.inversion)
+        return Symmetry(np.array(self.S), self.inversion, self.projective)
 
     def dim(self) -> int:
         """Dimension of the symmetry operations"""
         return len(self.S[0])
+    
+    def space_dim(self) -> int:
+        """Dimension of the symmetry operations, considering projective symmetry as one dimension reduced."""
+        return len(self.S[0]) - (1 if self.projective else 0)
 
     def check(self) -> bool:
         """Check if the symmetry group is closed."""
@@ -185,10 +192,15 @@ class Symmetry:
         Returns:
             Self: The transformed symmetry group
         """
-        assert np.shape(basis_transform) == (self.dim(),)*2, "basis_transform needs to be a square matrix with matching dimension"
+        if self.projective:
+            assert np.shape(basis_transform) == (self.dim()-1,)*2, "basis_transform needs to be a square matrix with matching dimension"
+            # TODO test!
+            basis_transform = np.block([[basis_transform, np.zeros((3, 1))], [np.zeros((1, 3)), np.eye(1)]])
+        else:
+            assert np.shape(basis_transform) == (self.dim(),)*2, "basis_transform needs to be a square matrix with matching dimension"
         S = np.einsum("nij,mi,jk->nmk", self.S,
                            basis_transform, np.linalg.inv(basis_transform))
-        return Symmetry(S, self.inversion)
+        return Symmetry(S, self.inversion, self.projective)
 
     @staticmethod
     def from_generator(G, inversion: bool) -> Self:
@@ -239,6 +251,12 @@ class Symmetry:
             if len(S) <= prev_len:
                 break
         return Symmetry(np.array(S), inversion)
+
+    def dual(self) -> Self:
+        """Construct the symmetry on the dual space (e.g. reciprocal space <-> real space)"""
+        S = np.swapaxes(self.S, -1, -2)
+        S = np.linalg.inv(S)
+        return Symmetry(S, self.inversion, self.projective)
 
     @staticmethod
     def none(dim=3) -> Self:
@@ -756,20 +774,28 @@ class Symmetry:
             covered = covered.union(rep_class)
         return classes
 
-    def symmetrize(self, tensor):
+    def symmetrize(self, tensor, rank=(1, 1)):
         """Symmetrize a tensor accoding to this symmetry using the group mean.
         This is a linear operation, which is a projection.
 
         Args:
-            tensor (arraylike(dim, dim)): The input tensor to be symmetrized.
+            tensor (arraylike(dim, ..., dim)): The input tensor to be symmetrized.
+            rank (Tuple[int, int]): number of left (covariant) and right (contravariant) indices of the tensor
 
         Returns:
-            ndarray(dim, dim): The symmetrized tensor
+            ndarray(dim, ..., dim): The symmetrized tensor
         """
         orig = np.array(tensor) * 1.0
+        assert len(np.shape(orig)) == rank[0]+rank[1], f"rank parameter {rank} doesn't match tensor of shape {np.shape(orig)}"
         res = np.zeros_like(orig)
+        # hacky but simple...
+        letters = "abcdefghijklmnopqrstuvwxyz"
+        in_letters = letters[:rank[0]+rank[1]]
+        out_letters = letters[-rank[0]-rank[1]:]
+        einsum_str = ",".join([b + a for a, b in zip(in_letters, out_letters)] + [in_letters]) + "->" + out_letters
         for s in self.S:
-            res += np.linalg.inv(s) @ orig @ s
+            inv_s = np.linalg.inv(s)
+            res += np.einsum(einsum_str, *rank[1]*(inv_s,), *rank[1]*(s,), orig, optimize="optimal")
         res /= len(self.S)
         return res
 
@@ -812,6 +838,63 @@ class Symmetry:
                     return True
             return False
         return self.equivalence_classes(conjugated)
+
+    def subgroup(self, invariant_func) -> Self:
+        """Find a subgroup using a class function "invariant_func".
+        Class function means, that it has a constant value for all elements of a conjugacy class.
+
+        Args:
+            invariant_func (Callable[[ndarray(dim, dim)], ...]): A class function that takes
+            the group element in the used representation and returns a value that is constant
+            for all elements of a conjugacy class of the group.
+
+        Returns:
+            Self: The subgroup that keeps the value constant.
+        """
+        value = invariant_func(self.S[0])
+        S = [np.array(self.S[0])]
+        for s in self.S[1:]:
+            if np.linalg.norm(invariant_func(s) - value) < 1e-8:
+                S.append(s)
+        sym = Symmetry(S, abs(invariant_func(-self.S[0]) - value) < 1e-8 if self.inversion else False)
+        assert sym.check(), "The subgroup is not closed, therefore the function was not a class function or the original group was not closed"
+        return sym
+
+    def space_group(S, dim=3) -> Self:
+        """Convenience function to automatically set the projective flag when creating a space group."""
+        assert len(S[0]) == dim or len(S[0]) == dim+1, "incompatible dimension"
+        return Symmetry(S, projective=len(S[0])==dim+1)
+
+    def point_group(S, dim=3) -> Self:
+        """Convenience function to automatically ignoring a projective part if it's present."""
+        return Symmetry.space_group(S, dim=dim).ignore_translation()
+    
+    def strict_point_group(S, dim=3) -> Self:
+        """Convenience function to automatically remove any symmetry with translational component."""
+        return Symmetry.space_group(S, dim=dim).remove_translation()
+
+    def remove_translation(self) -> Self:
+        """Get a symmetry without translational component,
+        by removing all symmetry operations, which have a translational component.
+
+        Returns:
+            Self: A cut down symmetry if it was projective, or self (by reference)
+        """
+        assert self.projective, "no translational symmetries included"
+        sym = self.subgroup(lambda s: np.linalg.norm(s[:-1,-1]) + np.linalg.norm(s[-1,:-1]))
+        sym.S = np.array(sym.S[:,:-1,:-1])
+        return sym
+    
+    def ignore_translation(self) -> Self:
+        """Get a symmetry without translational component,
+        by cutting it off if it exists.
+
+        Returns:
+            Self: A cut down symmetry if it was projective, or self (by reference)
+        """
+        if self.projective:
+            return Symmetry(self.S[:,:-1,:-1], self.inversion, projective=False)
+        return self
 
     def __contains__(self, other: Self) -> bool:
         """Check if other is a subgroup of self"""
@@ -900,3 +983,6 @@ class Symmetry:
         if not sym.check():
             raise ValueError("The righthand side is no normal subgroup")
         return sym
+    
+    def __str__(self):
+        return f"Symmetry(dim={self.dim()}, order={len(self)}, inversion={self.inversion}{', projective=True' if self.projective else ''})"

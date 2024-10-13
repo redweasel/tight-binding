@@ -9,6 +9,8 @@ from . import unitary_representations as _urep
 # about the position of the represented atomic orbitals in the unit cell.
 # This way it can represent a more general set of symmetries
 
+# TODO handle projective symmetries! -> correctly symmetrize the diamond structure!
+
 class HamiltonianSymmetry:
     """
     This class represents a symmtery for a hermitian operator that
@@ -35,13 +37,16 @@ class HamiltonianSymmetry:
         and get extended to n-dim. by appending new unitary representations.
 
         Args:
-            sym (Symmetry): the spacial symmetry group
+            sym (Symmetry): the spacial symmetry group (call sym.dual() if needed to construct this from the reciprocal symmetry group)
         """
-        self.sym = sym
+        # translation is actually not important for the symmetry.
+        # It just plays a role in deciding which orbitals are equal,
+        # but I let the user do that with the names of the orbitals.
+        self.sym = sym.ignore_translation()
         self.U = [] # unitary representations
         self.pos = [] # e.g. [[0,0,0], [1/4,1/4,1/4]] for k-dependence of symmetry
         self.names = [] # e.g. ["C", "C"] for exchange symmetriesCu
-        # translation symmetries can also be handled separately
+        # translation symmetries (for S=1) can be handled separately (TODO)
         self.translation = np.ones((sym.dim(), 0))
     
     def dim(self):
@@ -70,7 +75,7 @@ class HamiltonianSymmetry:
         See class description for more information.
 
         Args:
-            urepr (UnitaryRepresentation): a unitary representation to be added as a direct sum to the existing representation.
+            urepr (UnitaryRepresentation): a unitary representation to be added as a direct sum to the existing representation. A copy is done before it is appended.
                 Only unitary representation with skalar behavior under inversion are allowed. This is always the case for irreps.
             pos (arraylike): the position used for the added phase.
             name (str, optional): a name that is just used for annotation. Defaults to empty string.
@@ -96,6 +101,32 @@ class HamiltonianSymmetry:
             name (str, optional): a name that is just used for annotation. Defaults to empty string.
         """
         self.append(_urep.UnitaryRepresentation(self.sym, 1), pos, name)
+    
+    def append_diamond_s(self, pos, name: str):
+        """Append 2 automatically created s-orbitals, which are considered to get swapped for 90° rotations and inversion.
+        
+        Args:
+            pos (arraylike): the position used for the added phase.
+            name (str, optional): a name that is just used for annotation. Defaults to empty string.
+        """
+        # TODO figure out the positions...
+        s = np.einsum("nij,j->n", self.sym.S, [1,1,1])
+        swap = np.abs(np.abs(s - 1) - 2) > 1e-5
+        if self.sym.inversion:
+            # Here the swap also needs to happen on inversion.
+            # Therefore the basis needs to be changed, as only
+            # diagonal operations are allowed on inversion.
+            # mixed inversion symmetry is not allowed here, so this is split up
+            urepr = _urep.UnitaryRepresentation(self.sym, 1)
+            urepr.inv_split = 0 # -1 on inversion
+            self.append(urepr, pos, name+"0")
+            urepr.inv_split = 1
+            urepr.U[swap,0,0] *= -1 # -1 on rotation
+            self.append(urepr, pos, name+"1")
+        else:
+            urepr = _urep.UnitaryRepresentation(self.sym, 2)
+            urepr.U = np.where(swap[:,None,None], np.roll(urepr.U, 1, axis=1), urepr.U)
+            self.append(urepr, pos, name)
 
     def append_p(self, pos, name: str):
         """Append automatically created p-orbitals in axis order. (xyz...)
@@ -108,10 +139,37 @@ class HamiltonianSymmetry:
             name (str, optional): a name that is just used for annotation. Defaults to empty string.
         """
         urepr = _urep.UnitaryRepresentation(self.sym, self.sym.dim())
-        urepr.U = self.sym.S
+        urepr.U = np.array(self.sym.S)
         urepr.inv_split = 0
         self.append(urepr, pos, name)
 
+    def append_diamond_p(self, pos, name: str):
+        """Append 2 automatically created p-orbitals, which are considered to get swapped for 90° rotations and inversion.
+        
+        Args:
+            pos (arraylike): the position used for the added phase.
+            name (str, optional): a name that is just used for annotation. Defaults to empty string.
+        """
+        # TODO figure out the positions...
+        urepr = _urep.UnitaryRepresentation(self.sym, self.sym.dim())
+        urepr.U = np.array(self.sym.S)
+        urepr.inv_split = 0 # -1 on inversion
+        s = np.einsum("nij,j->n", self.sym.S, [1,1,1])
+        swap = np.abs(np.abs(s - 1) - 2) > 1e-5
+        if self.sym.inversion:
+            # see append_diamond_s
+            # mixed inversion symmetry is not allowed here, so this is split up
+            urepr.inv_split = 3 #  1 on inversion
+            self.append(urepr, pos, name+"0")
+            urepr.inv_split = 0 # -1 on inversion
+            urepr.U[swap] *= -1 # -1 on rotation
+            self.append(urepr, pos, name+"1")
+        else:
+            urepr = urepr * 2
+            urepr.permute([0, 2, 4, 1, 3, 5]) # normal order
+            urepr.U = np.where(swap[:,None,None], urepr.U[:,[3,4,5,0,1,2]], urepr.U)
+            self.append(urepr, pos, name)
+    
     def append_d2(self, pos, name: str):
         """Append d_{z^2}, d_{x^2-y^2} orbitals in that order.
         This is a notion from solid state physics that comes from the
@@ -139,8 +197,35 @@ class HamiltonianSymmetry:
         """
         urepr = _urep.UnitaryRepresentation(self.sym, self.sym.dim())
         urepr.U = self.sym.S / np.linalg.det(self.sym.S)[:,None,None]
-        urepr.inv_split = self.sym.dim() # don't use -1 on inversion
+        urepr.inv_split = urepr.dim() # don't use -1 on inversion
         self.append(urepr, pos, name)
+
+    def append_diamond_d3(self, pos, name: str):
+        """Append 2 automatically created d-orbitals (yz, xz, xy), which are considered to get swapped for 90° rotations and inversion.
+        
+        Args:
+            pos (arraylike): the position used for the added phase.
+            name (str, optional): a name that is just used for annotation. Defaults to empty string.
+        """
+        # TODO figure out the positions...
+        urepr = _urep.UnitaryRepresentation(self.sym, self.sym.dim())
+        urepr.U = np.array(self.sym.S)
+        urepr.inv_split = 3 # 1 on inversion
+        s = np.einsum("nij,j->n", self.sym.S, [1,1,1])
+        swap = np.abs(np.abs(s - 1) - 2) > 1e-5
+        if self.sym.inversion:
+            # see append_diamond_s
+            # mixed inversion symmetry is not allowed here, so this is split up
+            urepr.inv_split = 0 # -1 on inversion
+            self.append(urepr, pos, name+"0")
+            urepr.inv_split = 3 #  1 on inversion
+            urepr.U[swap] *= -1 # -1 on rotation
+            self.append(urepr, pos, name+"1")
+        else:
+            urepr = urepr * 2
+            urepr.permute([0, 2, 4, 1, 3, 5]) # normal order
+            urepr.U = np.where(swap[:,None,None], urepr.U[:,[3,4,5,0,1,2]], urepr.U)
+            self.append(urepr, pos, name)
     
     def get_band_name(self, index):
         for u, name in zip(self.U, self.names):
@@ -175,11 +260,12 @@ class HamiltonianSymmetry:
             d1 = u1.dim()
             u1 = 1 if u1.inv_split > 0 else -1
             if u1 < 0:
+                # TODO use r1 !?!
                 hamiltonian_inv[n1:n1+d1,:] *= -1
                 hamiltonian_inv[:,n1:n1+d1] *= -1
         # now apply the symmetry operation
         result = np.zeros_like(hamiltonian)
-        s = np.swapaxes(self.sym.S[s_index], -1, -2)
+        s = self.sym.S[s_index]
         n1 = 0
         for u1, r1 in zip(self.U, self.pos):
             d1 = u1.dim()
@@ -259,6 +345,8 @@ class HamiltonianSymmetry:
             H_r2 /= 2
         else:
             H_r2 = H_r
+        # TODO symmetrize equal orbitals by using their names
+
         # Now do translation symmetry. It's a normal subgroup, so it can be done separately like this
         # TODO
         #H_r3 = np.zeros_like(H_r2)
@@ -269,28 +357,10 @@ class HamiltonianSymmetry:
         #H_r3 /= self.sym.dim()
         H_r3 = H_r2
         result = np.zeros_like(H_r3) # all U_S are real, so no worries about type here
-        S_inv = np.swapaxes(np.linalg.inv(self.sym.S), -1, -2) # S is on k -> transform für R
         # symmetrise with the subgroup sym/inversion (inversion is always a normal subgroup)
         for i, r in enumerate(neighbors):
             # the neighbors are reduced by inversion symmetry
             # now compute result[i] += np.conj(u.T) @ params[j] @ u
-            # but with u = direct_sum(u1, u2, ...)
-            # a @ u = (a @ direct_sum(u1, zeros...) + a @ direct_sum(zeros, u2, zeros...) + ...)
-            #       = a @ direct_sum(u1, eye...) @ direct_sum(eye, u2, eye...) @ ...
-            #for k, s in enumerate(self.sym.S):
-            #    j, mirror = neighbor_func(r_)
-            #    p = H_r3[j]
-            #    if mirror:
-            #        p = np.conj(p.T) # get copy with H_{-r}=H_r^+
-            #    else:
-            #        p = np.array(p) # copy
-            #    n = 0
-            #    for u in self.U:
-            #        d = u.dim()
-            #        u = u.U[k]
-            #        p[:,n:n+d] = p[:,n:n+d] @ u
-            #        p[n:n+d,:] = np.conj(u.T) @ p[n:n+d,:]
-            #        n += d
             n1 = 0
             for u1, r1 in zip(self.U, self.pos):
                 d1 = u1.dim()
@@ -298,7 +368,7 @@ class HamiltonianSymmetry:
                 for u2, r2 in zip(self.U, self.pos):
                     d2 = u2.dim()
                     p = np.zeros_like(H_r3[i,n1:n1+d1,n2:n2+d2])
-                    for k, s in enumerate(S_inv):
+                    for k, s in enumerate(self.sym.S):
                         u1_ = u1.U[k]
                         u2_ = u2.U[k]
                         j, mirror = neighbor_func(s @ (r + r2 - r1) - r2 + r1)

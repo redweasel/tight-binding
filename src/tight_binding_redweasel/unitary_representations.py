@@ -1,8 +1,8 @@
 import numpy as np
 from typing import Self, Callable
 from . import symmetry as _sym
-from .linalg import kron, direct_sum2
-
+from .linalg import kron, direct_sum
+from numbers import Integral
 
 class UnitaryRepresentation:
     """
@@ -122,7 +122,7 @@ class UnitaryRepresentation:
 
     # TODO create an iterator, which lists a representant for each of the possible unitary representations of the symmetry given a partition (multiplicities of band energies at k=0)
     
-    def check_U(self) -> bool:
+    def check(self) -> bool:
         N = self.dim()
         # check the structure of the unitary matrices
         # i.e. check if they are a representation of the symmetry by checking 
@@ -448,6 +448,15 @@ class UnitaryRepresentation:
         assert np.all(groups.astype(np.int32).sum(1) == counts) and np.all(groups.astype(np.int32).sum(0) == 1), "group size didn't match dimension, this has probably not been constructed using direct sums/products"
         return groups, counts
 
+    def permute(self, order):
+        """Apply a permutation to the basis of the representation"""
+        # check that the permutation doesn't mix inversion symmetry
+        for i, j in enumerate(order):
+            assert (i < self.inv_split) == (j < self.inv_split), "The permutation is not allowed to mix the inversion symmetry"
+        for i in range(len(self.U)):
+            self.U[i] = self.U[i][order]
+            self.U[i] = self.U[i][:, order]
+    
     # direct sum of representations
     def __add__(self, rhs):
         rhs = rhs.copy()
@@ -457,19 +466,19 @@ class UnitaryRepresentation:
         if self.inv_split == 0:
             # self is commited to -1 on inversion
             for i, (u1, u2) in enumerate(zip(self.U, rhs.U)):
-                u_repr.U[i] = direct_sum2(u2, u1)
+                u_repr.U[i] = direct_sum(u2, u1)
         elif self.inv_split == self.dim():
             # self is commited to 1 on inversion
             for i, (u1, u2) in enumerate(zip(self.U, rhs.U)):
-                u_repr.U[i] = direct_sum2(u1, u2)
+                u_repr.U[i] = direct_sum(u1, u2)
         elif rhs.inv_split == 0:
             # rhs is commited to -1 on inversion
             for i, (u1, u2) in enumerate(zip(self.U, rhs.U)):
-                u_repr.U[i] = direct_sum2(u1, u2)
+                u_repr.U[i] = direct_sum(u1, u2)
         elif rhs.inv_split == rhs.dim():
             # rhs is commited to 1 on inversion
             for i, (u1, u2) in enumerate(zip(self.U, rhs.U)):
-                u_repr.U[i] = direct_sum2(u2, u1)
+                u_repr.U[i] = direct_sum(u2, u1)
         else:
             raise ValueError("one of the added representations needs to full commit to 1 or -1 on inversion.")
         u_repr.inv_split = self.inv_split + rhs.inv_split
@@ -478,13 +487,42 @@ class UnitaryRepresentation:
     # direct product with an n-dim identity matrix from the left
     # = direct sum of n times this representation
     def __mul__(self, rhs):
-        if int(rhs) != rhs:
-            print("can only multiply with an integer number")
-        rhs = int(rhs)
-        res = self.copy()
-        res.U = np.kron(res.U, np.eye(rhs)[None, ...])
-        res.inv_split *= rhs
-        return res
+        if isinstance(rhs, Integral):
+            rhs = int(rhs)
+            res = self.copy()
+            # The order of the kron is a bit unfortunate,
+            # but is required to get inv_split working for the general case.
+            res.U = np.kron(res.U, np.eye(rhs)[None, ...])
+            res.inv_split *= rhs
+            return res
+        if type(rhs) == type(self):
+            # TODO test
+            res = rhs.copy()
+            res.match_sym(self.sym) # match to self symmetry, like in __add__
+            # this is only supported if one of the representations has inv_split at 0 or dim.
+            if rhs.inv_split == 0 or rhs.inv_split == rhs.dim():
+                # case 1: kron is ordered correctly
+                for i in range(len(res)):
+                    res.U[i] = np.kron(self.U[i], res.U[i])
+                res.inv_split = self.inv_split * rhs.dim()
+                if rhs.inv_split == 0:
+                    # flip inversion symmetry if self has it
+                    res.inv_split = res.dim() - res.inv_split
+                    res.U = np.flip(res.U, axis=(1, 2))
+            elif self.inv_split == 0 or self.inv_split == self.dim():
+                # case 2: kron is flipped
+                # TODO make the kron in linalg do this loop correctly and generally
+                for i in range(len(res)):
+                    res.U[i] = np.kron(res.U[i], self.U[i])
+                res.inv_split *= self.dim()
+                if self.inv_split == 0:
+                    # flip inversion symmetry if self has it
+                    res.inv_split = res.dim() - res.inv_split
+                    res.U = np.flip(res.U, axis=(1, 2))
+            else:
+                raise ValueError("Multiplication is not supported for two unitary representations with both mixed inversion symmetry")
+            return res
+        raise ValueError(f"Unsupported type for rhs: {type(rhs)}")
 
     ### examples for unitary irreducible representations
 
