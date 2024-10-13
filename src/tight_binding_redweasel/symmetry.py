@@ -792,7 +792,7 @@ class Symmetry:
         letters = "abcdefghijklmnopqrstuvwxyz"
         in_letters = letters[:rank[0]+rank[1]]
         out_letters = letters[-rank[0]-rank[1]:]
-        einsum_str = ",".join([b + a for a, b in zip(in_letters, out_letters)] + [in_letters]) + "->" + out_letters
+        einsum_str = ",".join([b + a if i < rank[0] else a + b for i, (a, b) in enumerate(zip(in_letters, out_letters))] + [in_letters]) + "->" + out_letters
         for s in self.S:
             inv_s = np.linalg.inv(s)
             res += np.einsum(einsum_str, *rank[1]*(inv_s,), *rank[1]*(s,), orig, optimize="optimal")
