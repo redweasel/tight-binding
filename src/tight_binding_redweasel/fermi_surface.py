@@ -71,9 +71,10 @@ def plot_3D_fermi_surface_to_ax(ax, model, fermi_energy, N=32, elev=35, azim=20,
     # however only tripcolor seems to be the only method using it, which is 2D.
     # -> implement my own copy of Poly3DCollection with gouraud shading.
     ax.add_collection3d(mesh)
-    ax.set_xlim(*k_range)
-    ax.set_ylim(*k_range)
-    ax.set_zlim(*k_range)
+    # added view_margin because apparently there is a bug in matplotlib 3.8.3 where it causes a KeyError if it's None.
+    ax.set_xlim(*k_range, view_margin=0)
+    ax.set_ylim(*k_range, view_margin=0)
+    ax.set_zlim(*k_range, view_margin=0)
     ax.set_aspect("equal")
     ax.view_init(elev=elev, azim=azim)
 

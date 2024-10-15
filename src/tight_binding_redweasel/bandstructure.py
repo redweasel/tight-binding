@@ -223,12 +223,14 @@ class BandStructureModel:
         return np.linalg.norm(err) / len(k_smpl)**0.5
         # return np.max(np.abs(bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands))
 
-    def print_error(self, k_smpl, ref_bands, band_weights, band_offset, prefix=""):
+    def print_error(self, k_smpl, ref_bands, band_weights, band_offset, prefix="", log=None):
         """Print the loss and the maximal error per band"""
-        band_weights = np.broadcast_to(np.reshape(
-            [band_weights / np.mean(band_weights)], (1, -1)), (1, len(ref_bands[0])))
+        band_weights = np.broadcast_to(np.ravel(band_weights / np.mean(band_weights)), (len(ref_bands[0]),))
         l, err = self.error(k_smpl, ref_bands, band_weights, band_offset)
-        print(f"{prefix}loss: {l:.2e} (max band-error {err})")
+        if log is not None:
+            log.add_message(f"{prefix}loss: {l:.2e} (max band-error {err})")
+        else:
+            print(f"{prefix}loss: {l:.2e} (max band-error {err})")
 
     def print_model_norms(self):
         """Print the norm of the matrices in params (along with their corresponding neighbor if available)"""

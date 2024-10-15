@@ -243,7 +243,7 @@ class DensityOfStates:
     The bandstructure model, used in this class needs to accept crystal coordinates.
     The cubic cell [-0.5, 0.5]^3 should equal the whole reciprocal crystal cell.
     """
-    def __init__(self, model: Callable, N=24, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True):
+    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True):
         """Initialize a density of states model from a bandstructure model.
 
         Args:
@@ -260,7 +260,10 @@ class DensityOfStates:
         else:
             xyz = [np.linspace(*r, N+1) for r in ranges]
         self.step_sizes = np.array([x[1] - x[0] for x in xyz])
-        self.k_smpl = np.stack(np.meshgrid(*xyz, indexing='ij'), axis=-1)
+        if A is None:
+            A = np.eye(3)
+        self.A = np.asarray(A)
+        self.k_smpl = np.stack(np.meshgrid(*xyz, indexing='ij'), axis=-1) @ np.linalg.inv(A)
         self.wrap = wrap
         shape = np.shape(self.k_smpl)
         bands = model(np.reshape(self.k_smpl, (-1, 3)))

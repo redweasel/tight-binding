@@ -13,12 +13,18 @@ def test_cubic_density_of_states():
     dos_model = dos.DensityOfStates(model, N=15) # 15 -> the minimum band value is not in the grid
     assert abs(dos_model.bands_range[0][0] - -3) < 1e-8, f"lower band range was wrong/inprecise: {dos_model.bands_range[0][0]}"
     assert abs(dos_model.bands_range[0][1] - 3) < 1e-8, f"upper band range was wrong/inprecise: {dos_model.bands_range[0][1]}"
-    _e_smpl, n, _rho = dos_model.full_curve(N=40)
+    e_smpl, n, rho = dos_model.full_curve(N=40)
     # test monotonicity of n
     assert np.all((np.roll(n, -1) - n)[:-1] >= 0), "states(energy) was not monotone"
 
     electrons = 0.5
     assert abs(dos_model.fermi_energy(electrons)) < 1e-3, "computed fermi energy was wrong"
+
+    # test the other functions to get the density and states. They should be equivalent
+    assert np.linalg.norm([dos_model.states_below(e) for e in e_smpl] - n) < 1e-7, "states_below was different from full_curve"
+    assert np.linalg.norm([dos_model.density(e) for e in e_smpl] - rho) < 1e-7, "density was different from full_curve"
+    assert np.linalg.norm([dos_model.states_density(e)[0] for e in e_smpl] - n) < 1e-7, "states_below was different from full_curve"
+    assert np.linalg.norm([dos_model.states_density(e)[1] for e in e_smpl] - rho) < 1e-7, "density was different from full_curve"
 
 
 def test_linear_density_of_states():
