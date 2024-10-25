@@ -1,6 +1,7 @@
 # This is a class that captures an optimisation log.
 # This is useful for analysing the convergence of the methods.
 # It is also very useful to control how the fitting process is displayed.
+import numpy as np
 
 class OptimisationLogger:
     def __init__(self, print_loss=True, update_line=True, verbose=True):
@@ -32,7 +33,7 @@ class OptimisationLogger:
                 print(end="\r")
             # error visualizer
             # U+2581 = ▁ ... U+2588 = █
-            scale = max(*max_err)
+            scale = np.max(max_err)
             error_vis = "".join(
                 [" " if err/scale <= 1/16 else chr(0x2581 + round(err/scale * 8 - 1)) for err in max_err])
             print(f"{iteration:3}: loss{loss:9.2e}{scale:8.1e}×[{error_vis}]", end="")

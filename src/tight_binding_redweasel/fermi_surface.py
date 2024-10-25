@@ -56,21 +56,22 @@ def plot_3D_fermi_surface_to_ax(ax, model, fermi_energy, N=32, elev=35, azim=20,
         all_verts.extend(verts[faces])
         all_rgb.extend(rgb)
         # TODO add a legend label with {band}
-    all_verts = np.array(all_verts)  # shape = (-1, 3, 3)
-    # for some reason the matplotlib renders leave gaps between the triangles...
-    # Since that is highly annoying, I'm fixing it here by scaling all triangles by a little bit.
-    all_verts += 3e-2 * (all_verts - np.mean(all_verts, axis=1, keepdims=True))
-    # Display resulting triangular mesh using Matplotlib. This can also be done
-    # with mayavi (see skimage.measure.marching_cubes docstring).
-    mesh = Poly3DCollection(
-        all_verts/N * (k_range[1] - k_range[0]) + k_range[0], antialiased=False, linewidth=0, linestyle='None')
-    mesh.set_edgecolor(None)
-    mesh.set_facecolor(np.mean(all_rgb, axis=1))
-    # TODO RendererBase.draw_gouraud_triangles exists
-    # I can draw vertex colors properly with it,
-    # however only tripcolor seems to be the only method using it, which is 2D.
-    # -> implement my own copy of Poly3DCollection with gouraud shading.
-    ax.add_collection3d(mesh)
+    if len(all_verts) > 0:
+        all_verts = np.array(all_verts)  # shape = (-1, 3, 3)
+        # for some reason the matplotlib renders leave gaps between the triangles...
+        # Since that is highly annoying, I'm fixing it here by scaling all triangles by a little bit.
+        all_verts += 3e-2 * (all_verts - np.mean(all_verts, axis=1, keepdims=True))
+        # Display resulting triangular mesh using Matplotlib. This can also be done
+        # with mayavi (see skimage.measure.marching_cubes docstring).
+        mesh = Poly3DCollection(
+            all_verts/N * (k_range[1] - k_range[0]) + k_range[0], antialiased=False, linewidth=0, linestyle='None')
+        mesh.set_edgecolor(None)
+        mesh.set_facecolor(np.mean(all_rgb, axis=1))
+        # TODO RendererBase.draw_gouraud_triangles exists
+        # I can draw vertex colors properly with it,
+        # however only tripcolor seems to be the only method using it, which is 2D.
+        # -> implement my own copy of Poly3DCollection with gouraud shading.
+        ax.add_collection3d(mesh)
     # added view_margin because apparently there is a bug in matplotlib 3.8.3 where it causes a KeyError if it's None.
     ax.set_xlim(*k_range, view_margin=0)
     ax.set_ylim(*k_range, view_margin=0)

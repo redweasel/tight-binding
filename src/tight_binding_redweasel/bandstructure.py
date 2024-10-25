@@ -294,9 +294,8 @@ class BandStructureModel:
         band_weights_normalized = band_weights / np.mean(band_weights)
         # memoize self.f_i here using a rectangular matrix
         f_i = np.zeros((len(k_smpl), len(self.params)), dtype=np.complex128)
-        for ki, k in enumerate(k_smpl):
-            for i in range(len(self.params)):
-                f_i[ki, i] = self.f_i(k, i)
+        for i in range(len(self.params)):
+            f_i[:, i] = self.f_i(k_smpl, i)
         f_i[:, 0] /= 2  # divide by 2 because it is added without the symmetrization
         # find the perfect "anti-coefficients", such that c_i @ f_i.T = I
         c_i = np.conj(f_i)  # classic gradient descent
@@ -344,8 +343,7 @@ class BandStructureModel:
                     self.params[1:] *= regularization
 
                 # faster f using cached values
-                f = (self.params[None, ...] *
-                     batch_f_i[..., None, None]).sum(1)
+                f = np.einsum("nkl,in->ikl", self.params, batch_f_i)
                 f += np.conj(np.swapaxes(f, -1, -2))
                 eigvals, eigvecs = np.linalg.eigh(f)
                 eigvals = eigvals[:, band_offset:][:, :len(batch_ref[0])]
@@ -449,11 +447,11 @@ class BandStructureModel:
             H_r_mask = np.where(np.abs(self.params) < 1e-14, 0.0, 1.0)
         # memoize self.f_i here using a rectangular matrix
         f_i = np.zeros((len(k_smpl), len(self.params)), dtype=np.complex128)
-        for ki, k in enumerate(k_smpl):
-            for i in range(len(self.params)):
-                f_i[ki, i] = self.f_i(k, i)
+        for i in range(len(self.params)):
+            f_i[:, i] = self.f_i(k_smpl, i)
         f_i[:, 0] /= 2  # divide by 2 because it is added without the symmetrization
         c_i = np.conj(f_i)
+        fc_i = np.array([f_i, c_i]) # so it doesn't need to be recreated in each iteration!
 
         # unsure about these k_weights...
         # c2_i = np.linalg.pinv(f_i.T)
@@ -490,10 +488,10 @@ class BandStructureModel:
         self.normalize()
         loss = float("inf")
         try:
-            mat_t_path = mat_path = None
+            mat_t_path = combined_path = None
             for iteration in range(iterations):
-                # faster H and S using cached values
-                H = (self.params[None, ...] * f_i[..., None, None]).sum(1)
+                # faster H using cached values
+                H = np.einsum("nkl,in->ikl", self.params, f_i)
                 H += np.conj(np.swapaxes(H, -1, -2))
                 eigvals, eigvecs = np.linalg.eigh(H)
                 eigvals = eigvals[:, band_offset:][:, :N_B]
@@ -510,6 +508,7 @@ class BandStructureModel:
                     log.add_message("converged")
                     break
                 loss = new_loss
+                log.add_data(iteration, loss, max_err)
 
                 if mat_t_path is None:
                     # mat_t_path, info = np.einsum_path("nk,nid,njd,nd->kij", c_i_E_mat_c, eigvecs, eigvecs_c, diff, optimize="optimal")
@@ -520,8 +519,8 @@ class BandStructureModel:
                 # TODO test contracting eigvecs and eigvecs_c beforehand, because that combination is used everywhere
                 b = np.einsum("nk,nid,njd,nd->kij", c_i_E_mat_c,
                               eigvecs, eigvecs_c, diff, optimize=mat_t_path)
-                if mat_path is None:
-                    # combined_path, info = np.einsum_path("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i], [b, b], optimize="optimal")
+                if combined_path is None:
+                    #combined_path, info = np.einsum_path("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i], [b, b], optimize="optimal")
                     # print(combined_path, info)
                     # HACK: sometimes einsum_path completely fails! This is a path that works well for my most common case:
                     combined_path = [
@@ -529,7 +528,7 @@ class BandStructureModel:
 
                 def A(x):
                     x = precond(x / len(k_smpl))
-                    return np.einsum("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i.conj()], [x, np.swapaxes(x, -1, -2).conj()], optimize=combined_path)
+                    return np.einsum("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, fc_i, [x, np.swapaxes(x, -1, -2).conj()], optimize=combined_path)
                 # A(x) is close to a projection matrix
                 step = precond(conjugate_gradient_solve(
                     A, b, err=np.linalg.norm(b) * 1e-3, max_i=max_cg_iterations))
@@ -543,7 +542,6 @@ class BandStructureModel:
                 # keep the 0 entry hermitian!
                 self.params[0] += np.conj(self.params[0].T)
                 self.params[0] /= 2
-                log.add_data(iteration, loss, max_err)
             else:
                 iteration = iterations
         except KeyboardInterrupt:
@@ -786,14 +784,7 @@ class BandStructureModel:
         Returns:
             (arraylike(N_k, N_b), arraylike(N_k, dim, N_b)): (bands, grads)
         """
-        bands, ev = np.linalg.eigh(self.f(k_smpl))
-        df = self.df(k_smpl)
-        # all of the following 3 are about the same speed for some reason
-        # grads = np.real(np.einsum("mij, mnjk, mki -> mni", np.conj(np.swapaxes(ev, 1, 2)), df, ev))
-        grads = np.real(
-            np.einsum("mji, mnjk, mki -> mni", np.conj(ev), df, ev))
-        # grads = np.real(np.diagonal(np.conj(np.swapaxes(ev, 1, 2))[:,None,:,:] @ df @ ev[:,None,:,:], axis1=2, axis2=3))
-        return bands, grads
+        return tuple(eigh_grad(self.f(k_smpl), self.df(k_smpl))[:2])
 
     def bands_grad_hess(self, k_smpl):
         """Computes the hessians of the bands (effective inverse masses).
@@ -805,30 +796,13 @@ class BandStructureModel:
         Returns:
             (arraylike(N_k, N_b), arraylike(N_k, dim, N_b), arraylike(N_k, dim, dim, N_b)): (bands, grads, hessians)
         """
-        bands, ev = np.linalg.eigh(self.f(k_smpl))
-        df = self.df(k_smpl)
-        ddf = self.ddf(k_smpl)
-        # first order perturbation theory terms
-        df_ev = np.einsum("mji, mnjk, mkl -> mnil", np.conj(ev), df, ev)
-        grads = np.real(np.diagonal(df_ev, axis1=2, axis2=3))
-        hess1 = np.real(
-            np.einsum("mji, mpqjk, mki -> mpqi", np.conj(ev), ddf, ev))
-        # second order perturbation theory terms
-        # TODO degenerate perturbation by computing np.linalg.eigh(self.df(k_smpl)) in each degenerate subspace
-        no_diag = np.array(df_ev)  # copy before modification (grads is a view)
-        for i in range(len(grads[0, 0])):
-            no_diag[:, :, i, i] = 0  # zero out diagonal terms
-        # dev = ev[:,None,:,:] @ (no_diag / (bands[:,None,:,None] - bands[:,None,None,:] + 1e-40))
-        # hess2 = np.real(np.einsum("mji, mpjk, mqki -> mpqi", 2*np.conj(ev), df, dev))
-        db = no_diag / (bands[:, None, :, None] -
-                        bands[:, None, None, :] + 1e-40)
-        hess2 = np.real(np.einsum("mpik, mqki -> mpqi", df_ev, db))
-        return bands, grads, hess1 - 2*hess2
+        return tuple(eigh_grad_hess(self.f(k_smpl), self.df(k_smpl), self.ddf(k_smpl), epsilon=1e-6)[:3])
 
     # compute an approximate electron phonon coupling https://doi.org/10.1103/PhysRevB.19.6130
     # g_nm(k, k') is computed for k = k_smpl[k1_indices] and k' = k_smpl[k2_indices]
     # shape(g_nm) = (len(k1_indices), len(k2_indices), len(k), bands, bands)
     # returns bands, grads, g_nm(k1, k2)
+    # NOTE: this only works for Slater-Koster models, as the derivation is based on those symmetries.
     def electron_phonon_coupling(self, k_smpl, k1_indices, k2_indices):
         bands, ev = np.linalg.eigh(self.f(k_smpl))
         df = self.df(k_smpl)

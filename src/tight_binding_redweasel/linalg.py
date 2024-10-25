@@ -44,6 +44,17 @@ def direct_sum(*a):
     return direct_sum(_direct_sum(a[0], a[1]), *a[2:])
 
 
+def merge_axes(arr: np.ndarray, start_axis=-2, count=2) -> np.ndarray:
+    """Merge a range of adjacent axes."""
+    assert count >= 1, "the number of merged axes must be positive"
+    shape = list(np.shape(arr))
+    start_axis = start_axis if start_axis >= 0 else len(shape) + start_axis
+    assert 0 <= start_axis < len(shape), f"axis {start_axis} is out of bounds for shape {shape}"
+    shape[start_axis] = np.prod(shape[start_axis:start_axis+count])
+    del shape[start_axis+1:start_axis+count]
+    return np.reshape(arr, shape)
+
+
 def random_hermitian(n):
     h = (np.random.random((n, n)) * 2 - 1) + 1j * (2 * np.random.random((n, n)) - 1)
     return h + np.conj(h.T)
@@ -54,13 +65,13 @@ def random_unitary(n):
 
 
 def geigh(H: np.ndarray, S: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    if len(H.shape) == 3:
+    if len(H.shape) >= 3:
         if np.linalg.norm(S - np.eye(S.shape[-1])) < 1e-8:
             # fast path
             return np.linalg.eigh(H)
         else:
             # TODO check if using np.linalg.cholesky to factor S and then np.linalg.eigh is faster
-            res_la = np.zeros(H.shape[:2], dtype=H.dtype)
+            res_la = np.zeros(H.shape[:-1], dtype=np.float64)
             res_ev = np.zeros(H.shape, dtype=H.dtype)
             for i in range(len(H)):
                 la, ev = scipy.linalg.eigh(H[i], S[i])
@@ -72,14 +83,104 @@ def geigh(H: np.ndarray, S: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def geigvalsh(H: np.ndarray, S: np.ndarray) -> np.ndarray:
-    if len(np.shape(H)) == 3:
-        res_la = []
+    if len(np.shape(H)) >= 3:
+        res_la = np.zeros(H.shape[:-1], dtype=np.float64)
         for i in range(len(H)):
-            la = scipy.linalg.eigvalsh(H[i], S[i])
-            res_la.append(la)
-        return np.array(res_la)
+            res_la[i] = scipy.linalg.eigvalsh(H[i], S[i])
+        return res_la
     else:
         return scipy.linalg.eigvalsh(H, S)
+
+def geigh_grad(H: np.ndarray, S: np.ndarray, dH: np.ndarray, dS: np.ndarray):
+    """Compute the generalized eigenvalues and eigenvectors using `geigh`.
+    Then also compute the gradient w.r.t. a set of first order perturbation matrices.
+    """
+    if np.linalg.norm(S - np.eye(S.shape[-1])) < 1e-8 and np.linalg.norm(dS) < 1e-8:
+        # fast path
+        return eigh_grad(H, dH)
+    bands, ev = geigh(H, S)
+    path = ['einsum_path', (0, 1), (0, 1)] # precomputed path for best speed
+    grads = np.real(np.einsum("...ji,...njk,...ki->...ni", np.conj(ev), dH, ev, optimize=path))
+    # TODO check!
+    grads -= np.real(np.einsum("...ji,...njk,...ki->...ni", np.conj(ev), dS, ev, optimize=path)) * bands[:,None,:]
+    return bands, grads, ev
+
+def eigh_grad(H: np.ndarray, dH: np.ndarray):
+    """Compute the eigenvalues and eigenvectors using `np.linalg.eigh`.
+    Then compute the gradient w.r.t. a set of first order perturbation matrices.
+
+    NOTE: This method only works exactly for non degenerate matrices.
+    Otherwise the gradients in eigensubspaces will be mixed.
+    That doesn't lead to singularities, so it is ok to use it in an integration method,
+    where the degenerate subspace has measure 0.
+
+    Args:
+        H (ndarray(..., N, N)): Hermitian matrix to diagonalize
+        dH (ndarray(..., M, N, N)): H matrix derivatives w.r.t. M arbitrary variables.
+
+    Returns:
+        (tuple): (eigvals: ndarray(..., N), grads: ndarray(..., M, N), ev: ndarray(..., N, N))
+    """
+    eigvals, ev = np.linalg.eigh(H)
+    path = ['einsum_path', (0, 1), (0, 1)] # precomputed path for best speed
+    grads = np.real(np.einsum("...ji,...njk,...ki->...ni", np.conj(ev), dH, ev, optimize=path))
+    return eigvals, grads, ev
+
+def eigh_grad_hess(H: np.ndarray, dH: np.ndarray, ddH: np.ndarray, epsilon=1e-6):
+    """Compute the eigenvalues and eigenvectors using `np.linalg.eigh`.
+    Then compute the gradient w.r.t. a set of first order perturbation matrices.
+    Then also compute the hessian w.r.t. the same set of variables with additional second order perturbation matrices.
+
+    Args:
+        H (ndarray(..., N, N)): Hermitian matrix to diagonalize
+        dH (ndarray(..., M, N, N)): H matrix first order derivatives w.r.t. M arbitrary variables.
+        ddH (ndarray(..., M, M, N, N)): H matrix second order derivatives w.r.t. M arbitrary variables. All combinations are required.
+        epsilon (float, optional): tolerance threshold for degenerate bands. Choosing this too high will impact performance and precision (by "smoothing" the results like a finite difference quotient). Defaults to 1e-6.
+
+    Returns:
+        (tuple): (eigvals: ndarray(..., N), grads: ndarray(..., M, N), hessian: ndarray(..., M, M, N))
+    """
+    H_shape = np.shape(H)
+    dH_shape = np.shape(dH)
+    ddH_shape = np.shape(ddH)
+    assert H_shape[-2:] == dH_shape[-2:] and dH_shape[-2:] == ddH_shape[-2:], "matrix size must be equal for all terms H, dH, ddH"
+    assert H_shape[:-2] == dH_shape[:-3] and dH_shape[:-3] == ddH_shape[:-4], "enumerating dimensions must be equal for all terms H, dH, ddH"
+    m = dH_shape[-3]
+    assert m == ddH_shape[-3] and m == ddH_shape[-4], "number of variables M must be equal for the terms dH, ddH"
+    eigvals, ev = np.linalg.eigh(H)
+    # first order perturbation theory terms
+    path = ['einsum_path', (0, 1), (0, 1)] # precomputed path for best speed
+    #dH_ev = np.einsum("...ji,...njk,...kl->...nil", np.conj(ev), np.concatenate([dH, merge_axes(ddH, -4, 2)], axis=-3), ev, optimize=path)
+    dH_ev = np.einsum("...ji,...njk,...kl->...nil", np.conj(ev), dH, ev, optimize=path)
+    # hessian contribution from second derivative, first order perturbation theory
+    path = ['einsum_path', (0, 2), (0, 1)] # precomputed path for best speed
+    hess1 = np.real(np.einsum("...ji,...nmjk,...ki->...nmi", np.conj(ev), ddH, ev, optimize=path))
+    # second order perturbation theory terms
+    diff = eigvals[...,:,None] - eigvals[...,None,:]
+    mask = np.abs(diff) < epsilon
+    select = np.sum(np.triu(mask, k=1), axis=(-1, -2)) > 0
+    if select.sum():
+        # for this, an additional diagonalisation is needed for all matrices, which have degenerate eigenvalues.
+        # To keep the efficiency high, only do the second diagonalisation for those which need it.
+        # TODO select only works if select.shape != tuple()
+        assert len(np.shape(dH_ev[select])) == len(dH_ev.shape)
+        _, ev_dH = np.linalg.eigh(dH_ev[select] * mask[select][...,None,:,:])
+        # stable sort ev such that the order of la doesn't change!
+        sorting = np.argsort(np.argmin(np.abs(ev_dH) < 1e-7, axis=-2, keepdims=True), axis=-1)
+        ev_dH = np.take_along_axis(ev_dH, sorting, axis=-1)
+        # apply basis transformation to the selected dH_ev
+        dH_ev[select] = np.einsum("...ji,...jk,...kl->...il", np.conj(ev_dH), dH_ev[select], ev_dH)
+        #hess1[select] = np.einsum("...ji,...jk,...kl->...il", np.conj(ev_dH), hess1[select], ev_dH)
+    # first order eigenvalue change (gradient, actually needs the basis change!)
+    grads = np.real(np.diagonal(dH_ev, axis1=-2, axis2=-1))
+    # assume that the perturbation term commutes with the hamiltonian.
+    # otherwise it can cause non linear sqrt terms in the series development.
+    inv_mask = ~mask
+    dH_ev2 = dH_ev * inv_mask[...,None,:,:] # implicit copy
+    dH_ev2 /= (diff + 1e-40)[...,None,:,:]
+    # hessian contribution from first derivative, second order perturbation theory
+    hess2 = np.real(np.einsum("...pik,...qki->...pqi", dH_ev, dH_ev2))
+    return eigvals, grads, hess1 - 2*hess2
 
 
 def pointcloud_distance(pointcloud1, pointcloud2):

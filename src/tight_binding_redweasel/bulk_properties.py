@@ -121,7 +121,7 @@ class KIntegral:
     def integrate_df(self, g: Callable, hessians=False):
         """Integrate with the derivative of the fermi function as weight function.
 
-        I = sum_n 1/V integral_V( g(E_n(k), grad_k E_n(k), hess_k E_n(k), k) * (-df/de(e, mu, T)) )
+        I = sum_n 1/V_RZ integral_{V_RZ}( g(E_n(k), grad_k E_n(k), hess_k E_n(k), k) * (-df/de(e, mu, T)) dk)
 
         resulting unit: 1/eV * [unit of g]
 
@@ -162,14 +162,16 @@ class KIntegral:
             # zero temperature case
             if self.metal:
                 I = int_e(self.mu)
+                assert len(I) == 1
+                I = I[0]
                 # TODO error estimation
             else:
                 # no fermi surface!
                 # to get the output shape right, evaluate g at one point
                 if hessians:
-                    I = 0.0 * g(self.mu, np.zeros((1, 3)), np.eye(3)[None], np.zeros((1, 3)))
+                    I = 0.0 * np.asanyarray(g(self.mu, np.zeros((1, 3)), np.eye(3)[None], np.zeros((1, 3))))
                 else:
-                    I = 0.0 * g(self.mu, np.zeros((1, 3)), np.zeros((1, 3)))
+                    I = 0.0 * np.asanyarray(g(self.mu, np.zeros((1, 3)), np.zeros((1, 3))))
         else:
             if self.metal:
                 # this only really works for metals for low temperatures with smooth state density.
@@ -189,7 +191,7 @@ class KIntegral:
         """Integrate with the derivative of the fermi function as weight function.
         In contrast to `integrate_df`, this function uses the correct k-space.
 
-        I = sum_n 1/V integral_V( g(E_n(k), grad_k E_n(k), hess_k E_n(k), k) * (-df/de(e, mu, T)) )
+        I = sum_n 1/V_RZ integral_{V_RZ}( g(E_n(k), grad_k E_n(k), hess_k E_n(k), k) * (-df/de(e, mu, T)) dk)
 
         resulting unit: 1/eV * [unit of g]
 
@@ -232,7 +234,7 @@ class KIntegral:
                 return res
             return self.integrate_df(g2, hessians=False)
     
-    # conductivity divided by the electron/phonon scattering time tau in 1/(Ohm*m*s), assuming constant tau
+    # conductivity divided by the electron scattering time tau. Assuming constant tau. Result in 1/(Ohm*m*s)
     def conductivity_over_tau(self, cell_length: float, spin_factor=2):
         I, error = self.integrate_df(lambda _e, v, _k: v[:,None,:] * v[:,:,None], hessians=False)
         # TODO check this for non cubic structures
@@ -240,7 +242,7 @@ class KIntegral:
         sigma = (spin_factor * elementary_charge**2/eV / cell_length**3 * (eV / k_unit / hbar)**2) * I # result is in 1/(Ohm*m)/s
         return sigma
     
-    # conductivity divided by the electron/phonon scattering time tau in 1/(Ohm*m*s), assuming constant tau
+    # conductivity divided by the electron scattering time tau. Assuming constant tau. Result in 1/(Ohm*m*s)
     def drude_factor(self, A, spin_factor=2):
         V_EZ = np.linalg.det(A*1e-10)
         I, error = self.integrate_df_A(A, lambda _e, v, _k: v[:,None,:] * v[:,:,None], hessians=False)
@@ -260,14 +262,13 @@ class KIntegral:
         # In reality the relaxation times are different over k-space or even just for different spins in the same band. (PhysRev.97.647)
         # Somehow their units don't match the expected result unit, so I removed the division by the speed of light to make it work.
         # I canceled one e from sigma_xx with e^2 from sigma_xyz
+        # TODO remove! This is bad!
         V_EZ = np.linalg.det(A*1e-10)
         #sigma_xyz = elementary_charge/c/eV * self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)
         I, error = self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)
         I2, error2 = self.integrate_df_A(A, lambda _e, v, _k: v[:,0]**2, hessians=False)
-        sigma_xyz = elementary_charge/eV * spin_factor * I
+        sigma_xyz = -elementary_charge/eV * spin_factor * I
         sigma_xx = elementary_charge/eV * spin_factor * I2
-        # unsure on this pi factor:
-        #R_H = sigma_xyz / sigma_xx**2 / ((2*np.pi)**3 / V_EZ)
         R_H = sigma_xyz / sigma_xx**2 * V_EZ
         R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
         return R_H, R_H_error # in m^3/C = Ohm m/T
@@ -281,8 +282,6 @@ class KIntegral:
         I2, error2 = self.integrate_df_A(A, lambda _e, v, _k: (v**2).sum(-1), hessians=False)
         sigma_H = elementary_charge/eV * spin_factor/6 * I
         sigma_0 = elementary_charge/eV * spin_factor/3  * I2
-        # unsure on this pi factor:
-        #R_H = sigma_H / sigma_0**2 / ((2*np.pi)**3 / V_EZ)
         R_H = sigma_H / sigma_0**2 * V_EZ
         R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
         return R_H, R_H_error # in m^3/C = Ohm m/T

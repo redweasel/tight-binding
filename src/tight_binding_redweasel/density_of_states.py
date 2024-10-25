@@ -19,7 +19,7 @@ def cubes_preprocessing(band, wrap):
     #ayz = (a[0] + a[1] - a[2] - a[3] - a[4] - a[5] + a[6] + a[7]) / 2
     #axz = (a[0] - a[1] + a[2] - a[3] - a[4] + a[5] - a[6] + a[7]) / 2
     #axyz = (-a[0] + a[1] + a[2] - a[3] + a[4] - a[5] - a[6] + a[7])
-    # TODO move the normalisation into here as well
+    # TODO move the normalisation into here as well -> add "norm" as returned cache
     if wrap:
         return a0, ax, ay, az
     else:
@@ -30,66 +30,71 @@ EPSILON = 1e-6
 # cheap approximation of volume in cuboid using cube cuts
 def cube_cut_volume(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
-    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
-    # cube cuts = sum of tetrahedrons
+    # simplify using abs (also on a0 to reduce numerical cancelation and get more 0 multiplications)
+    a0_sign = a0 < 0.0
+    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
+    # cube cuts = sum of right angle tetrahedrons
     norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
     ax /= norm; ay /= norm; az /= norm; a0 /= norm
     ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
     volume = 0
-    volume += np.maximum(0, ( ax + ay + az)/2 + a0)**3
-    volume -= np.maximum(0, (-ax + ay + az)/2 + a0)**3
-    volume -= np.maximum(0, ( ax - ay + az)/2 + a0)**3
-    volume += np.maximum(0, ( ax - ay - az)/2 + a0)**3
-    volume -= np.maximum(0, ( ax + ay - az)/2 + a0)**3
-    volume += np.maximum(0, (-ax + ay - az)/2 + a0)**3
-    volume += np.maximum(0, (-ax - ay + az)/2 + a0)**3
-    volume -= np.maximum(0, (-ax - ay - az)/2 + a0)**3
-    axyz = ax * ay * az
+    volume += np.maximum(0, ( ax + ay + az)/2 - a0)**3
+    volume -= np.maximum(0, (-ax + ay + az)/2 - a0)**3
+    volume -= np.maximum(0, ( ax - ay + az)/2 - a0)**3
+    volume += np.maximum(0, ( ax - ay - az)/2 - a0)**3
+    volume -= np.maximum(0, ( ax + ay - az)/2 - a0)**3
+    volume += np.maximum(0, (-ax + ay - az)/2 - a0)**3
+    volume += np.maximum(0, (-ax - ay + az)/2 - a0)**3
+    volume -= np.maximum(0, (-ax - ay - az)/2 - a0)**3
     # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
-    return np.where(np.abs(a0) < 3**.5/2, volume / 6 / axyz, a0 > 0)
+    volume = np.where(a0 < 3**.5/2, volume / (6 * ax * ay * az), 0.0)
+    return np.where(a0_sign, volume, 1.0 - volume)
 
 # cheap approximation using cube cuts (direct derivative of cube_cut_volume, not the actual area!)
 def cube_cut_dvolume(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
-    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
+    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
     # cube cuts = sum of tetrahedrons
     norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
     ax /= norm; ay /= norm; az /= norm; a0 /= norm
     ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
     area = 0
-    area += np.maximum(0, ( ax + ay + az)/2 + a0)**2
-    area -= np.maximum(0, (-ax + ay + az)/2 + a0)**2
-    area -= np.maximum(0, ( ax - ay + az)/2 + a0)**2
-    area += np.maximum(0, ( ax - ay - az)/2 + a0)**2
-    area -= np.maximum(0, ( ax + ay - az)/2 + a0)**2
-    area += np.maximum(0, (-ax + ay - az)/2 + a0)**2
-    area += np.maximum(0, (-ax - ay + az)/2 + a0)**2
-    area -= np.maximum(0, (-ax - ay - az)/2 + a0)**2
+    area += np.maximum(0, ( ax + ay + az)/2 - a0)**2
+    area -= np.maximum(0, (-ax + ay + az)/2 - a0)**2
+    area -= np.maximum(0, ( ax - ay + az)/2 - a0)**2
+    area += np.maximum(0, ( ax - ay - az)/2 - a0)**2
+    area -= np.maximum(0, ( ax + ay - az)/2 - a0)**2
+    area += np.maximum(0, (-ax + ay - az)/2 - a0)**2
+    area += np.maximum(0, (-ax - ay + az)/2 - a0)**2
+    area -= np.maximum(0, (-ax - ay - az)/2 - a0)**2
     axyzn = ax * ay * az * norm
     # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
-    return np.where(np.abs(a0) < 3**.5/2, area / (2 * axyzn), 0)
+    return np.where(a0 < 3**.5/2, area / (2 * axyzn), 0.0)
 
 # cheap approximation of volume and area in cuboid using cube cuts
 def cube_cut_volume_dvolume(a0, ax, ay, az):
     # approximate the trilinear integral with correct first order behavior
     # cube cuts = sum of tetrahedrons
-    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
+    a0_sign = a0 < 0.0
+    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
     norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
     ax /= norm; ay /= norm; az /= norm; a0 /= norm
     ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
-    v0 = np.maximum(0, ( ax + ay + az)/2 + a0)
-    v1 = np.maximum(0, (-ax + ay + az)/2 + a0)
-    v2 = np.maximum(0, ( ax - ay + az)/2 + a0)
-    v3 = np.maximum(0, ( ax + ay - az)/2 + a0)
-    v4 = np.maximum(0, ( ax - ay - az)/2 + a0)
-    v5 = np.maximum(0, (-ax + ay - az)/2 + a0)
-    v6 = np.maximum(0, (-ax - ay + az)/2 + a0)
-    v7 = np.maximum(0, (-ax - ay - az)/2 + a0)
+    v0 = np.maximum(0, ( ax + ay + az)/2 - a0)
+    v1 = np.maximum(0, (-ax + ay + az)/2 - a0)
+    v2 = np.maximum(0, ( ax - ay + az)/2 - a0)
+    v3 = np.maximum(0, ( ax + ay - az)/2 - a0)
+    v4 = np.maximum(0, ( ax - ay - az)/2 - a0)
+    v5 = np.maximum(0, (-ax + ay - az)/2 - a0)
+    v6 = np.maximum(0, (-ax - ay + az)/2 - a0)
+    v7 = np.maximum(0, (-ax - ay - az)/2 - a0)
     volume = v0**3 - v1**3 - v2**3 + v4**3 - v3**3 + v5**3 + v6**3 - v7**3
     area = v0**2 - v1**2 - v2**2 + v4**2 - v3**2 + v5**2 + v6**2 - v7**2
-    axyz = ax * ay * az
     # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
-    return np.where(np.abs(a0) < 3**.5/2, volume / (6 * axyz), a0 > 0), np.where(np.abs(a0) < 3**.5/2, area / (2 * axyz * norm), 0)
+    axyz = ax * ay * az
+    volume = np.where(a0 < 3**.5/2, volume / (6 * axyz), 0.0)
+    area = np.where(a0 < 3**.5/2, area / (2 * axyz * norm), 0.0)
+    return np.where(a0_sign, volume, 1.0 - volume), area
 
 # center of mass of the surface of a cube cut
 def cube_cut_area_com(a0, ax, ay, az):
@@ -98,7 +103,7 @@ def cube_cut_area_com(a0, ax, ay, az):
     ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
     # cube cuts = sum of tetrahedrons
     norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 /= norm
+    ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
     ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
     v0 = np.maximum(0, ( ax + ay + az)/2 + a0)
     v1 = np.maximum(0, (-ax + ay + az)/2 + a0)

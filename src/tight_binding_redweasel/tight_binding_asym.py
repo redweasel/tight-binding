@@ -114,6 +114,13 @@ class HermitianFourierSeries:
         Args:
             neighbors (arraylike(N_R, dim)): The neighbors to be added.
         """
+        for n in neighbors:
+            if np.min(np.linalg.norm(self.neighbors - n, axis=-1)) < 1e-5:
+                if len(neighbors) == 1:
+                    print(f"Warning: ignore duplicate neighbor {n}")
+                    return
+                else:
+                    raise ValueError("redundant/duplicate neighbors are not allowed")
         self.neighbors = np.concatenate([self.neighbors, neighbors], axis=0)
         self.H_r = np.concatenate([self.H_r, np.zeros((len(neighbors),) + self.H_r.shape[1:])], axis=0)
     
@@ -121,9 +128,20 @@ class HermitianFourierSeries:
         """Remove all neighbors that have a vector length more than a given threshold length.
 
         Args:
-            max_length (float): Maximal length/distance for the neighbors. Everything else gets cut off.
+            max_length (float): Maximal length/distance for the neighbors. Everything else gets cut off. Exact values like 2 are safe, as there is a buildin epsilon.
         """
         keep = np.linalg.norm(self.neighbors, axis=-1) <= max_length + 1e-8
+        self.neighbors = np.array(self.neighbors[keep])
+        self.H_r = np.array(self.H_r[keep])
+    
+    def cleanup_neighbors(self, min_norm):
+        """Remove all neighbors that have a coefficient matrix with a norm smaller than a given threshold.
+
+        Args:
+            min_norm (float): Minimal norm for the neighbor coefficients. Everything else gets cut off.
+        """
+        keep = np.linalg.norm(self.H_r, axis=(-1, -2)) >= min_norm
+        keep[0] = True # always keep the 0
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
 
@@ -315,9 +333,8 @@ class AsymTightBindingModel:
             log.add_message(f"maximal acceleration {max_accel_global}")
         # memoize self.H.f_i here using a rectangular matrix
         f_i = np.zeros((len(k_smpl), len(self.H.H_r)), dtype=np.complex128)
-        for ki, k in enumerate(k_smpl):
-            for i in range(len(self.H.H_r)):
-                f_i[ki, i] = self.H.f_i(k, i)
+        for i in range(len(self.H.H_r)):
+            f_i[:, i] = self.H.f_i(k_smpl, i)
         f_i[:, 0] /= 2 # divide by 2 because it is added without the symmetrization
         # find the perfect "anti-coefficients", such that c_i @ f_i.T = I
         c_i = np.conj(f_i) # modified gradient descent with conjugated derivatives
@@ -333,9 +350,8 @@ class AsymTightBindingModel:
         if train_S:
             # memoize self.S.f_i here using a rectangular matrix
             s_f_i = np.zeros((len(k_smpl), len(self.S.H_r)), dtype=np.complex128)
-            for ki, k in enumerate(k_smpl):
-                for i in range(len(self.S.H_r)):
-                    s_f_i[ki, i] = self.S.f_i(k, i)
+            for i in range(len(self.S.H_r)):
+                s_f_i[:, i] = self.S.f_i(k_smpl, i)
             s_f_i[:, 0] /= 2 # divide by 2 because it is added without the symmetrization
             # find the perfect "anti-coefficients", such that c_i @ f_i.T = I
             s_c_i = np.conj(s_f_i) # modified gradient descent with conjugated derivatives
@@ -384,10 +400,10 @@ class AsymTightBindingModel:
                     self.H.H_r[1:] *= regularization
 
                 # faster H and S using cached values
-                H = (self.H.H_r[None,...] * batch_f_i[...,None,None]).sum(1)
+                H = np.einsum("nkl,in->ikl", self.H.H_r, batch_f_i)
                 H += np.conj(np.swapaxes(H, -1, -2))
                 if train_S:
-                    S = (self.S.H_r[None,...] * batch_s_f_i[...,None,None]).sum(1)
+                    H = np.einsum("nkl,in->ikl", self.S.H_r, batch_s_f_i)
                     S += np.conj(np.swapaxes(S, -1, -2))
                 eigvals, eigvecs = geigh(H, S)
                 eigvals = eigvals[:,band_offset:][:,:len(batch_ref[0])]
@@ -504,6 +520,7 @@ class AsymTightBindingModel:
                 f_i[ki, i] = self.H.f_i(k, i)
         f_i[:, 0] /= 2 # divide by 2 because it is added without the symmetrization
         c_i = np.conj(f_i)
+        fc_i = np.array([f_i, c_i])
         
         if train_S:
             # memoize self.S.f_i here using a rectangular matrix
@@ -555,13 +572,13 @@ class AsymTightBindingModel:
         # loss = self.loss(k_smpl, ref_bands, band_, band_offset)
         loss = float("inf")
         try:
-            mat_t_path = mat_path = None
+            mat_t_path = combined_path = None
             for iteration in range(iterations):
                 # faster H and S using cached values
-                H = (self.H.H_r[None,...] * f_i[...,None,None]).sum(1)
+                H = np.einsum("nkl,in->ikl", self.H.H_r, f_i)
                 H += np.conj(np.swapaxes(H, -1, -2))
                 if train_S:
-                    S = (self.S.H_r[None,...] * s_f_i[...,None,None]).sum(1)
+                    S = np.einsum("nkl,in->ikl", self.S.H_r, s_f_i)
                     S += np.conj(np.swapaxes(S, -1, -2))
                 eigvals, eigvecs = geigh(H, S)
                 eigvals = eigvals[:, band_offset:][:, :N_B]
@@ -588,7 +605,7 @@ class AsymTightBindingModel:
                 diff *= weights
                 # TODO test contracting eigvecs and eigvecs_c beforehand, because that combination is used everywhere
                 b = np.einsum("nk,nid,njd,nd->kij", c_i_E_mat_c, eigvecs, eigvecs_c, diff, optimize=mat_t_path)
-                if mat_path is None:
+                if combined_path is None:
                     #mat_path = np.einsum_path("nid,njd,nij->nd", eigvecs_c, eigvecs, np.einsum("nk,kij->nij", f_i, b), optimize="optimal")[0]
                     #combined_path = np.einsum_path("nk,nid,njd,nad,nbd,nab,kl->lij", c_i, eigvecs, eigvecs_c, eigvecs_c, eigvecs, np.einsum("nk,kij->nij", f_i, b), E_mat_c, optimize="optimal")[0]
                     #combined_path, info = np.einsum_path("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i], [b, b], optimize="optimal")
@@ -601,7 +618,7 @@ class AsymTightBindingModel:
                     #fx = np.einsum("nk,kij->nij", f_i, x)
                     #fx += np.swapaxes(fx, -1, -2).conj()
                     #return np.einsum("nk,nid,njd,nad,nbd,nab,kl->lij", c_i, eigvecs, eigvecs_c, eigvecs_c, eigvecs, fx, E_mat_c, optimize=combined_path)
-                    return np.einsum("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i.conj()], [x, np.swapaxes(x, -1, -2).conj()], optimize=combined_path)
+                    return np.einsum("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, fc_i, [x, np.swapaxes(x, -1, -2).conj()], optimize=combined_path)
                 # A(x) is close to a projection matrix
                 # tested a different start value to move through saddle points in the optimisation, but it didn't work...
                 x0 = None# (np.random.standard_normal(b.shape) + np.random.standard_normal(b.shape)*1j) * np.linalg.norm(b) * 1e-1
@@ -726,13 +743,7 @@ class AsymTightBindingModel:
         Returns:
             (arraylike(N_k, N_b), arraylike(N_k, dim, N_b)): (bands, grads)
         """
-        bands, ev = geigh(self.H.f(k_smpl), self.S.f(k_smpl))
-        dH = self.H.df(k_smpl)
-        dS = self.S.df(k_smpl)
-        grads = np.real(np.einsum("mji, mnjk, mki -> mni", np.conj(ev), dH, ev))
-        # TODO check!
-        grads += np.real(np.einsum("mji, mnjk, mki -> mni", np.conj(ev), dS, ev)) * -bands[:,:,None]
-        return bands, grads
+        return tuple(geigh_grad(self.H.f(k_smpl), self.S.f(k_smpl), self.H.df(k_smpl), self.S.df(k_smpl))[:2])
     
     def bands_grad_hess(self, k_smpl):
         """Computes the hessians of the bands (effective inverse masses).

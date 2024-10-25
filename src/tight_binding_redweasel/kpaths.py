@@ -220,7 +220,7 @@ class KPath(_collections_abc.Sequence):
         band_offset = np.argmin(fits) + (1-nr)
         self.plot(func1, band_offset=max(0, -band_offset),
                   label_bands=label_bands, ylim=ylim)
-        self.plot(func2, '--', band_offset=max(0, band_offset),
+        return self.plot(func2, '--', band_offset=max(0, band_offset),
                   label_bands=label_bands, ylim=ylim)
 
     def dim(self) -> int:
