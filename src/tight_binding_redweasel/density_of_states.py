@@ -19,13 +19,13 @@ def cubes_preprocessing(band, wrap):
     #ayz = (a[0] + a[1] - a[2] - a[3] - a[4] - a[5] + a[6] + a[7]) / 2
     #axz = (a[0] - a[1] + a[2] - a[3] - a[4] + a[5] - a[6] + a[7]) / 2
     #axyz = (-a[0] + a[1] + a[2] - a[3] + a[4] - a[5] - a[6] + a[7])
-    # TODO move the normalisation into here as well -> add "norm" as returned cache
+    # TODO move the normalisation and other calculations that only involve ax, ay, and az into here -> add "norm" as returned cache
     if wrap:
         return a0, ax, ay, az
     else:
         return a0[:-1,:-1,:-1], ax[:-1,:-1,:-1], ay[:-1,:-1,:-1], az[:-1,:-1,:-1]
 
-EPSILON = 1e-6
+EPSILON = 1e-8
 
 # cheap approximation of volume in cuboid using cube cuts
 def cube_cut_volume(a0, ax, ay, az):
@@ -37,17 +37,16 @@ def cube_cut_volume(a0, ax, ay, az):
     norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
     ax /= norm; ay /= norm; az /= norm; a0 /= norm
     ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
-    volume = 0
-    volume += np.maximum(0, ( ax + ay + az)/2 - a0)**3
-    volume -= np.maximum(0, (-ax + ay + az)/2 - a0)**3
-    volume -= np.maximum(0, ( ax - ay + az)/2 - a0)**3
-    volume += np.maximum(0, ( ax - ay - az)/2 - a0)**3
-    volume -= np.maximum(0, ( ax + ay - az)/2 - a0)**3
-    volume += np.maximum(0, (-ax + ay - az)/2 - a0)**3
-    volume += np.maximum(0, (-ax - ay + az)/2 - a0)**3
-    volume -= np.maximum(0, (-ax - ay - az)/2 - a0)**3
+    a1 = (-ax + ay + az) / 2
+    a2 = ( ax - ay + az) / 2
+    a3 = ( ax + ay - az) / 2
+    volume = np.maximum(0, ( ax + ay + az)/2 - a0)**3
+    volume -= np.maximum(0, a1 - a0)**3
+    volume -= np.maximum(0, a2 - a0)**3
+    volume += np.maximum(0, -np.minimum(np.minimum(a1, a2), a3) - a0)**3
+    volume -= np.maximum(0, a3 - a0)**3
     # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
-    volume = np.where(a0 < 3**.5/2, volume / (6 * ax * ay * az), 0.0)
+    volume = np.where(a0 < 3**.5/2, np.minimum(1.0, volume / (6 * ax * ay * az)), 0.0)
     return np.where(a0_sign, volume, 1.0 - volume)
 
 # cheap approximation using cube cuts (direct derivative of cube_cut_volume, not the actual area!)
@@ -58,15 +57,14 @@ def cube_cut_dvolume(a0, ax, ay, az):
     norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
     ax /= norm; ay /= norm; az /= norm; a0 /= norm
     ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
-    area = 0
-    area += np.maximum(0, ( ax + ay + az)/2 - a0)**2
-    area -= np.maximum(0, (-ax + ay + az)/2 - a0)**2
-    area -= np.maximum(0, ( ax - ay + az)/2 - a0)**2
-    area += np.maximum(0, ( ax - ay - az)/2 - a0)**2
-    area -= np.maximum(0, ( ax + ay - az)/2 - a0)**2
-    area += np.maximum(0, (-ax + ay - az)/2 - a0)**2
-    area += np.maximum(0, (-ax - ay + az)/2 - a0)**2
-    area -= np.maximum(0, (-ax - ay - az)/2 - a0)**2
+    a1 = (-ax + ay + az) / 2
+    a2 = ( ax - ay + az) / 2
+    a3 = ( ax + ay - az) / 2
+    area = np.maximum(0, ( ax + ay + az)/2 - a0)**2
+    area -= np.maximum(0, a1 - a0)**2
+    area -= np.maximum(0, a2 - a0)**2
+    area += np.maximum(0, -np.minimum(np.minimum(a1, a2), a3) - a0)**2
+    area -= np.maximum(0, a3 - a0)**2
     axyzn = ax * ay * az * norm
     # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
     return np.where(a0 < 3**.5/2, area / (2 * axyzn), 0.0)
@@ -80,16 +78,16 @@ def cube_cut_volume_dvolume(a0, ax, ay, az):
     norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
     ax /= norm; ay /= norm; az /= norm; a0 /= norm
     ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
+    a1 = (-ax + ay + az) / 2
+    a2 = ( ax - ay + az) / 2
+    a3 = ( ax + ay - az) / 2
     v0 = np.maximum(0, ( ax + ay + az)/2 - a0)
-    v1 = np.maximum(0, (-ax + ay + az)/2 - a0)
-    v2 = np.maximum(0, ( ax - ay + az)/2 - a0)
-    v3 = np.maximum(0, ( ax + ay - az)/2 - a0)
-    v4 = np.maximum(0, ( ax - ay - az)/2 - a0)
-    v5 = np.maximum(0, (-ax + ay - az)/2 - a0)
-    v6 = np.maximum(0, (-ax - ay + az)/2 - a0)
-    v7 = np.maximum(0, (-ax - ay - az)/2 - a0)
-    volume = v0**3 - v1**3 - v2**3 + v4**3 - v3**3 + v5**3 + v6**3 - v7**3
-    area = v0**2 - v1**2 - v2**2 + v4**2 - v3**2 + v5**2 + v6**2 - v7**2
+    v1 = np.maximum(0, a1 - a0)
+    v2 = np.maximum(0, a2 - a0)
+    v3 = np.maximum(0, a3 - a0)
+    v4 = np.maximum(0, -np.minimum(np.minimum(a1, a2), a3) - a0)
+    volume = v0**3 - v1**3 - v2**3 + v4**3 - v3**3
+    area = v0**2 - v1**2 - v2**2 + v4**2 - v3**2
     # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
     axyz = ax * ay * az
     volume = np.where(a0 < 3**.5/2, volume / (6 * axyz), 0.0)
