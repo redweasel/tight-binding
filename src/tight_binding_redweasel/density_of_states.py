@@ -25,7 +25,18 @@ def cubes_preprocessing(band, wrap):
     else:
         return a0[:-1,:-1,:-1], ax[:-1,:-1,:-1], ay[:-1,:-1,:-1], az[:-1,:-1,:-1]
 
-EPSILON = 1e-8
+def tetras_preprocessing(band, wrap):
+    a = [band, np.roll(band, -1, axis=0)]
+    a.extend([np.roll(vertex, -1, axis=1) for vertex in a])
+    a.extend([np.roll(vertex, -1, axis=2) for vertex in a])
+    # TODO align the cubes correctly, such that the diagonal is the longest one or fits the symmetry.
+    if wrap:
+        return np.array(a)
+    else:
+        return np.array(a)[:,:-1,:-1,:-1]
+
+# huge epsilon needed to make the axis aligned case work ok
+EPSILON = 1e-4
 
 # cheap approximation of volume in cuboid using cube cuts
 def cube_cut_volume(a0, ax, ay, az):
@@ -128,6 +139,80 @@ def cube_cut_area_com(a0, ax, ay, az):
     axyz = ax * ay * az
     area = np.where(np.abs(axyz) != 0, area / (2 * axyz), 0)
     return area, com
+
+
+# unit tetrahedron made from (0,0,0), (1,0,0), (0,1,0), (0,0,1)
+def unit_tetra_cut_volume(a0, ax, ay, az):
+    # normalisation for stability only!
+    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-50
+    ax = ax / norm; ay = ay / norm; az = az / norm; a0 = a0 / norm
+    ax, ay, az = np.sort((ax, ay, az), axis=0) # ax is smallest, az is biggest
+    # switch to dual problem to cut the growing parts in half
+    dual = ay + a0 < 0
+    a0, ax, ay, az = np.where(dual, (-a0, -az, -ay, -ax), (a0, ax, ay, az))
+    # the following makes the calculation avoid division by 0, but introduces an error of magnitude 1e-8 in the special cases
+    ax = np.where(np.abs(ax) < 4e-9, -4e-9, ax)
+    ay = np.where(np.abs(ay) < 1e-9, 1e-9, ay)
+    az = np.where(np.abs(az) < 2e-9, 2e-9, az)
+    volume = np.maximum(0, -a0)**3 / (ax * ay * az)
+    volume -= np.maximum(0, -ax - a0)**3 / (ax * (ay - ax + 1e-50) * (az - ax + 1e-50))
+    return np.where(dual, volume, 1 - volume) / 6
+
+# unit tetrahedron made from (0,0,0), (1,0,0), (0,1,0), (0,0,1)
+def unit_tetra_cut_dvolume(a0, ax, ay, az):
+    # normalisation for stability only!
+    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-50
+    ax = ax / norm; ay = ay / norm; az = az / norm; a0 = a0 / norm
+    ax, ay, az = np.sort((ax, ay, az), axis=0) # ax is smallest, az is biggest
+    # switch to dual problem to cut the growing parts in half
+    dual = ay + a0 < 0
+    a0, ax, ay, az = np.where(dual, (-a0, -az, -ay, -ax), (a0, ax, ay, az))
+    # the following makes the calculation avoid division by 0, but introduces an error of magnitude 1e-8 in the special cases
+    ax = np.where(np.abs(ax) < 4e-9, -4e-9, ax)
+    ay = np.where(np.abs(ay) < 1e-9, 1e-9, ay)
+    az = np.where(np.abs(az) < 2e-9, 2e-9, az)
+    dvolume = np.maximum(0, -a0)**2 / (ax * ay * az)
+    dvolume -= np.maximum(0, -ax - a0)**2 / (ax * (ay - ax + 1e-50) * (az - ax + 1e-50))
+    return dvolume / 2 / norm
+
+# arbitrary tetrahedron cut with full volume 1/6
+def tetra_cut_volume(v0, v1, v2, v3):
+    a0 = v0
+    ax = v1 - v0
+    ay = v2 - v0
+    az = v3 - v0
+    return unit_tetra_cut_volume(a0, ax, ay, az)
+
+# derivative of (wrt total value) of arbitrary tetrahedron cut with full volume 1/6
+def tetra_cut_dvolume(v0, v1, v2, v3):
+    a0 = v0
+    ax = v1 - v0
+    ay = v2 - v0
+    az = v3 - v0
+    return unit_tetra_cut_dvolume(a0, ax, ay, az)
+
+# cube cut with tetrahedrons, which share the diagonal a[0], a[7]
+def cube_tetra_cut_volume(a):
+    assert len(a) == 8
+    tetras  = tetra_cut_volume(a[0], a[7], a[0b001], a[0b011])
+    tetras += tetra_cut_volume(a[0], a[7], a[0b011], a[0b010])
+    tetras += tetra_cut_volume(a[0], a[7], a[0b010], a[0b110])
+    tetras += tetra_cut_volume(a[0], a[7], a[0b110], a[0b100])
+    tetras += tetra_cut_volume(a[0], a[7], a[0b100], a[0b101])
+    tetras += tetra_cut_volume(a[0], a[7], a[0b101], a[0b001])
+    return tetras
+
+# cube cut with tetrahedrons, which share the diagonal a[0], a[7]
+def cube_tetra_cut_dvolume(a):
+    assert len(a) == 8
+    tetras  = tetra_cut_dvolume(a[0], a[7], a[0b001], a[0b011])
+    tetras += tetra_cut_dvolume(a[0], a[7], a[0b011], a[0b010])
+    tetras += tetra_cut_dvolume(a[0], a[7], a[0b010], a[0b110])
+    tetras += tetra_cut_dvolume(a[0], a[7], a[0b110], a[0b100])
+    tetras += tetra_cut_dvolume(a[0], a[7], a[0b100], a[0b101])
+    tetras += tetra_cut_dvolume(a[0], a[7], a[0b101], a[0b001])
+    return tetras
+
 
 # gauss integration using the derivative of the fermi function as weight function (integration over const 1 is always 1)
 def gauss_5_df(f, mu, beta):
@@ -246,7 +331,7 @@ class DensityOfStates:
     The bandstructure model, used in this class needs to accept crystal coordinates.
     The cubic cell [-0.5, 0.5]^3 should equal the whole reciprocal crystal cell.
     """
-    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True):
+    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True, use_tetras=False):
         """Initialize a density of states model from a bandstructure model.
 
         Args:
@@ -306,8 +391,14 @@ class DensityOfStates:
         else:
             self.bands_range = [(np.min(self.bands[...,i]), np.max(self.bands[...,i])) for i in range(self.bands.shape[-1])]
         # TODO add bands_range_k_points, because that is useful information in some contexts
-        # preprocessing the cubes halves he computation time
-        self.cubes = [cubes_preprocessing(self.bands[...,i], wrap=wrap) for i in range(len(self.bands_range))]
+        if use_tetras:
+            # preprocessing the tetras
+            self.tetras = [tetras_preprocessing(self.bands[...,i], wrap=wrap) for i in range(len(self.bands_range))]
+            self.cubes = None
+        else:
+            # preprocessing the cubes halves the computation time
+            self.cubes = [cubes_preprocessing(self.bands[...,i], wrap=wrap) for i in range(len(self.bands_range))]
+            self.tetras = None
     
     def model_bandcount(self):
         return len(self.bands_range)
@@ -324,7 +415,10 @@ class DensityOfStates:
         states = 0.0
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
-                states += np.mean(cube_cut_volume(energy - self.cubes[i][0], *self.cubes[i][1:]))
+                if self.cubes is not None:
+                    states += np.mean(cube_cut_volume(energy - self.cubes[i][0], *self.cubes[i][1:]))
+                elif self.tetras is not None:
+                    states += np.mean(cube_tetra_cut_volume(energy - self.tetras[i]))
             elif band_range[1] <= energy:
                 states += 1.0 # completely full
         return states
@@ -335,9 +429,14 @@ class DensityOfStates:
         density = 0.0
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
-                volume, area = cube_cut_volume_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:])
+                if self.cubes is not None:
+                    volume, dvolume = cube_cut_volume_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:])
+                elif self.tetras is not None:
+                    shifted_tetras = energy - self.tetras[i]
+                    volume = cube_tetra_cut_volume(shifted_tetras)
+                    dvolume = cube_tetra_cut_dvolume(shifted_tetras)
                 states += np.mean(volume)
-                density += np.mean(area)
+                density += np.mean(dvolume)
             elif band_range[1] <= energy:
                 states += 1.0 # completely full
         return states, density
@@ -345,15 +444,17 @@ class DensityOfStates:
     # returns density
     def density(self, energy: float):
         density = 0.0
-        for i, band_range in enumerate(self.bands_range):
-            if band_range[0] < energy < band_range[1]:
-                density += np.mean(cube_cut_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:]))
+        for i in range(len(self.bands_range)):
+            density += self.density_band(energy, i)
         return density
     
     # returns density for a specific band
     def density_band(self, energy: float, i: int):
         if self.bands_range[i][0] < energy < self.bands_range[i][1]:
-            return np.mean(cube_cut_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:]))
+            if self.cubes is not None:
+                return np.mean(cube_cut_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:]))
+            elif self.tetras is not None:
+                return np.mean(cube_tetra_cut_dvolume(energy - self.tetras[i]))
         return 0.0
     
     # returns density but split into the band contributions
@@ -571,6 +672,8 @@ class DensityOfStates:
         """
         assert self.model is not None, "This function needs an underlying model"
         assert normalize in [None, "band", "total"], "normalize needs to be None, 'band' or 'total'"
+        if self.cubes is None:
+            raise NotImplementedError("This function is not yet implemented for anything but cubes")
         # use cube_cut_area_com() to get points, then
         # use the approximate gradients to do a newton step
         # to get the points even closer to the fermi surface.
