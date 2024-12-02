@@ -3,216 +3,10 @@
 
 import numpy as np
 import scipy
+from .smearing import *
 from typing import Callable, Tuple, Self
 
 k_B = 8.61733326214518e-5 # eV/K
-
-def cubes_preprocessing(band, wrap):
-    a = [band, np.roll(band, -1, axis=0)]
-    a.extend([np.roll(vertex, -1, axis=1) for vertex in a])
-    a.extend([np.roll(vertex, -1, axis=2) for vertex in a])
-    a0 = (a[0] + a[1] + a[2] + a[3] + a[4] + a[5] + a[6] + a[7]) / 8
-    ax = -(-a[0] + a[1] - a[2] + a[3] - a[4] + a[5] - a[6] + a[7]) / 4
-    ay = -(-a[0] - a[1] + a[2] + a[3] - a[4] - a[5] + a[6] + a[7]) / 4
-    az = -(-a[0] - a[1] - a[2] - a[3] + a[4] + a[5] + a[6] + a[7]) / 4
-    #axy = (a[0] - a[1] - a[2] + a[3] + a[4] - a[5] - a[6] + a[7]) / 2
-    #ayz = (a[0] + a[1] - a[2] - a[3] - a[4] - a[5] + a[6] + a[7]) / 2
-    #axz = (a[0] - a[1] + a[2] - a[3] - a[4] + a[5] - a[6] + a[7]) / 2
-    #axyz = (-a[0] + a[1] + a[2] - a[3] + a[4] - a[5] - a[6] + a[7])
-    # TODO move the normalisation and other calculations that only involve ax, ay, and az into here -> add "norm" as returned cache
-    if wrap:
-        return a0, ax, ay, az
-    else:
-        return a0[:-1,:-1,:-1], ax[:-1,:-1,:-1], ay[:-1,:-1,:-1], az[:-1,:-1,:-1]
-
-def tetras_preprocessing(band, wrap):
-    a = [band, np.roll(band, -1, axis=0)]
-    a.extend([np.roll(vertex, -1, axis=1) for vertex in a])
-    a.extend([np.roll(vertex, -1, axis=2) for vertex in a])
-    # TODO align the cubes correctly, such that the diagonal is the longest one or fits the symmetry.
-    if wrap:
-        return np.array(a)
-    else:
-        return np.array(a)[:,:-1,:-1,:-1]
-
-# huge epsilon needed to make the axis aligned case work ok
-EPSILON = 1e-4
-
-# cheap approximation of volume in cuboid using cube cuts
-def cube_cut_volume(a0, ax, ay, az):
-    # approximate the trilinear integral with correct first order behavior
-    # simplify using abs (also on a0 to reduce numerical cancelation and get more 0 multiplications)
-    a0_sign = a0 < 0.0
-    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
-    # cube cuts = sum of right angle tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 /= norm
-    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
-    a1 = (-ax + ay + az) / 2
-    a2 = ( ax - ay + az) / 2
-    a3 = ( ax + ay - az) / 2
-    volume = np.maximum(0, ( ax + ay + az)/2 - a0)**3
-    volume -= np.maximum(0, a1 - a0)**3
-    volume -= np.maximum(0, a2 - a0)**3
-    volume += np.maximum(0, -np.minimum(np.minimum(a1, a2), a3) - a0)**3
-    volume -= np.maximum(0, a3 - a0)**3
-    # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
-    volume = np.where(a0 < 3**.5/2, np.minimum(1.0, volume / (6 * ax * ay * az)), 0.0)
-    return np.where(a0_sign, volume, 1.0 - volume)
-
-# cheap approximation using cube cuts (direct derivative of cube_cut_volume, not the actual area!)
-def cube_cut_dvolume(a0, ax, ay, az):
-    # approximate the trilinear integral with correct first order behavior
-    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
-    # cube cuts = sum of tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 /= norm
-    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
-    a1 = (-ax + ay + az) / 2
-    a2 = ( ax - ay + az) / 2
-    a3 = ( ax + ay - az) / 2
-    area = np.maximum(0, ( ax + ay + az)/2 - a0)**2
-    area -= np.maximum(0, a1 - a0)**2
-    area -= np.maximum(0, a2 - a0)**2
-    area += np.maximum(0, -np.minimum(np.minimum(a1, a2), a3) - a0)**2
-    area -= np.maximum(0, a3 - a0)**2
-    axyzn = ax * ay * az * norm
-    # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
-    return np.where(a0 < 3**.5/2, area / (2 * axyzn), 0.0)
-
-# cheap approximation of volume and area in cuboid using cube cuts
-def cube_cut_volume_dvolume(a0, ax, ay, az):
-    # approximate the trilinear integral with correct first order behavior
-    # cube cuts = sum of tetrahedrons
-    a0_sign = a0 < 0.0
-    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 /= norm
-    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
-    a1 = (-ax + ay + az) / 2
-    a2 = ( ax - ay + az) / 2
-    a3 = ( ax + ay - az) / 2
-    v0 = np.maximum(0, ( ax + ay + az)/2 - a0)
-    v1 = np.maximum(0, a1 - a0)
-    v2 = np.maximum(0, a2 - a0)
-    v3 = np.maximum(0, a3 - a0)
-    v4 = np.maximum(0, -np.minimum(np.minimum(a1, a2), a3) - a0)
-    volume = v0**3 - v1**3 - v2**3 + v4**3 - v3**3
-    area = v0**2 - v1**2 - v2**2 + v4**2 - v3**2
-    # (ax,ay,az) is normalized, so if a0 > 3**.5/2, then the cube will be either fully in or out
-    axyz = ax * ay * az
-    volume = np.where(a0 < 3**.5/2, volume / (6 * axyz), 0.0)
-    area = np.where(a0 < 3**.5/2, area / (2 * axyz * norm), 0.0)
-    return np.where(a0_sign, volume, 1.0 - volume), area
-
-# center of mass of the surface of a cube cut
-def cube_cut_area_com(a0, ax, ay, az):
-    # approximate the trilinear integral with correct first order behavior
-    sx, sy, sz = np.sign(ax), np.sign(ay), np.sign(az)
-    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
-    # cube cuts = sum of tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
-    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
-    v0 = np.maximum(0, ( ax + ay + az)/2 + a0)
-    v1 = np.maximum(0, (-ax + ay + az)/2 + a0)
-    v2 = np.maximum(0, ( ax - ay + az)/2 + a0)
-    v3 = np.maximum(0, ( ax + ay - az)/2 + a0)
-    v4 = np.maximum(0, ( ax - ay - az)/2 + a0)
-    v5 = np.maximum(0, (-ax + ay - az)/2 + a0)
-    v6 = np.maximum(0, (-ax - ay + az)/2 + a0)
-    v7 = np.maximum(0, (-ax - ay - az)/2 + a0)
-    area = np.where(np.abs(a0) < 3**.5/2, v0**2 - v1**2 - v2**2 + v4**2 - v3**2 + v5**2 + v6**2 - v7**2, 0)
-    shape = (1,) * len(np.shape(a0)) + (3,)
-    com = np.reshape((0, 0, 0), shape)
-    d = (1/3) / np.stack((ax, ay, az), axis=-1)
-    com=com+v0[...,None]**2 * (np.reshape((-1, -1, -1), shape)/2 + d * v0[...,None])
-    com -=  v1[...,None]**2 * (np.reshape(( 1, -1, -1), shape)/2 + d * v1[...,None])
-    com -=  v2[...,None]**2 * (np.reshape((-1,  1, -1), shape)/2 + d * v2[...,None])
-    com +=  v4[...,None]**2 * (np.reshape((-1,  1,  1), shape)/2 + d * v4[...,None])
-    com -=  v3[...,None]**2 * (np.reshape((-1, -1,  1), shape)/2 + d * v3[...,None])
-    com +=  v5[...,None]**2 * (np.reshape(( 1, -1,  1), shape)/2 + d * v5[...,None])
-    com +=  v6[...,None]**2 * (np.reshape(( 1,  1, -1), shape)/2 + d * v6[...,None])
-    com -=  v7[...,None]**2 * (np.reshape(( 1,  1,  1), shape)/2 + d * v7[...,None])
-    com *= np.stack((sx, sy, sz), axis=-1)
-    com = com / np.where(area[...,None] != 0, area[...,None], np.inf)
-    axyz = ax * ay * az
-    area = np.where(np.abs(axyz) != 0, area / (2 * axyz), 0)
-    return area, com
-
-
-# unit tetrahedron made from (0,0,0), (1,0,0), (0,1,0), (0,0,1)
-def unit_tetra_cut_volume(a0, ax, ay, az):
-    # normalisation for stability only!
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-50
-    ax = ax / norm; ay = ay / norm; az = az / norm; a0 = a0 / norm
-    ax, ay, az = np.sort((ax, ay, az), axis=0) # ax is smallest, az is biggest
-    # switch to dual problem to cut the growing parts in half
-    dual = ay + a0 < 0
-    a0, ax, ay, az = np.where(dual, (-a0, -az, -ay, -ax), (a0, ax, ay, az))
-    # the following makes the calculation avoid division by 0, but introduces an error of magnitude 1e-8 in the special cases
-    ax = np.where(np.abs(ax) < 4e-9, -4e-9, ax)
-    ay = np.where(np.abs(ay) < 1e-9, 1e-9, ay)
-    az = np.where(np.abs(az) < 2e-9, 2e-9, az)
-    volume = np.maximum(0, -a0)**3 / (ax * ay * az)
-    volume -= np.maximum(0, -ax - a0)**3 / (ax * (ay - ax + 1e-50) * (az - ax + 1e-50))
-    return np.where(dual, volume, 1 - volume) / 6
-
-# unit tetrahedron made from (0,0,0), (1,0,0), (0,1,0), (0,0,1)
-def unit_tetra_cut_dvolume(a0, ax, ay, az):
-    # normalisation for stability only!
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-50
-    ax = ax / norm; ay = ay / norm; az = az / norm; a0 = a0 / norm
-    ax, ay, az = np.sort((ax, ay, az), axis=0) # ax is smallest, az is biggest
-    # switch to dual problem to cut the growing parts in half
-    dual = ay + a0 < 0
-    a0, ax, ay, az = np.where(dual, (-a0, -az, -ay, -ax), (a0, ax, ay, az))
-    # the following makes the calculation avoid division by 0, but introduces an error of magnitude 1e-8 in the special cases
-    ax = np.where(np.abs(ax) < 4e-9, -4e-9, ax)
-    ay = np.where(np.abs(ay) < 1e-9, 1e-9, ay)
-    az = np.where(np.abs(az) < 2e-9, 2e-9, az)
-    dvolume = np.maximum(0, -a0)**2 / (ax * ay * az)
-    dvolume -= np.maximum(0, -ax - a0)**2 / (ax * (ay - ax + 1e-50) * (az - ax + 1e-50))
-    return dvolume / 2 / norm
-
-# arbitrary tetrahedron cut with full volume 1/6
-def tetra_cut_volume(v0, v1, v2, v3):
-    a0 = v0
-    ax = v1 - v0
-    ay = v2 - v0
-    az = v3 - v0
-    return unit_tetra_cut_volume(a0, ax, ay, az)
-
-# derivative of (wrt total value) of arbitrary tetrahedron cut with full volume 1/6
-def tetra_cut_dvolume(v0, v1, v2, v3):
-    a0 = v0
-    ax = v1 - v0
-    ay = v2 - v0
-    az = v3 - v0
-    return unit_tetra_cut_dvolume(a0, ax, ay, az)
-
-# cube cut with tetrahedrons, which share the diagonal a[0], a[7]
-def cube_tetra_cut_volume(a):
-    assert len(a) == 8
-    tetras  = tetra_cut_volume(a[0], a[7], a[0b001], a[0b011])
-    tetras += tetra_cut_volume(a[0], a[7], a[0b011], a[0b010])
-    tetras += tetra_cut_volume(a[0], a[7], a[0b010], a[0b110])
-    tetras += tetra_cut_volume(a[0], a[7], a[0b110], a[0b100])
-    tetras += tetra_cut_volume(a[0], a[7], a[0b100], a[0b101])
-    tetras += tetra_cut_volume(a[0], a[7], a[0b101], a[0b001])
-    return tetras
-
-# cube cut with tetrahedrons, which share the diagonal a[0], a[7]
-def cube_tetra_cut_dvolume(a):
-    assert len(a) == 8
-    tetras  = tetra_cut_dvolume(a[0], a[7], a[0b001], a[0b011])
-    tetras += tetra_cut_dvolume(a[0], a[7], a[0b011], a[0b010])
-    tetras += tetra_cut_dvolume(a[0], a[7], a[0b010], a[0b110])
-    tetras += tetra_cut_dvolume(a[0], a[7], a[0b110], a[0b100])
-    tetras += tetra_cut_dvolume(a[0], a[7], a[0b100], a[0b101])
-    tetras += tetra_cut_dvolume(a[0], a[7], a[0b101], a[0b001])
-    return tetras
-
 
 # gauss integration using the derivative of the fermi function as weight function (integration over const 1 is always 1)
 def gauss_5_df(f, mu, beta):
@@ -331,31 +125,45 @@ class DensityOfStates:
     The bandstructure model, used in this class needs to accept crystal coordinates.
     The cubic cell [-0.5, 0.5]^3 should equal the whole reciprocal crystal cell.
     """
-    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True, use_tetras=False):
+    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True, smearing="cubes", use_gradients=False):
         """Initialize a density of states model from a bandstructure model.
 
         Args:
             model (Callable[[arraylike(N_k, 3)], bands]): The bandstructure model.
                 This class allows any function to be used as a bandstructure model.
-                However there are special features, that use `model.bands_grad_hess` to improve the results if it is available.
+                However there are special features, that use `model.bands_grad` and `model.bands_grad_hess` to improve the results if it is available.
+                The input k for the model should be in reciprocal space, not in crystal space.
             N (int, optional): Number of k-points per direction. Defaults to 24.
-            ranges (tuple, optional): _description_. Defaults to ((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)).
+            A (arraylike[3, 3]): Matrix with lattice vectors in its columns. Used for computing the k-grid for sampling the model. Defaults to the unit matrix.
+            ranges (arraylike[3, 2], optional): The ranges for each axis in crystal space. This should only be changed to consider symmetries, as the whole cell will still be considered to have volume 1. Defaults to ((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)).
             wrap (bool, optional): _description_. Defaults to True.
+            smearing (str). One of the options {"cubes", "tetras", "spheres"}. "spheres" is really fast. Defaults to "cubes".
+            use_gradients (bool). If the smearing supports it, use analytic gradients instead of interpolated gradients for the smearing calculations. Defaults to False.
         """
         assert len(ranges) == 3, "This class can only be used for 3D models. Therefore 3 ranges need to be specified."
         if wrap:
             xyz = [np.linspace(*r, N, endpoint=False) + 1/2/N*(r[1] - r[0]) for r in ranges]
         else:
             xyz = [np.linspace(*r, N+1) for r in ranges]
+        self.crystal_volume = np.prod([r[1] - r[0] for r in ranges])
+        # TODO redefine the grid, such that all stepsizes are equal! This is very important for the fermi surface samples!
         self.step_sizes = np.array([x[1] - x[0] for x in xyz])
         if A is None:
             A = np.eye(3)
         self.A = np.asarray(A)
-        self.k_smpl = np.stack(np.meshgrid(*xyz, indexing='ij'), axis=-1) @ np.linalg.inv(A)
+        # reciprocal space k_smpl using A
+        self.k_smpl = np.stack(np.meshgrid(*xyz, indexing='ij'), axis=-1) @ np.linalg.inv(self.A)
         self.wrap = wrap
-        shape = np.shape(self.k_smpl)
-        bands = model(np.reshape(self.k_smpl, (-1, 3)))
         self.model = model
+        shape = np.shape(self.k_smpl)
+        can_have_gradients = smearing in ["spheres", "cubes"]
+        if can_have_gradients and use_gradients:
+            if "bands_grad" not in dir(model):
+                raise ValueError(f"The model must implement a method `bands_grad` for computing the bands and gradients for {smearing} smearing.")
+            bands, grads = model.bands_grad(np.reshape(self.k_smpl, (-1, 3)))
+            grads = np.reshape(grads, shape+(-1,))
+        else:
+            bands = model(np.reshape(self.k_smpl, (-1, 3)))
         self.bands = np.reshape(bands, shape[:-1]+(-1,))
         if "bands_grad_hess" in dir(model):
             # compute better band ranges using a Newton step to find the actual extrema in k
@@ -391,14 +199,23 @@ class DensityOfStates:
         else:
             self.bands_range = [(np.min(self.bands[...,i]), np.max(self.bands[...,i])) for i in range(self.bands.shape[-1])]
         # TODO add bands_range_k_points, because that is useful information in some contexts
-        if use_tetras:
-            # preprocessing the tetras
-            self.tetras = [tetras_preprocessing(self.bands[...,i], wrap=wrap) for i in range(len(self.bands_range))]
-            self.cubes = None
+        B = np.linalg.inv(self.A).T
+        if smearing == "tetras":
+            self.smearing = [TetraSmearing(values=self.bands[...,i], wrap=wrap, B=B) for i in range(len(self.bands_range))]
+        elif smearing == "cubes":
+            if use_gradients:
+                self.smearing = [CubesSmearing(self.k_smpl, A=A, values=self.bands[...,i], grads=grads[...,i], wrap=wrap) for i in range(len(self.bands_range))]
+            else:
+                self.smearing = [CubesSmearing(self.k_smpl, A=A, values=self.bands[...,i], wrap=wrap) for i in range(len(self.bands_range))]
+        elif smearing == "spheres":
+            if use_gradients:
+                # with gradients (a lot less regular, ig the averaged gradient are really needed)
+                self.smearing = [SphereSmearing(self.k_smpl, values=self.bands[...,i], grads=grads[...,i], B=B, wrap=wrap) for i in range(len(self.bands_range))]
+            else:
+                # with interpolation (VERY close to "cubes", but no fermi surface sampling)
+                self.smearing = [SphereSmearing(self.k_smpl, values=self.bands[...,i], B=B, wrap=wrap) for i in range(len(self.bands_range))]
         else:
-            # preprocessing the cubes halves the computation time
-            self.cubes = [cubes_preprocessing(self.bands[...,i], wrap=wrap) for i in range(len(self.bands_range))]
-            self.tetras = None
+            raise ValueError(f"{smearing} is not a valid smearing option")
     
     def model_bandcount(self):
         return len(self.bands_range)
@@ -415,10 +232,7 @@ class DensityOfStates:
         states = 0.0
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
-                if self.cubes is not None:
-                    states += np.mean(cube_cut_volume(energy - self.cubes[i][0], *self.cubes[i][1:]))
-                elif self.tetras is not None:
-                    states += np.mean(cube_tetra_cut_volume(energy - self.tetras[i]))
+                states += self.smearing[i].volume(energy)
             elif band_range[1] <= energy:
                 states += 1.0 # completely full
         return states
@@ -429,14 +243,9 @@ class DensityOfStates:
         density = 0.0
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
-                if self.cubes is not None:
-                    volume, dvolume = cube_cut_volume_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:])
-                elif self.tetras is not None:
-                    shifted_tetras = energy - self.tetras[i]
-                    volume = cube_tetra_cut_volume(shifted_tetras)
-                    dvolume = cube_tetra_cut_dvolume(shifted_tetras)
-                states += np.mean(volume)
-                density += np.mean(dvolume)
+                volume, dvolume = self.smearing[i].volume_dvolume(energy)
+                states += volume
+                density += dvolume
             elif band_range[1] <= energy:
                 states += 1.0 # completely full
         return states, density
@@ -451,10 +260,7 @@ class DensityOfStates:
     # returns density for a specific band
     def density_band(self, energy: float, i: int):
         if self.bands_range[i][0] < energy < self.bands_range[i][1]:
-            if self.cubes is not None:
-                return np.mean(cube_cut_dvolume(energy - self.cubes[i][0], *self.cubes[i][1:]))
-            elif self.tetras is not None:
-                return np.mean(cube_tetra_cut_dvolume(energy - self.tetras[i]))
+            return self.smearing[i].dvolume(energy)
         return 0.0
     
     # returns density but split into the band contributions
@@ -651,7 +457,13 @@ class DensityOfStates:
         states = [self.states_below(energy) for energy in energy_smpl]
         return accumulate(T, energy_smpl, states)
 
-    def fermi_surface_samples(self, energy: float, improved_points=True, improved_weights=False, weight_by_gradient=False, normalize=None) -> Tuple[np.ndarray, np.ndarray, float]:
+    def fermi_surface_samples(self,
+            energy: float,
+            improved_points=True,
+            improved_weights=False,
+            weight_by_gradient=False,
+            normalize=None
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
         """Compute points on the (fermi) surface at the given (fermi) energy.
         If the improved keyword argument is True, the results will be much more precise
         at the cost of an integration over the fermi surface.
@@ -672,7 +484,7 @@ class DensityOfStates:
         """
         assert self.model is not None, "This function needs an underlying model"
         assert normalize in [None, "band", "total"], "normalize needs to be None, 'band' or 'total'"
-        if self.cubes is None:
+        if type(self.smearing[0]) != CubesSmearing:
             raise NotImplementedError("This function is not yet implemented for anything but cubes")
         # use cube_cut_area_com() to get points, then
         # use the approximate gradients to do a newton step
@@ -680,23 +492,13 @@ class DensityOfStates:
         weights = []
         band_indices = []
         points = []
-        grads = None
-        # this only works for cubes! -> the weights only work for cubes
-        size = np.mean(self.step_sizes)
-        centers = (self.k_smpl + np.roll(self.k_smpl, shift=(-1, -1, -1), axis=(0, 1, 2))) / 2
-        if not self.wrap:
-            centers = centers[:-1,:-1,:-1]
         total_w_sum = 0
         for i in self.cut_band_indices(energy):
-            w, x = cube_cut_area_com(self.cubes[i][0] - energy, *self.cubes[i][1:])
-            # transform x into the the cubes
-            x *= self.step_sizes
-            x += centers
-            x = x.reshape(-1, 3)
-            w = np.ravel(w)
-            select = w > 1e-4
-            w = w[select]
-            x = x[select]
+            x, grads, w = self.smearing[i].samples(energy)
+            # HACK: scale up the weights to fill the entire briloun zone.
+            # The assumption here is, that if the k_range is anything but [-0.5,0.5]^3,
+            # then that is, because the other parts are equal and can be reproduced by symmetry
+            w *= np.linalg.det(self.A) / self.crystal_volume
             if improved_points:
                 if "bands_grad" in dir(self.model):
                     # if available, evaluate the model with bands and exact gradients (way more precise!)
@@ -704,26 +506,23 @@ class DensityOfStates:
                     bands = bands[:,i:i+1] - energy
                     grads = grads[...,i]
                 else:
-                    # evaluate model, but take the gradients from the known approximations...
+                    # evaluate model, but take the gradients from the known approximations
                     bands = self.model(x)[:,i:i+1] - energy
-                    grads = np.reshape(self.cubes[i][1:], (3, -1)).T[select] / self.step_sizes
-                x += grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1)[...,None]**2))
-                # TODO w needs to change here as well!!!
+                x -= grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1, keepdims=True)**2))
             # don't use gradients when computing total area
-            total_w_sum += np.sum(w)
+            w_sum = np.sum(w)
+            total_w_sum += w_sum
             if weight_by_gradient and not improved_weights:
-                if grads is None:
-                    grads = np.reshape(self.cubes[i][1:], (3, -1)).T[select] / self.step_sizes
                 # NOTE: the gradients could have changed here if improved_points=True
-                # TODO check if the error in the gradient is significant!
-                w /= np.linalg.norm(grads, axis=-1)
+                # This division is in reciprocal space.
+                w /= np.linalg.norm(grads, axis=-1) + 1e-20
             if normalize == 'band':
-                w /= np.sum(w)
+                w /= w_sum
             points.extend(x)
             weights.extend(w)
             band_indices.extend([i] * len(w))
         assert len(points) == len(weights)
-        total_area = total_w_sum / (len(centers[...,0].flat) * size)
+        total_area = total_w_sum
         points = np.reshape(points, (-1, 3))
         band_indices = np.array(band_indices, dtype=np.int64)
         if improved_weights:
@@ -754,9 +553,10 @@ class DensityOfStates:
                 bands = np.take_along_axis(bands, band_indices[:,None], axis=-1)[...,0]
                 grads = np.take_along_axis(grads, band_indices[:,None,None], axis=-1)[...,0]
                 # do another newton step here for free! (Assume the gradient is constant)
-                points += grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1)**2))[...,None]
+                points -= grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1)**2))[...,None]
             else:
                 raise NotImplementedError("No implementation to get gradients from the lattice.")
+            # TODO WRONG for A != 1I
             ax, ay, az = tuple(grads.T * self.step_sizes[:,None]) # transformed for cubes
             w = np.zeros(len(weights))
             n = 2
@@ -786,6 +586,4 @@ class DensityOfStates:
         # apply normalisation
         if normalize == 'total':
             w /= total_w_sum
-        elif normalize is None:
-            w /= len(centers[...,0].flat) * size # correct area measure weights
         return points, band_indices, w, total_area

@@ -79,7 +79,7 @@ class BandStructureModel:
         assert pshape[0] > 0
 
     def copy(self) -> Self:
-        model = BandStructureModel(self.f_i, self.df_i, self.params.copy())
+        model = BandStructureModel(self.f_i, self.df_i, self.params.copy(), ddf_i=self.ddf_i)
         model.symmetrizer = self.symmetrizer
         model.sym = self.sym
         model.neighbors = self.neighbors

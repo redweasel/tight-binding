@@ -44,6 +44,7 @@ class KIntegral:
         self.bandgap = dos_model.bandgap(electrons)
         self.metal = self.bandgap == 0.0
         self.model = dos_model.model
+        self.A = dos_model.A
         self.mu = dos_model.chemical_potential(electrons, [T], N=50) # compute mu here with good enough precision
         self.beta = 1 / (_dos.k_B * T) if T > 0 else 0.0 # in 1/eV
         self.e_smpl = []
@@ -210,6 +211,8 @@ class KIntegral:
             float: The absolute error of the integral, if available, otherwise 0.0.
                    This error is just the error if the integration. The larger error usually comes from the DensityOfStates.
         """
+        # consider DoS space matrix as an already applied A matrix
+        A = A @ np.linalg.inv(self.A)
         # reciprocal space vectors
         B = 2*np.pi * np.linalg.inv(A.T)
         # transform the derivative, which live in the dual vector space -> dual transformation
@@ -224,7 +227,7 @@ class KIntegral:
                 res = g(e, v, h, k)
                 assert len(res) == len(k)
                 return res
-            return self.integrate_df(g2, hessians=True)
+            value, error = self.integrate_df(g2, hessians=True)
         else:
             def g2(e, v, k):
                 k = np.einsum("ji,ni->nj", B, k)
@@ -232,7 +235,8 @@ class KIntegral:
                 res = g(e, v, k)
                 assert len(res) == len(k)
                 return res
-            return self.integrate_df(g2, hessians=False)
+            value, error = self.integrate_df(g2, hessians=False)
+        return value, error
     
     # conductivity divided by the electron scattering time tau. Assuming constant tau. Result in 1/(Ohm*m*s)
     def conductivity_over_tau(self, cell_length: float, spin_factor=2):

@@ -29,7 +29,7 @@ def fermi_surface(model: Callable, fermi_energy: float, k_smpl):
     return volumes, indices
 
 
-def plot_3D_fermi_surface_to_ax(ax, model, fermi_energy, N=32, elev=35, azim=20, k_range=[-0.5, 0.5]):
+def plot_3D_fermi_surface_to_ax(ax, model, fermi_energy, N=32, k_range=[-0.5, 0.5]):
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
     import matplotlib
     import matplotlib.colors as mcolors
@@ -77,7 +77,6 @@ def plot_3D_fermi_surface_to_ax(ax, model, fermi_energy, N=32, elev=35, azim=20,
     ax.set_ylim(*k_range, view_margin=0)
     ax.set_zlim(*k_range, view_margin=0)
     ax.set_aspect("equal")
-    ax.view_init(elev=elev, azim=azim)
 
 
 def plot_3D_fermi_surface(model, fermi_energy, N=32, elev=35, azim=20, k_range=[-0.5, 0.5]):
@@ -87,6 +86,8 @@ def plot_3D_fermi_surface(model, fermi_energy, N=32, elev=35, azim=20, k_range=[
     plot_3D_fermi_surface_to_ax(
         ax, model, fermi_energy, N, elev, azim, k_range)
 
+    ax.view_init(elev=elev, azim=azim)
+    
     plt.tight_layout(pad=0)
     plt.show()
 

@@ -22,7 +22,7 @@ class HermitianFourierSeries:
         assert np.shape(H_r)[1] == np.shape(H_r)[2]
         assert len(np.shape(neighbors)) == 2
         assert len(np.shape(H_r)) == 3
-        self.neighbors = np.asarray(neighbors)
+        self.neighbors = np.asarray(neighbors, dtype=float)
         self.H_r = np.asarray(H_r)
 
     def dim(self):
@@ -124,7 +124,7 @@ class HermitianFourierSeries:
         self.neighbors = np.concatenate([self.neighbors, neighbors], axis=0)
         self.H_r = np.concatenate([self.H_r, np.zeros((len(neighbors),) + self.H_r.shape[1:])], axis=0)
     
-    def limit_neighbors(self, max_length):
+    def limit_neighbors(self, max_length: float):
         """Remove all neighbors that have a vector length more than a given threshold length.
 
         Args:
@@ -133,6 +133,17 @@ class HermitianFourierSeries:
         keep = np.linalg.norm(self.neighbors, axis=-1) <= max_length + 1e-8
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
+    
+    def limit_neighbor_count(self, max_count: int):
+        """Remove all neighbors that exceed the targeted number of neighbors.
+
+        Args:
+            max_count (int): Maximal number of neighbors to be kept.
+        """
+        # sort neighbors by length first and trim the index list
+        sort = np.argsort(np.linalg.norm(self.neighbors, axis=-1))[:max_count]
+        self.neighbors = np.array(self.neighbors[sort])
+        self.H_r = np.array(self.H_r[sort])
     
     def cleanup_neighbors(self, min_norm):
         """Remove all neighbors that have a coefficient matrix with a norm smaller than a given threshold.
@@ -157,7 +168,7 @@ class AsymTightBindingModel:
         self.H = H
         self.S = HermitianFourierSeries.unit_matrix([(0,)*H.dim()], np.shape(H.H_r)[1]) if S is None else S
     
-    def new(neighbors, band_count) -> Self:
+    def new(neighbors: np.ndarray, band_count: int) -> Self:
         """Create a new empty model.
 
         Args:
@@ -837,3 +848,42 @@ class AsymTightBindingModel:
     def __mul__(self, fac: float) -> Self:
         return AsymTightBindingModel(HermitianFourierSeries(self.H.neighbors, self.H.H_r * fac), S=self.S.copy())
 
+
+# free electron model (scaled to have hessian 1I) for testing
+# TODO add basis to allow for fcc and bcc for testing.
+def free_electron_model_orthogonal(a: float, b: float, c: float, neighbor_count: int, bands_per_direction: int) -> AsymTightBindingModel:
+    """Recreate a free electron model using a tight-binding model.
+    The model represents H(k) = k^2, so it is completely unitless.
+    The second return value is the energy unit in eV, assuming a, b, c are in Ångström.
+
+    Args:
+        a (float): lattice constant a (x direction)
+        b (float): lattice constant b (y direction)
+        c (float): lattice constant c (z direction)
+        neighbor_count (int): number of neighbor terms used in each direction
+        bands_per_direction (int): the final band count will be `bands_per_direction**3`
+
+    Returns:
+        (AsymTightBindingModel, float): a tight-binding model describing the free electrons, energy unit in eV (multiply by this to get the model in eV units)
+    """
+    neighbors = [(0,0,0)] + [v for n in range(1,(neighbor_count+1)*bands_per_direction) for v in [(a*n,0,0),(0,b*n,0),(0,0,c*n)]]
+    H_r = np.zeros((len(neighbors), 1, 1))
+    for i, n in enumerate(neighbors):
+        if n[0] != 0 and n[1] == 0 and n[2] == 0:
+            H_r[i] += 2 * (-1)**round(n[0]/a) / n[0]**2
+        if n[0] == 0 and n[1] != 0 and n[2] == 0:
+            H_r[i] += 2 * (-1)**round(n[1]/b) / n[1]**2
+        if n[0] == 0 and n[1] == 0 and n[2] != 0:
+            H_r[i] += 2 * (-1)**round(n[2]/c) / n[2]**2
+    H_r[0] = np.pi**2 * (1/a**2 + 1/b**2 + 1/c**2)/3
+    model = AsymTightBindingModel.new(neighbors, 1)
+    model.set_from_complex(H_r)
+    model *= 1/(2*np.pi)**2
+
+    model2 = model.supercell(np.diag([a, b, c]), np.diag([a, b, c])*bands_per_direction)
+    model2.H.neighbors /= bands_per_direction
+    model2 *= bands_per_direction**2
+    model2.H.limit_neighbor_count(neighbor_count * 3 + 1)
+
+    eV_unit = 3.80998211 * (2*np.pi)**2 # hbar^2/m_e/2 / (1Å)^2 / 1eV * (2pi)^2
+    return model2, eV_unit

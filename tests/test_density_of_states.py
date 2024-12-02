@@ -10,22 +10,78 @@ def test_cubic_density_of_states():
     model = BandStructureModel.init_tight_binding(Symmetry.cubic(True), ((0,0,0), (0,0,1)), 1, exp=False)
     model.params[1] = t/48*3/2
 
-    for use_tetras in [False, True]:
-        dos_model = dos.DensityOfStates(model, N=15, use_tetras=use_tetras) # 15 -> the minimum band value is not in the grid
-        assert abs(dos_model.bands_range[0][0] - -3) < 1e-8, f"lower band range was wrong/inprecise: {dos_model.bands_range[0][0]}"
-        assert abs(dos_model.bands_range[0][1] - 3) < 1e-8, f"upper band range was wrong/inprecise: {dos_model.bands_range[0][1]}"
-        e_smpl, n, rho = dos_model.full_curve(N=40)
-        # test monotonicity of n
-        assert np.all((np.roll(n, -1) - n)[:-1] >= 0), "states(energy) was not monotone"
+    for smearing in ["cubes", "tetras", "spheres"]:
+        # 15 -> the minimum band value is not in the grid
+        for N in [15, 16]:
+            dos_model = dos.DensityOfStates(model, N=N, smearing=smearing)
+            assert abs(dos_model.bands_range[0][0] - -3) < 1e-8, f"lower band range was wrong/inprecise: {dos_model.bands_range[0][0]}"
+            assert abs(dos_model.bands_range[0][1] - 3) < 1e-8, f"upper band range was wrong/inprecise: {dos_model.bands_range[0][1]}"
+            e_smpl, n, rho = dos_model.full_curve(N=40)
+            # test monotonicity of n
+            assert np.all((np.roll(n, -1) - n)[:-1] >= 0), "states(energy) was not monotone"
 
-        electrons = 0.5
-        assert abs(dos_model.fermi_energy(electrons)) < 1e-3, "computed fermi energy was wrong"
+            electrons = 0.5
+            fermi_energy = dos_model.fermi_energy(electrons)
+            assert abs(fermi_energy) < 2e-3, f"computed fermi energy was wrong ({fermi_energy} instead of 0)"
 
-        # test the other functions to get the density and states. They should be equivalent
-        assert np.linalg.norm([dos_model.states_below(e) for e in e_smpl] - n) < 1e-7, "states_below was different from full_curve"
-        assert np.linalg.norm([dos_model.density(e) for e in e_smpl] - rho) < 1e-7, "density was different from full_curve"
-        assert np.linalg.norm([dos_model.states_density(e)[0] for e in e_smpl] - n) < 1e-7, "states_below was different from full_curve"
-        assert np.linalg.norm([dos_model.states_density(e)[1] for e in e_smpl] - rho) < 1e-7, "density was different from full_curve"
+            # test the other functions to get the density and states. They should be equivalent
+            assert np.linalg.norm([dos_model.states_below(e) for e in e_smpl] - n) < 1e-7, "states_below was different from full_curve"
+            assert np.linalg.norm([dos_model.density(e) for e in e_smpl] - rho) < 1e-7, "density was different from full_curve"
+            assert np.linalg.norm([dos_model.states_density(e)[0] for e in e_smpl] - n) < 1e-7, "states_below was different from full_curve"
+            assert np.linalg.norm([dos_model.states_density(e)[1] for e in e_smpl] - rho) < 1e-7, "density was different from full_curve"
+
+
+def test_sin_density_of_states():
+    class SinModel:
+        def __init__(self):
+            pass
+
+        def __call__(self, k_smpl):
+            return np.sin(2*np.pi * k_smpl[...,0])[...,None]
+        
+        def bands_grad(self, k_smpl):
+            grad = 2*np.pi * np.cos(2*np.pi * k_smpl[...,0])[...,None] * np.array([1,0,0])
+            return self(k_smpl), grad[...,None]
+    model = SinModel()
+    N = 24
+    mu = 0.1
+    for improved_points, tol in [(False, 1e-4), (True, 5e-2)]:
+        dos_model = dos.DensityOfStates(model, N=N, A=np.eye(3), ranges=[[-0.5, 0.5]]*3)
+        _, _, _, total_area_unit = dos_model.fermi_surface_samples(
+            mu, improved_points=improved_points, improved_weights=False, weight_by_gradient=True, normalize=None)
+        dos_model = dos.DensityOfStates(model, N=N, A=np.diag([0.5, 1.5, 7.5]), ranges=[[-0.5, 0.5]]*3, wrap=True)
+        _, _, w, total_area = dos_model.fermi_surface_samples(
+            mu, improved_points=improved_points, improved_weights=False, weight_by_gradient=True, normalize=None)
+        assert abs(1.0 - total_area/total_area_unit) < tol
+        assert abs(1.0 - dos_model.density(mu) / np.sum(w)) < tol
+        dos_model = dos.DensityOfStates(model, N=N, A=np.array([[0.5, 0, 0], [0, 1, 1], [0, -1, 1]]).T, ranges=[[-0.5, 0.5]]*3, wrap=True)
+        _, _, w, total_area = dos_model.fermi_surface_samples(
+            mu, improved_points=improved_points, improved_weights=False, weight_by_gradient=True, normalize=None)
+        assert abs(1.0 - total_area/total_area_unit) < tol
+        assert abs(1.0 - dos_model.density(mu) / np.sum(w)) < tol
+        dos_model = dos.DensityOfStates(model, N=32, A=np.eye(3), ranges=[[-1, 1]]*3, wrap=True)
+        _, _, w, total_area = dos_model.fermi_surface_samples(
+            mu, improved_points=improved_points, improved_weights=False, weight_by_gradient=True, normalize=None)
+        assert abs(1.0 - total_area/total_area_unit) < tol
+        assert abs(1.0 - dos_model.density(mu) / np.sum(w)) < tol
+    
+    A2 = np.array([[1, 0, 0], [0, 1, 0.5], [0, 0.5, 1]]).T
+    n = 0.2
+
+    dos_model = dos.DensityOfStates(model, N=N, A=np.eye(3), ranges=[[-0.5, 0.5]]*3)
+    density_a = dos_model.density(0.1)
+    kint = bulk.KIntegral(dos_model, n, 0)
+    mu_a = kint.mu
+    a = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0]
+
+    dos_model = dos.DensityOfStates(model, N=N, A=np.array([[0.5, 0, 0], [0, 1, 1], [0, -1, 1]]).T, ranges=[[-0.5, 0.5]]*3, wrap=True)
+    density_b = dos_model.density(0.1)
+    kint = bulk.KIntegral(dos_model, n, 0)
+    mu_b = kint.mu
+    b = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0]
+    assert abs(density_a - density_b) / abs(density_a) < 1e-2, "error in density calculation"
+    assert abs(mu_a - mu_b) < 5e-2, "error in chemical potential calculation"
+    assert abs(a - b) < 5e-2, "error in bulk.KIntegral.integrate_df_A(...)"
 
 
 def test_linear_density_of_states():
@@ -45,8 +101,10 @@ def test_linear_density_of_states():
                 return self(k_smpl), base * [1, 2, 3, 4]
 
         linear = LinearModel()
-        for use_tetras in [False, True]:
-            dos_model = dos.DensityOfStates(linear, N=17, ranges=((0.0, 0.5),)*3, wrap=False, use_tetras=use_tetras)
+        # can't really test "spheres" here as they are not exactly matching the geometry of the problem like these
+        for smearing in ["cubes", "tetras"]:
+            # TODO test with different ranges ([0.0, 0.5] and [-0.5, 0.5] and [0, 1])
+            dos_model = dos.DensityOfStates(linear, N=17, ranges=((0.0, 0.5),)*3, wrap=False, smearing=smearing)
             assert np.linalg.norm(np.array(dos_model.bands_range)-offset_b - [(1.0, 2.5), (2.0, 5.0), (3.0, 7.5), (4.0, 10.0)]) < 1e-10, f"band ranges are detected wrong: {dos_model.bands_range}"
             energy_smpl, _states, density = dos_model.full_curve(N=30)
 
@@ -70,20 +128,21 @@ def test_linear_density_of_states():
             assert np.linalg.norm(density_bands2 - density_bands) < 1e-12, f"band resolved dos doesn't match, error {np.linalg.norm(density_bands2 - density_bands)}"
             # TODO compare states as well!
 
-            if use_tetras:
+            if smearing != "cubes":
                 # fermi surface samples are not yet implemented for tetras
                 continue
 
             # test area measure in fermi_surface_samples
+            # TODO also test for DoS models without bands_grad!!!
             for weight_by_gradient in [False, True]:
                 _, _, _, area = dos_model.fermi_surface_samples(offset_b + 2*offset_a, improved_points=False, improved_weights=False, weight_by_gradient=weight_by_gradient, normalize=None)
-                assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples is wrong, {area} != {offset_a**2*3**.5}"
+                assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples for {weight_by_gradient} is wrong, {area} != {offset_a**2*3**.5}"
                 _, _, _, area = dos_model.fermi_surface_samples(offset_b + 2*offset_a, improved_points=True, improved_weights=False, weight_by_gradient=weight_by_gradient, normalize=None)
-                assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples is wrong, {area} != {offset_a**2*3**.5}"
+                assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples for {weight_by_gradient} is wrong, {area} != {offset_a**2*3**.5}"
                 _, _, _, area = dos_model.fermi_surface_samples(offset_b + 2*offset_a, improved_points=False, improved_weights=True, weight_by_gradient=weight_by_gradient, normalize=None)
-                assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples is wrong, {area} != {offset_a**2*3**.5}"
+                assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples for {weight_by_gradient} is wrong, {area} != {offset_a**2*3**.5}"
                 _, _, _, area = dos_model.fermi_surface_samples(offset_b + 2*offset_a, improved_points=True, improved_weights=True, weight_by_gradient=weight_by_gradient, normalize=None)
-                assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples is wrong, {area} != {offset_a**2*3**.5}"
+                assert abs(area - offset_a**2*3**.5) < 1e-6, f"area of fermi_surface_samples for {weight_by_gradient} is wrong, {area} != {offset_a**2*3**.5}"
             # TODO test more!
 
             # analytic drude factor
