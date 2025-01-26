@@ -66,6 +66,7 @@ plt.show()
 """
 
 import os
+import re
 import subprocess
 from sys import platform
 import numpy as np
@@ -107,8 +108,14 @@ def qe_prepare(pseudo_potential_files_dict=None):
             file = name + ".rel-pbesol-n-kjpaw_psl.1.0.0.UPF"
             pseudo_potential_files_dict[name] = file
         if not os.path.isfile("./pseudo/" + file):
-            print("downloading", file)
-            subprocess.run("wget https://pseudopotentials.quantum-espresso.org/upf_files/" + file, cwd="./pseudo", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # TODO sanitize "file" -> otherwise command injection is possible
+            if re.match(r"[a-zA-Z0-9\.\-]", file) is None:
+                print("skipped file", file, "because it contains incompatible characters")
+                continue
+            res = subprocess.run("wget https://pseudopotentials.quantum-espresso.org/upf_files/" + file, cwd="./pseudo", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if "Not Found" in res.stdout.decode("utf-8"):
+                print("could not find", file, "at https://pseudopotentials.quantum-espresso.org/upf_files/" + file)
+
 
 # general bandstructure plotting
 def plot_bands_generic(bands, x_smpl=None, *args, **kwargs):
@@ -286,7 +293,7 @@ def version() -> str:
 
 class QECrystal:
     def __init__(self, name: str, A, basis: list, types: list, kinetic_energy_cutoff: float=None, unit="angstrom"):
-        """Constructor of QECrystal.
+        """Constructor of QECrystal. Use `from_disk` instead if the data is already there.
 
         Args:
             name (str): Prefix/name used for all files related to this calculation.

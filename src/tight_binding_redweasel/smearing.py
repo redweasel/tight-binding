@@ -40,7 +40,7 @@ class SmearingMethod:
         Returns:
             (float, float): `volume`, `dvolume`
         """
-        return self.states_below(value), self.density(value)
+        return self.volume(value), self.dvolume(value)
     
     def samples(self, value: float):
         """Compute points on the surface of the implicit function and compute integration weights.

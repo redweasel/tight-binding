@@ -469,7 +469,7 @@ class Symmetry:
             S.append(((0, 1, 0), (-1, 0, 0), (0, 0, 1)))
         return Symmetry.from_generator(S, False)
 
-    def check_symmetry(self, foo: Callable, verbose=True) -> bool:
+    def check_symmetry(self, foo: Callable, verbose=True, tolerance=1e-7) -> bool:
         """Check if a space dependent function satisfies the symmetry.
         
         Args:
@@ -486,9 +486,9 @@ class Symmetry:
             values = []
             for s in self.S:
                 values.append(foo(s @ r))
-            if np.linalg.norm(np.std(values, axis=0)) > 1e-7:
+            if np.linalg.norm(np.std(values, axis=0)) > tolerance:
                 if verbose:
-                    print("symmetry error")
+                    print(f"symmetry error at {r}")
                     print(np.std(values, axis=0))
                 return False
         return True

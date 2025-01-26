@@ -125,7 +125,7 @@ class DensityOfStates:
     The bandstructure model, used in this class needs to accept crystal coordinates.
     The cubic cell [-0.5, 0.5]^3 should equal the whole reciprocal crystal cell.
     """
-    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True, smearing="cubes", use_gradients=False):
+    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True, smearing="cubes", use_gradients=False, midpoint=False):
         """Initialize a density of states model from a bandstructure model.
 
         Args:
@@ -137,14 +137,19 @@ class DensityOfStates:
             A (arraylike[3, 3]): Matrix with lattice vectors in its columns. Used for computing the k-grid for sampling the model. Defaults to the unit matrix.
             ranges (arraylike[3, 2], optional): The ranges for each axis in crystal space. This should only be changed to consider symmetries, as the whole cell will still be considered to have volume 1. Defaults to ((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)).
             wrap (bool, optional): _description_. Defaults to True.
-            smearing (str). One of the options {"cubes", "tetras", "spheres"}. "spheres" is really fast. Defaults to "cubes".
-            use_gradients (bool). If the smearing supports it, use analytic gradients instead of interpolated gradients for the smearing calculations. Defaults to False.
+            smearing (str): One of the options {"cubes", "tetras", "spheres"}. "spheres" is really fast. Defaults to "cubes".
+            use_gradients (bool): If the smearing supports it, use analytic gradients instead of interpolated gradients for the smearing calculations. Defaults to False.
+            midpoint (bool): Shift the k-points by half a cell, such that the borders are not included. Defaults to False.
         """
         assert len(ranges) == 3, "This class can only be used for 3D models. Therefore 3 ranges need to be specified."
         if wrap:
-            xyz = [np.linspace(*r, N, endpoint=False) + 1/2/N*(r[1] - r[0]) for r in ranges]
+            xyz = [np.linspace(*r, N, endpoint=False) + (1/2/N*(r[1] - r[0]) if midpoint else 0.0) for r in ranges]
         else:
-            xyz = [np.linspace(*r, N+1) for r in ranges]
+            if midpoint:
+                # careful with this! only useful when use_gradients is True!
+                xyz = [np.linspace(*r, N, endpoint=False) + 1/2/N*(r[1] - r[0]) for r in ranges]
+            else:
+                xyz = [np.linspace(*r, N+1) for r in ranges]
         self.crystal_volume = np.prod([r[1] - r[0] for r in ranges])
         # TODO redefine the grid, such that all stepsizes are equal! This is very important for the fermi surface samples!
         self.step_sizes = np.array([x[1] - x[0] for x in xyz])
@@ -173,7 +178,7 @@ class DensityOfStates:
             self.bands_range = []
             for i, band_range_indices in enumerate(bands_range_indices):
                 # find minimum
-                min_k = self.k_smpl.reshape(-1, 3)[band_range_indices[0]]
+                min_k = np.array(self.k_smpl.reshape(-1, 3)[band_range_indices[0]])
                 for _ in range(2):
                     _, grad, hess = model.bands_grad_hess(np.array([min_k]))
                     eigvals = np.linalg.eigvalsh(hess[0, :, :, i])
@@ -184,7 +189,7 @@ class DensityOfStates:
                         break # don't follow too big steps (e.g. at band crossings)
                     min_k -= step
                 # find maximum
-                max_k = self.k_smpl.reshape(-1, 3)[band_range_indices[1]]
+                max_k = np.array(self.k_smpl.reshape(-1, 3)[band_range_indices[1]])
                 for _ in range(2):
                     _, grad, hess = model.bands_grad_hess(np.array([max_k]))
                     eigvals = np.linalg.eigvalsh(hess[0, :, :, i])
@@ -201,6 +206,8 @@ class DensityOfStates:
         # TODO add bands_range_k_points, because that is useful information in some contexts
         B = np.linalg.inv(self.A).T
         if smearing == "tetras":
+            if use_gradients:
+                raise NotImplementedError("use_gradients is not implemented for smearing tetras")
             self.smearing = [TetraSmearing(values=self.bands[...,i], wrap=wrap, B=B) for i in range(len(self.bands_range))]
         elif smearing == "cubes":
             if use_gradients:
@@ -391,9 +398,17 @@ class DensityOfStates:
         return np.array(res)
     
     # TODO currently WRONG
-    def energy(self, T: float, electrons: float, mu: float=None, N=30) -> float:
-        if mu is None:
-            mu = self.chemical_potential(electrons, [T], N=N)
+    def energy(self, mu: float, T=0.0, N=100) -> float:
+        if T <= 0.0:
+            # if the temperature is zero, then just integrate the states curve using linear segments
+            # TODO it would be good to compute the total energy of each band beforehand and reuse it here
+            # TODO use some better integration than trapez
+            e0 = np.min(self.bands_range)
+            mu = float(mu)
+            e_smpl = np.linspace(e0, mu, N, endpoint=False) + 1/2/N*(mu - e0)
+            density = [self.density(e) for e in e_smpl]
+            energy = np.mean(e_smpl * density) * (mu - e0)
+            return energy
         # energy is integral e f(e) rho(e) de
         #         = integral (f + e df/de) N(e) de
         # like usual assume N to be piecewise linear and do the integral
@@ -421,6 +436,7 @@ class DensityOfStates:
         # calculate custom distribution for precision/cost balance
         beta = 0.25 / (k_B * T) # 1/eV
         e0, e1 = self.energy_range()
+        # TODO this is not correct... it would be good to compute the total energy of each band beforehand and reuse it here
         energy_smpl = np.log(1 / (1e-16 + np.linspace(1/(1 + np.exp(beta*(e0-mu))), 1/(1 + np.exp(beta*(e1-mu))), N)) - 1 + 1e-16) / beta + mu
         states = [self.states_below(energy) for energy in energy_smpl]
         return accumulate(T, energy_smpl, states)

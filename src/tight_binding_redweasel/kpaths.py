@@ -276,21 +276,21 @@ def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", period
     # sort (again) by x, y, z compatible with reshape to meshgrid
     bands = np.array(bands)
     k_smpl = np.array(k_smpl)
-    for i in range(dim):
+    for i in reversed(range(dim)):
         # the round here is annoying as it can break at wrong places
         # + np.pi makes it less likely, but it can still happen
         reorder = np.argsort(np.round(k_smpl[:, i] + np.pi, 4), kind='stable')
         k_smpl = k_smpl[reorder]
         bands = bands[reorder]
 
-    used_k_smpl = k_smpl.reshape((n,)*dim + (dim,)).T
-    # TODO is transpose needed here as well??? Probably yes!
+    used_k_smpl = np.moveaxis(k_smpl.reshape((n,)*dim + (dim,)), -1, 0)
     used_bands = bands.reshape((n,)*dim + (-1,))
     if periodic:
-        # TODO make it work for k outside of the original k_smpl range by
+        # make it work for k outside of the original k_smpl range by
         # 1. extending the range of the data using periodic points
         #   -> this is done more than necessary to accomodate for larger interpolation kernels like the cubic one.
         # 2. wrapping the function argument of the returned function using % 1.0
+        #   -> see at the bottom
         for i in range(dim):
             vec = np.zeros(dim)
             vec[i] = 1.0
@@ -312,7 +312,7 @@ def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", period
                                                   used_bands,
                                                   method=method)
     if periodic:
-        return lambda k: interp_f((k + 0.5) % 1.0 - 0.5)
+        return lambda k: interp_f((np.asanyarray(k) + 0.5) % 1.0 - 0.5)
     return interp_f
 
 # given band structure data and symmetry, return an interpolator for the bandstructure.

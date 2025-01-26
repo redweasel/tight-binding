@@ -45,7 +45,7 @@ class KIntegral:
         self.metal = self.bandgap == 0.0
         self.model = dos_model.model
         self.A = dos_model.A
-        self.mu = dos_model.chemical_potential(electrons, [T], N=50) # compute mu here with good enough precision
+        self.mu = dos_model.chemical_potential(electrons, [T], N=50)[0] # compute mu here with good enough precision
         self.beta = 1 / (_dos.k_B * T) if T > 0 else 0.0 # in 1/eV
         self.e_smpl = []
         # prepared data for the integration
@@ -55,9 +55,10 @@ class KIntegral:
         # function to collect the fermi surface data
         # TODO allow the use of the dos grid instead of the exact fermi surface
         # -> faster, less precise
+        improved_points = False # True makes it much more robust -> extrapolation possible, however it doesn't increase the convergence order
         def collect_smpl(e_smpl):
             for e in e_smpl:
-                k_smpl, band_indices, weights, _ = dos_model.fermi_surface_samples(e, improved_points=True, improved_weights=False, normalize=None)
+                k_smpl, band_indices, weights, _ = dos_model.fermi_surface_samples(e, improved_points=improved_points, improved_weights=False, normalize=None)
                 self.e_smpl.append(e)
                 self.k_smpl.append(k_smpl)
                 self.band_indices.append(band_indices)
@@ -80,7 +81,7 @@ class KIntegral:
             assert T == 0, "No negative temperatures allowed"
             if self.metal:
                 # just the Fermi-surface
-                collect_smpl(self.mu)
+                collect_smpl([self.mu])
             else:
                 # isolator at 0 temperature has no Fermi-surface -> all integrals 0
                 pass
@@ -162,7 +163,7 @@ class KIntegral:
         if self.beta == 0:
             # zero temperature case
             if self.metal:
-                I = int_e(self.mu)
+                I = int_e([self.mu])
                 assert len(I) == 1
                 I = I[0]
                 # TODO error estimation
@@ -303,3 +304,27 @@ class KIntegral:
     # electric part of the heat conductivity kappa in J/m^3 (if cell_length is given in meters)
     def heat_conductivity(self, A, spin_factor=2, print_error=False):
         pass
+
+
+""" Free electron model in eV for testing """
+class FreeElectrons:
+    def __init__(self, k_neighbors=((0,0,0),)):
+        self.fac = 3.80998211 * (2*np.pi)**2
+        self.k_neighbors = np.asarray(k_neighbors).T
+
+    def __call__(self, k_smpl):
+        k_smpl = k_smpl[...,None] - self.k_neighbors[None,:,:]
+        return self.fac * np.linalg.norm(k_smpl, axis=-2)**2
+    
+    def bands_grad(self, k_smpl):
+        k_smpl = k_smpl[...,None] - self.k_neighbors[None,:,:]
+        bands = np.linalg.norm(k_smpl, axis=-2)**2
+        grad = 2*k_smpl
+        return self.fac * bands, self.fac * grad
+    
+    def bands_grad_hess(self, k_smpl):
+        k_smpl = k_smpl[...,None] - self.k_neighbors[None,:,:]
+        bands = np.linalg.norm(k_smpl, axis=-1)**2
+        grad = 2*k_smpl
+        hess = np.array([np.eye(3) * 2] * len(self.k_neighbors[0])).T
+        return self.fac * bands, self.fac * grad, self.fac * hess[None,...]
