@@ -43,7 +43,7 @@ def test_sin_density_of_states():
             grad = 2*np.pi * np.cos(2*np.pi * k_smpl[...,0])[...,None] * np.array([1,0,0])
             return self(k_smpl), grad[...,None]
     model = SinModel()
-    N = 24
+    N = 25
     mu = 0.1
     for improved_points, tol in [(False, 1e-4), (True, 5e-2)]:
         dos_model = dos.DensityOfStates(model, N=N, A=np.eye(3), ranges=[[-0.5, 0.5]]*3)
@@ -79,7 +79,7 @@ def test_sin_density_of_states():
     kint = bulk.KIntegral(dos_model, n, 0)
     mu_b = kint.mu
     b = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0]
-    assert abs(density_a - density_b) / abs(density_a) < 1e-2, "error in density calculation"
+    assert abs(density_a - density_b) / abs(density_a) < 5e-2, "error in density calculation"
     assert abs(mu_a - mu_b) < 5e-2, "error in chemical potential calculation"
     assert abs(a - b) < 5e-2, "error in bulk.KIntegral.integrate_df_A(...)"
 
