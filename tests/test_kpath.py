@@ -8,45 +8,8 @@ mpl_test.setup()
 from tight_binding_redweasel import kpaths
 from tight_binding_redweasel import symmetry
 
-def test_kpaths_plot_svg():
-    # testing matplotlib results is a pain...
-    # svg doesn't work, because svg.hashsalt handling differs over multiple matplotlib versions.
-    # png doesn't work because it includes the matplotlib version, even with 'Creator': None
-    # pickle doesn't work because it includes the matplotlib version
-
-    # the solution is to use svg, but remove some id data using regex
-    read = True
-
-    plt.figure(figsize=(5, 5), frameon=False)
-    kpaths.SC_PATH.plot(lambda x: x, band_offset=1, label_bands="left", ylim=(-1.0, 1.0))
-    s = io.StringIO()
-    plt.savefig(s, format="svg", bbox_inches='tight', metadata={'Date': None, 'Creator': None})
-    svg = s.getvalue()
-    svg = re.sub(r"url\(#\w+\)", r"url\(\)", svg)
-    svg = re.sub(r'id="\w+"', r"", svg)
-    if read:
-        with open("tests/ref_kpath_left.svg", "r") as file:
-            f = file.read()
-            assert svg == f, f"generated svg ({len(svg)}) doesn't match saved svg ({len(f)})"
-    else:
-        with open("tests/ref_kpath_left.svg", "w") as file:
-            file.write(svg)
-
-    plt.figure(figsize=(5, 5), frameon=False)
-    kpaths.FCC_PATH.plot(lambda x: x, band_offset=1, label_bands="right", ylim=(-1.0, 1.0))
-    s = io.StringIO()
-    plt.savefig(s, format="svg", bbox_inches='tight', metadata={'Date': None, 'Creator': None})
-    svg = s.getvalue()
-    svg = re.sub(r"url\(#\w+\)", r"url\(\)", svg)
-    svg = re.sub(r'id="\w+"', r"", svg)
-    if read:
-        with open("tests/ref_kpath_right.svg", "r") as file:
-            f = file.read()
-            assert svg == f, f"generated svg ({len(svg)}) doesn't match saved svg ({len(f)})"
-    else:
-        with open("tests/ref_kpath_right.svg", "w") as file:
-            file.write(svg)
-
+# in prior versions I had a test for the plot, but that
+# is very unstable due to matplotlib changing its backends all the time.
 
 def test_kpaths_interpolate():
     np.random.seed(13**5)
