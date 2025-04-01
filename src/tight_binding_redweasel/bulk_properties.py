@@ -306,25 +306,38 @@ class KIntegral:
         pass
 
 
-""" Free electron model in eV for testing """
+""" Free electron model in eV for testing, reciprocal lattice k in 2pi/Å """
 class FreeElectrons:
-    def __init__(self, k_neighbors=((0,0,0),)):
-        self.fac = 3.80998211 * (2*np.pi)**2
+    def __init__(self, k_neighbors=((0,0,0),), limit_count=None):
+        eV_unit = 3.80998211 * (2*np.pi)**2 # hbar^2/m_e/2 * (2pi/1Å)^2 / 1eV
+        self.fac = eV_unit
         self.k_neighbors = np.asarray(k_neighbors).T
+        self.limit_count = limit_count
 
     def __call__(self, k_smpl):
-        k_smpl = k_smpl[...,None] - self.k_neighbors[None,:,:]
-        return self.fac * np.linalg.norm(k_smpl, axis=-2)**2
+        k_smpl = k_smpl[:,:,None] - self.k_neighbors[None,:,:]
+        bands = self.fac * np.linalg.norm(k_smpl, axis=-2)**2
+        if self.limit_count:
+            bands = np.sort(bands, axis=-1)[:,:self.limit_count]
+        return bands
     
     def bands_grad(self, k_smpl):
-        k_smpl = k_smpl[...,None] - self.k_neighbors[None,:,:]
+        k_smpl = k_smpl[:,:,None] - self.k_neighbors[None,:,:]
         bands = np.linalg.norm(k_smpl, axis=-2)**2
         grad = 2*k_smpl
+        if self.limit_count:
+            order = np.argsort(bands, axis=-1)[:,:self.limit_count]
+            bands = np.take_along_axis(bands, order, axis=-1)
+            grad = np.take_along_axis(grad, order[:,None,:], axis=-1)
         return self.fac * bands, self.fac * grad
     
     def bands_grad_hess(self, k_smpl):
-        k_smpl = k_smpl[...,None] - self.k_neighbors[None,:,:]
-        bands = np.linalg.norm(k_smpl, axis=-1)**2
+        k_smpl = k_smpl[:,:,None] - self.k_neighbors[None,:,:]
+        bands = np.linalg.norm(k_smpl, axis=-2)**2
         grad = 2*k_smpl
         hess = np.array([np.eye(3) * 2] * len(self.k_neighbors[0])).T
+        if self.limit_count:
+            order = np.argsort(bands, axis=-1)[:,:self.limit_count]
+            bands = np.take_along_axis(bands, order, axis=-1)
+            grad = np.take_along_axis(grad, order[:,None,:], axis=-1)
         return self.fac * bands, self.fac * grad, self.fac * hess[None,...]
