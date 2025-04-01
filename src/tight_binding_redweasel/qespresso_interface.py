@@ -1279,7 +1279,6 @@ def from_disk(name: str, read_output=True, prepare_pseudopotentials=False) -> QE
     Returns:
         QECrystal: The object with all parameters filled in from a previous run.
     """
-    global pp_files
     crystal = QECrystal(name, np.eye(3), [], [], 0.0)
     crystal.basis = []
     crystal.types = []
