@@ -46,12 +46,12 @@ def gauss_6_f(f, mu, beta):
 # and returns the exact convolution.
 def convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=None):
     def f(e):
-        return 1 / (1 + np.exp(beta*e)) # overflows can be safely ignored here!
+        return scipy.special.expit(-beta*e) # overflow free variant of 1 / (1 + exp(beta*e)), just to silence the warnings
     #def F(e):
     #    return -np.log1p(np.exp(-beta*e)) / beta
     def F_diff(e0, e1):
         #return F(e1) - F(e0)
-        return np.log(1/(1+np.exp(-beta*e1)) + 1/(np.exp(beta*e0) + np.exp(beta*(e0-e1)))) / beta
+        return np.log(scipy.special.expit(beta*e1) + 1/(np.exp(beta*e0) + np.exp(beta*(e0-e1)))) / beta
     def segment(x, x0, x1, y0, y1):
         return y1*f(x-x1) - y0*f(x-x0) + (y1-y0)/(x1-x0)*F_diff(x-x0, x-x1)
     s = np.sum(segment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1), states)[1:])
@@ -115,7 +115,7 @@ def naive_fermi_energy(bands, electrons):
 
 def naive_energy(bands, T, mu):
     e = np.ravel(bands)
-    return np.mean(e / (1 + np.exp((e - mu) / (k_B * T)))) * np.shape(bands)[-1]
+    return np.mean(e * scipy.special.expit(-(e - mu) / (k_B * T))) * np.shape(bands)[-1]
 
 class DensityOfStates:
     """This class represents the density of states for a given 3D bandstructure model.
@@ -125,7 +125,7 @@ class DensityOfStates:
     The bandstructure model, used in this class needs to accept crystal coordinates.
     The cubic cell [-0.5, 0.5]^3 should equal the whole reciprocal crystal cell.
     """
-    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True, smearing="cubes", use_gradients=False, midpoint=False):
+    def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True, smearing="cubes", use_gradients=False, midpoint=False, check=True):
         """Initialize a density of states model from a bandstructure model.
 
         Args:
@@ -137,9 +137,10 @@ class DensityOfStates:
             A (arraylike[3, 3]): Matrix with lattice vectors in its columns. Used for computing the k-grid for sampling the model. Defaults to the unit matrix.
             ranges (arraylike[3, 2], optional): The ranges for each axis in crystal space. This should only be changed to consider symmetries, as the whole cell will still be considered to have volume 1. Defaults to ((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)).
             wrap (bool, optional): _description_. Defaults to True.
-            smearing (str): One of the options {"cubes", "tetras", "spheres"}. "spheres" is really fast. Defaults to "cubes".
-            use_gradients (bool): If the smearing supports it, use analytic gradients instead of interpolated gradients for the smearing calculations. Defaults to False.
-            midpoint (bool): Shift the k-points by half a cell, such that the borders are not included. Defaults to False.
+            smearing (str, optional): One of the options {"cubes", "tetras", "spheres"}. "spheres" is really fast. Defaults to "cubes".
+            use_gradients (bool, optional): If the smearing supports it, use analytic gradients instead of interpolated gradients for the smearing calculations. Defaults to False.
+            midpoint (bool, optional): Shift the k-points by half a cell, such that the borders are not included. Defaults to False.
+            check (bool or float, optional): If not False, check the model for correct periodicity. If a float is given instead of a bool, it is interpreted as the tolerance for the check. Defaults to True.
         """
         assert len(ranges) == 3, "This class can only be used for 3D models. Therefore 3 ranges need to be specified."
         if wrap:
@@ -160,6 +161,12 @@ class DensityOfStates:
         self.k_smpl = np.stack(np.meshgrid(*xyz, indexing='ij'), axis=-1) @ np.linalg.inv(self.A)
         self.wrap = wrap
         self.model = model
+        # make sure the model has the correct periodicity
+        if not (check is False):
+            if isinstance(check, float):
+                self.check(tolerance=check)
+            else:
+                self.check()
         shape = np.shape(self.k_smpl)
         can_have_gradients = smearing in ["spheres", "cubes"]
         if can_have_gradients and use_gradients:
@@ -226,6 +233,22 @@ class DensityOfStates:
     
     def model_bandcount(self):
         return len(self.bands_range)
+    
+    def check(self, tolerance=1e-10):
+        '''
+        Check if the tight binding model is periodic wrt the given A matrix.
+        If not, an assertion error is raised.
+        
+        Args:
+            tolerance (float, optional): The tolerance when comparing the bandstructure of equivalent cells.
+                This is limited by rounding errors in the model and by rounding of the lattice parameters (self.A). Defaults to 1e-10.
+        '''
+        k_smpl = np.random.random((20, 3)) @ np.linalg.inv(self.A)
+        bands_a = self.model(k_smpl @ np.linalg.inv(self.A))
+        for i in range(3):
+            bands_b = self.model((k_smpl + np.identity(3)[None, i]) @ np.linalg.inv(self.A))
+            error = np.linalg.norm(bands_a - bands_b)
+            assert error < tolerance, f"not periodic with respect to self.A[{i}] (error = {error:.2e})"
 
     def save(self, filename: str):
         # TODO save without self.model
@@ -389,7 +412,7 @@ class DensityOfStates:
                 if abs(beta - new_beta) / new_beta > 5e-2:
                     # recalculate distribution for precision
                     beta = 0.25 / (k_B * T) # 1/eV
-                    energy_smpl = np.log(1 / (1e-16 + np.linspace(1/(1 + np.exp(beta*(e0-fermi_energy))), 1/(1 + np.exp(beta*(e1-fermi_energy))), N)) - 1 + 1e-16) / beta + fermi_energy
+                    energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-fermi_energy)), scipy.special.expit(-beta*(e1-fermi_energy)), N)) - 1 + 1e-16) / beta + fermi_energy
                     beta = new_beta
                     states = [self.states_below(energy) for energy in energy_smpl]
                 # keep distribution if it doesn't cause too big errors (performance)
@@ -427,7 +450,7 @@ class DensityOfStates:
                 a = dy/dx
                 b = y0 - x0 * a
                 # TODO ERROR
-                simple_term = (a*x1*x1/2 + b*x1) / (1 + np.exp((x1-mu)*beta)) - (a*x0*x0/2 + b*x0) / (1 + np.exp((x0-mu)*beta))
+                simple_term = (a*x1*x1/2 + b*x1) * scipy.special.expit(-(x1-mu)*beta) - (a*x0*x0/2 + b*x0) * scipy.special.expit(-(x0-mu)*beta)
                 return simple_term + a/2 * int_poly((x0-mu)*beta, (x1-mu)*beta, 1/beta/beta, 0, 0)/beta
             s = np.sum(segment(T, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1), states)[1:])
             # can add segments/other functions as extrapolation on both side to get correct high temperature behavior
@@ -437,7 +460,7 @@ class DensityOfStates:
         beta = 0.25 / (k_B * T) # 1/eV
         e0, e1 = self.energy_range()
         # TODO this is not correct... it would be good to compute the total energy of each band beforehand and reuse it here
-        energy_smpl = np.log(1 / (1e-16 + np.linspace(1/(1 + np.exp(beta*(e0-mu))), 1/(1 + np.exp(beta*(e1-mu))), N)) - 1 + 1e-16) / beta + mu
+        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-mu)), scipy.special.expit(-beta*(e1-mu)), N)) - 1 + 1e-16) / beta + mu
         states = [self.states_below(energy) for energy in energy_smpl]
         return accumulate(T, energy_smpl, states)
 
@@ -469,7 +492,7 @@ class DensityOfStates:
         # calculate custom distribution for precision/cost balance
         beta = 0.25 / (k_B * T) # 1/eV
         e0, e1 = self.energy_range()
-        energy_smpl = np.log(1 / (1e-16 + np.linspace(1/(1 + np.exp(beta*(e0-mu))), 1/(1 + np.exp(beta*(e1-mu))), N)) - 1 + 1e-16) / beta + mu
+        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-mu)), scipy.special.expit(-beta*(e1-mu)), N)) - 1 + 1e-16) / beta + mu
         states = [self.states_below(energy) for energy in energy_smpl]
         return accumulate(T, energy_smpl, states)
 

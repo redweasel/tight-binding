@@ -135,7 +135,7 @@ class TightBindingModel:
                     # TODO handle other offsets, such that there can be multiple additional bands below as well
                     # allow model_sym_size to be bigger than data_sym_size
                     if model_sym_size - data_sym_size > additional_left:
-                        raise ValueError(f"The given representation doesn't fit the data. The additional bands are used up too early.")
+                        raise ValueError("The given representation doesn't fit the data. The additional bands are used up too early.")
                     additional_left -= max(0, model_sym_size - data_sym_size)
                 else:
                     if data_sym_size != model_sym_size:

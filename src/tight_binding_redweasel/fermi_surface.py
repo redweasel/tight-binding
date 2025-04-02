@@ -127,7 +127,7 @@ illum 2
         f.write("# OBJ file from tight_binding_redweasel.fermi_surface\n")
         f.write(f"mtllib {file}.mtl\n")
         f.write(f"o {file}\n")
-        f.write(f"s 1\n")
+        f.write("s 1\n")
 
         volumes, band_indices = fermi_surface(model, fermi_energy, xyz)
         vert_index = 0
@@ -141,7 +141,7 @@ illum 2
             for face in faces:
                 f.write("f")
                 for i in face:
-                    f.write(" %d" % (i + 1 + vert_index))
+                    f.write(f" {i + 1 + vert_index}")
                 f.write("\n")
             vert_index += len(verts)
 

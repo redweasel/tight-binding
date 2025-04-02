@@ -287,7 +287,7 @@ def version() -> str:
     Returns:
         str: version string of Quantum Espresso
     """
-    out = subprocess.Popen(f'echo "" | pw.x', stderr=subprocess.DEVNULL, stdout=subprocess.PIPE, shell=True).stdout.read().decode("utf-8")
+    out = subprocess.Popen('echo "" | pw.x', stderr=subprocess.DEVNULL, stdout=subprocess.PIPE, shell=True).stdout.read().decode("utf-8")
     version = 'v' + out.split("\n")[1].split("starts")[0].split("v")[1].strip()
     return version
 

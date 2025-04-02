@@ -93,9 +93,10 @@ def test_linear_density_of_states():
                 pass
 
             def __call__(self, k_smpl):
-                return (np.sum(np.abs(k_smpl), axis=-1, keepdims=True) + offset_a) * [1, 2, 3, 4] + offset_b
+                return (np.sum(np.abs((k_smpl + 0.5) % 1.0 - 0.5), axis=-1, keepdims=True) + offset_a) * [1, 2, 3, 4] + offset_b
             
             def bands_grad(self, k_smpl):
+                k_smpl = (k_smpl + 0.5) % 1.0 - 0.5
                 base = np.ones_like(k_smpl) * np.sign(k_smpl)
                 base = base[...,None]
                 return self(k_smpl), base * [1, 2, 3, 4]

@@ -57,7 +57,7 @@ def test_bands():
     fail |= hess_diff_23 > max_error
     fail |= hess_diff_13 > max_error
     if fail:
-        print(f"errors |   1-2   |   2-3   |   3-1")
+        print("errors |   1-2   |   2-3   |   3-1")
         print(f"bands  | {bands_diff_12:7.2e} | {bands_diff_23:7.2e} | {bands_diff_13:7.2e}")
         print(f"grads  | {grads_diff_12:7.2e} | {grads_diff_23:7.2e} | {grads_diff_13:7.2e}")
         print(f"hess   | {hess_diff_12:7.2e} | {hess_diff_23:7.2e} | {hess_diff_13:7.2e}")
@@ -112,7 +112,7 @@ def test_loss():
     fail |= max_err_diff_13 > max_error
     if fail:
         print(f"loss was: {loss1:.3e}, {loss2:.3e}, {loss3:.3e}")
-        print(f"errors |   1-2   |   2-3   |   3-1")
+        print("errors |   1-2   |   2-3   |   3-1")
         print(f"loss   | {abs(loss1 - loss2):7.2e} | {abs(loss2 - loss3):7.2e} | {abs(loss3 - loss1):7.2e}")
         print(f"maxerr | {max_err_diff_12:7.2e} | {max_err_diff_23:7.2e} | {max_err_diff_13:7.2e}")
         raise ValueError("Test failed, errors are printed to stdout")
