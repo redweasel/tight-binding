@@ -7,4 +7,5 @@ from .hamiltonian_symmetry import HamiltonianSymmetry
 # module aliases
 from . import unitary_representations as urep
 from . import density_of_states as dos
+from . import bulk_properties as bulk
 from . import kpaths
