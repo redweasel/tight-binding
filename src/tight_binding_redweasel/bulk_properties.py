@@ -23,6 +23,23 @@ antisym_tensor = np.array([
      [0, 0, 0]]
 ])
 
+def hall_coefficients(sigma2, sigma3):
+    """Calculate the hall tensor from `KIntegral.conductivity_hall_tensor`.
+
+    Args:
+        sigma2 ((arraylike[3, 3])):    rank 2 conductivity tensor
+        sigma3 ((arraylike[3, 3, 3])): rank 3 conductivity tensor
+    
+    Returns:
+        (ndarray[3, 3, 3]): R_ijk Hall tensor
+    """
+    # For reference see: BoltzTraP. A code for calculating band-structure dependent quantities
+    # Authors: Georg K.H. Madsena, David J. Singhb
+
+    sigma2_inv = np.linalg.inv(sigma2)
+    return np.einsum("aj,abk,ib->ijk", sigma2_inv, sigma3, sigma2_inv)
+
+    
 class KIntegral:
     """
     This class bundles the data for bandstructure integrals (k-space).
