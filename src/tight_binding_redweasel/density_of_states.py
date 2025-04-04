@@ -129,7 +129,7 @@ class DensityOfStates:
         """Initialize a density of states model from a bandstructure model.
 
         Args:
-            model (Callable[[arraylike(N_k, 3)], bands]): The bandstructure model.
+            model (Callable[[arraylike[N_k, 3]], bands]): The bandstructure model.
                 This class allows any function to be used as a bandstructure model.
                 However there are special features, that use `model.bands_grad` and `model.bands_grad_hess` to improve the results if it is available.
                 The input k for the model should be in reciprocal space, not in crystal space.
@@ -235,14 +235,14 @@ class DensityOfStates:
         return len(self.bands_range)
     
     def check(self, tolerance=1e-10):
-        '''
+        """
         Check if the tight binding model is periodic wrt the given A matrix.
         If not, an assertion error is raised.
         
         Args:
             tolerance (float, optional): The tolerance when comparing the bandstructure of equivalent cells.
                 This is limited by rounding errors in the model and by rounding of the lattice parameters (self.A). Defaults to 1e-10.
-        '''
+        """
         k_smpl = np.random.random((20, 3)) @ np.linalg.inv(self.A)
         bands_a = self.model(k_smpl @ np.linalg.inv(self.A))
         for i in range(3):

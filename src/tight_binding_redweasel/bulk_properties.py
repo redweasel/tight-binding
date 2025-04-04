@@ -309,6 +309,22 @@ class KIntegral:
         return R_H, R_H_error # in m^3/C = Ohm m/T
     
     def conductivity_hall_tensor(self, A, spin_factor=2):
+        """Compute the conductivity tensors of rank 2 and rank 3,
+        which are required for the Drude weight and the hall coefficient.
+        The formulas are:
+        ```
+        sigma2_ij = v_i v_j
+        sigma3_ijk = epsilon_kab v_i M^-1_ja v_b
+        ```
+
+        Args:
+            A (arraylike[3, 3]): The lattice vectors in units of Angstrom.
+            spin_factor (int, optional): The number of electrons per band. Defaults to 2.
+
+        Returns:
+            ((arraylike[3, 3], arraylike[3, 3]), (arraylike[3, 3, 3], arraylike[3, 3, 3])):
+                ((rank 2 conductivity tensor, the error of the tensor), (rank 3 conductivity tensor, the error of the tensor))
+        """
         # From the book "C. Hurd, The Hall Coeffcient of Metals and Alloys (Plenum, New York, 1972)"
         # Assuming constant relaxation time for now -> independent of it
         V_EZ = np.linalg.det(A*1e-10)
@@ -317,7 +333,7 @@ class KIntegral:
         sigma3 = 1/V_EZ * elementary_charge**3/eV * spin_factor * I
         sigma2 = 1/V_EZ * elementary_charge**2/eV * spin_factor * I2
         return (sigma2, sigma2/I2*error2), (sigma3, sigma3/I*error)
-    
+
     # electric part of the heat conductivity kappa in J/m^3 (if cell_length is given in meters)
     def heat_conductivity(self, A, spin_factor=2, print_error=False):
         pass
