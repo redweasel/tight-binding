@@ -68,8 +68,10 @@ def test_symmetry():
     mat = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
     mat2 = Symmetry.cubic(False).symmetrize(mat)
     assert np.all(mat2 == np.eye(3) * 5), "symmetrize with cubic symmetry failed"
-    mat3 = Symmetry.mirror3(False).symmetrize(mat)
+    mat3 = Symmetry.mirror3(False).symmetrize(mat, rank=(2, 0))
     assert np.all(mat3 == np.diag([1, 5, 9])), "symmetrize with mirror symmetry failed"
+    mat3 = Symmetry.mirror_x(False).symmetrize(mat, rank=(0, 2), pseudo_tensor=True)
+    assert np.all(mat3 == np.array([[0, 2, 3], [4, 0, 0], [7, 0, 0]])), "symmetrize with pseudo tensor symmetry failed"
 
     # test conjugacy classes
     classes = Symmetry.cubic(True).conjugacy_classes()

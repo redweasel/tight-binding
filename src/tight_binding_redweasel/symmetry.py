@@ -774,13 +774,14 @@ class Symmetry:
             covered = covered.union(rep_class)
         return classes
 
-    def symmetrize(self, tensor, rank=(1, 1)):
+    def symmetrize(self, tensor, rank=(1, 1), pseudo_tensor=False):
         """Symmetrize a tensor accoding to this symmetry using the group mean.
         This is a linear operation, which is a projection.
 
         Args:
             tensor (arraylike(dim, ..., dim)): The input tensor to be symmetrized.
             rank (Tuple[int, int]): number of left (covariant) and right (contravariant) indices of the tensor
+            pseudo_tensor (bool, optional): If True, the tensor will pick up a negative sign on transformations, which have a negative determinant. Defaults to False.
 
         Returns:
             ndarray(dim, ..., dim): The symmetrized tensor
@@ -795,7 +796,10 @@ class Symmetry:
         einsum_str = ",".join([b + a if i < rank[0] else a + b for i, (a, b) in enumerate(zip(in_letters, out_letters))] + [in_letters]) + "->" + out_letters
         for s in self.S:
             inv_s = np.linalg.inv(s)
-            res += np.einsum(einsum_str, *rank[1]*(inv_s,), *rank[1]*(s,), orig, optimize="optimal")
+            sign = 1
+            if pseudo_tensor:
+                sign = np.sign(np.linalg.det(s)) # what happens with unitary groups where this can be from U(1)?
+            res += np.einsum(einsum_str, *rank[0]*(inv_s,), *rank[1]*(s,), orig * sign, optimize="optimal")
         res /= len(self.S)
         return res
 
