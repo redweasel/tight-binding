@@ -232,7 +232,7 @@ class AsymTightBindingModel:
         if format not in {"json"}:
             raise ValueError('only supported format is "json"')
         opt = np.get_printoptions()
-        np.set_printoptions(precision=None, suppress=False, floatmode="unique", threshold=100000, legacy='1.25')
+        np.set_printoptions(precision=None, suppress=False, floatmode="unique", threshold=100000, legacy='1.21')
         if format == "json":
             json_tb_format.save(filename, self.H.neighbors, self.H.H_r)
             # TODO save the S matrix part as well, maybe in a separate file? Or extend the format...
@@ -513,7 +513,7 @@ class AsymTightBindingModel:
             else:
                 iteration = iterations
         except KeyboardInterrupt:
-            log.add_message("aborted")
+            log.abort()
         self.normalize()
         l, err = self.error(k_smpl, ref_bands, band_weights[0], band_offset)
         log.add_data(iteration, l, err)
@@ -662,7 +662,7 @@ class AsymTightBindingModel:
             else:
                 iteration = iterations
         except KeyboardInterrupt:
-            log.add_message("aborted")
+            log.abort()
         self.normalize()
         l, err = self.error(k_smpl, ref_bands, band_weights[0], band_offset)
         log.add_data(iteration, l, err)
@@ -903,3 +903,64 @@ def free_electron_model_orthogonal(a: float, b: float, c: float, neighbor_count:
 
     eV_unit = 3.80998211 * (2*np.pi)**2 # hbar^2/m_e/2 / (1Å)^2 / 1eV * (2pi)^2
     return model2, eV_unit
+
+
+def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symmetry, start_neighbors_count=2, add_bands_below=0, add_bands_above=0):
+    """
+    This function creates a fit for a given dataset and
+    saves it at various checkpoints as json file `asym_{name}_{neighbors_count}.json`.
+
+    see `/examples/fit_copper.py` for an example how to use this function.
+    """
+    assert add_bands_below >= 0 and add_bands_above >= 0 and start_neighbors_count >= 0
+
+    # the fitting requires (k_smpl_sym, ref_bands, band_weights, neighbors)
+    # the best fitting protocol requires sorting k by distance to 0.
+    reorder = np.argsort(np.linalg.norm(k_smpl, axis=-1))
+    k_smpl = k_smpl[reorder]
+    ref_bands = ref_bands[reorder]
+
+    neighbors_count = start_neighbors_count + 1
+    neighbors = sym.complete_neighbors(neighbors_src[:neighbors_count])
+
+    best_tb_error = float("inf")
+    best_tb = None # type: AsymTightBindingModel
+    for _ in range(4):
+        tb = AsymTightBindingModel.new(neighbors, add_bands_below + np.shape(ref_bands)[-1] + add_bands_above)
+        tb.randomize(0.01)
+        tb.normalize()
+        tb.H.H_r[0] = np.diag(ref_bands[0])
+        # now fit in 10 steps extending from the gamma point (0-point)
+        log = logger.OptimisationLogger(update_line=False)
+        for j in range(1, 11):
+            n = (j * len(k_smpl) + 9) // 10
+            tb.optimize_cg(k_smpl[:n], ref_bands[:n], band_weights, add_bands_below, 1, max_cg_iterations=10, log=log)
+        if log.last_loss() < best_tb_error:
+            best_tb = tb
+            best_tb_error = log.last_loss()
+    assert best_tb is not None
+    tb = best_tb
+    # save checkpoint
+    tb.save(f"asym_{name}_start.json")
+    print(f"saved asym_{name}_start.json")
+
+    # now fit with increasing amount of neighbors
+    log = logger.OptimisationLogger(update_line=False)
+    l, err = tb.error(k_smpl, ref_bands, band_weights, add_bands_below)
+    log.add_data(0, l, err)
+    while neighbors_count < len(neighbors_src):
+        if start_neighbors_count + 1 != neighbors_count:
+            new_neighbors = sym.complete_neighbors([neighbors_src[neighbors_count]])
+            tb.H.add_neighbors(new_neighbors)
+        print("fit with neighbors", neighbors_src[:neighbors_count])
+        neighbors_count += 1
+        for _ in range(10):
+            # small randomisation seems to help convergence...?!?
+            tb.randomize(log.last_loss() * 0.1)
+            tb.normalize()
+            tb.optimize_cg(k_smpl, ref_bands, band_weights, add_bands_below, 100, convergence_threshold=1e-3, max_cg_iterations=5, log=log)
+            # save checkpoint
+            tb.save(f"asym_{name}_{neighbors_count}.json")
+            print(f"saved asym_{name}_{neighbors_count}.json")
+    return tb
+

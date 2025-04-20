@@ -12,6 +12,7 @@ class OptimisationLogger:
         self.print_loss = print_loss
         self.update_line = update_line
         self.count = False
+        self.aborted = False
 
     def add_message(self, msg):
         self.stream.append(msg)
@@ -20,6 +21,12 @@ class OptimisationLogger:
                 # don't put these messages into the update line
                 print()
             print(msg)
+    
+    def abort(self):
+        if self.aborted:
+            raise ValueError("re-aborted run")
+        self.add_message("aborted")
+        self.aborted = True
 
     def add_data(self, iteration, loss, max_err):
         self.stream.append((iteration, loss, max_err))

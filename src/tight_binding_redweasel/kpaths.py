@@ -162,11 +162,9 @@ class KPath(_collections_abc.Sequence):
             # compute the textsize in axis units
             # (the results are a little unprecise, because rounding
             # isn't quite the optimal solution.. just the simplest)
-            textsize = 8 * (ylim[1] - ylim[0]) / \
-                plt.gcf().get_figheight() * 0.15
+            textsize = 8 * (ylim[1] - ylim[0]) / plt.gcf().get_figheight() * 0.15
             # rounded to display precision to avoid label overlap
-            edge_bands = np.round(
-                ibands[-1 if label_bands == "right" else 0] / textsize, 1) * textsize
+            edge_bands = np.round(ibands[-1 if label_bands == "right" else 0] / textsize, 1) * textsize
             y_ticks, inv = np.unique(edge_bands, return_inverse=True)
             y_bands = [[] for i in range(len(y_ticks))]
             for i, j in enumerate(inv):
@@ -198,11 +196,12 @@ class KPath(_collections_abc.Sequence):
         The matching of band colors is done automatically.
 
         Args:
-            func1 (Callable[[arraylike(N_k, dim)], arraylike(N_k, N_B)]): The first function to plot with lines
-            func2 (Callable[[arraylike(N_k, dim)], arraylike(N_k, N_B)]): The second function to plot with dashes
-            label_bands (str, optional): either "left", "right" or "", None. Specifies where to annotate bandindex numbers. Defaults to None.
+            func1 (Callable[[arraylike(N_k, dim)], arraylike(N_k, N_B)]): The first function to plot with lines (the fit).
+            func2 (Callable[[arraylike(N_k, dim)], arraylike(N_k, N_B)]): The second function to plot with dashes (the reference).
+            label_bands (str, optional): either "left", "right" or "", None. Specifies where to annotate bandindex numbers for the the reference. Defaults to None.
             ylim (tuple, optional): y-axis limits for the plot. Defaults to None.
         """
+        from matplotlib import pyplot as plt
         # figure out band_offset by evaluating the model at some point
         point = np.array([self.path[0]])
         gamma_bands_mod = func1(point)[0]
@@ -219,9 +218,9 @@ class KPath(_collections_abc.Sequence):
         # find the configuration with minimal error
         band_offset = np.argmin(fits) + (1-nr)
         self.plot(func1, band_offset=max(0, -band_offset),
-                  label_bands=label_bands, ylim=ylim)
+                  label_bands=None, ylim=ylim)
         return self.plot(func2, '--', band_offset=max(0, band_offset),
-                  label_bands=label_bands, ylim=ylim)
+                  label_bands=label_bands, ylim=plt.gca().get_ylim())
 
     def dim(self) -> int:
         """Get the dimension of the k-space of this path.

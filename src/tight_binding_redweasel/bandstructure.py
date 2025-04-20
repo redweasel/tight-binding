@@ -395,7 +395,7 @@ class BandStructureModel:
             else:
                 iteration = iterations
         except KeyboardInterrupt:
-            log.add_message("aborted")
+            log.abort()
         self.normalize()
         l, err = self.error(k_smpl, ref_bands, band_weights[0], band_offset)
         log.add_data(iteration, l, err)
@@ -546,7 +546,7 @@ class BandStructureModel:
             else:
                 iteration = iterations
         except KeyboardInterrupt:
-            log.add_message("aborted")
+            log.abort()
         self.normalize()
         l, err = self.error(k_smpl, ref_bands, band_weights[0], band_offset)
         log.add_data(iteration, l, err)
@@ -689,8 +689,7 @@ class BandStructureModel:
             raise ValueError(
                 'supported formats are "python", "json" and "wannier90"')
         opt = np.get_printoptions()
-        np.set_printoptions(precision=16, suppress=False,
-                            threshold=100000, legacy='1.25')
+        np.set_printoptions(precision=None, suppress=False, floatmode="unique", threshold=100000, legacy='1.21')
         if format == "python":
             with open(filename, "w") as file:
                 file.write(repr(self.params_complex()) + ",\\\n")

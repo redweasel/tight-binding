@@ -24,7 +24,13 @@ antisym_tensor = np.array([
 ])
 
 def hall_coefficients(sigma2, sigma3):
-    """Calculate the hall tensor from `KIntegral.conductivity_hall_tensor`.
+    """Calculate the hall (pseudo-)tensor from the output of `KIntegral.conductivity_hall_tensor`.
+
+    The result may be asymmetric. To symmetrize, use
+    ```python
+    sym = Symmetry(...)
+    R_h = sym.symmetrize(R_h, rank=(0, 3), pseudo_tensor=True)
+    ```
 
     Args:
         sigma2 ((arraylike[3, 3])):    rank 2 conductivity tensor

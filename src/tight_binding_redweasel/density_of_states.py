@@ -339,7 +339,7 @@ class DensityOfStates:
     # for a given number of electrons per cell (float in general)
     # compute the fermi energy (correct for metals and isolators)
     def fermi_energy(self, electrons: float, tol=1e-8, maxsteps=30) -> float:
-        assert electrons >= 0 and electrons <= len(self.bands_range), f'"electrons" must be between 0 and the number of bands (here {len(self.bands_range)})'
+        assert electrons >= 0 and electrons <= len(self.bands_range), f'"electrons" (got {electrons:.2f}) must be between 0 and the number of bands ({len(self.bands_range)})'
         # check if the material is an isolator
         e_int = round(electrons)
         if e_int == electrons:
