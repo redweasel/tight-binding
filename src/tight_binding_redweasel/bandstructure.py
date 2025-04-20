@@ -451,7 +451,8 @@ class BandStructureModel:
             f_i[:, i] = self.f_i(k_smpl, i)
         f_i[:, 0] /= 2  # divide by 2 because it is added without the symmetrization
         c_i = np.conj(f_i)
-        fc_i = np.array([f_i, c_i]) # so it doesn't need to be recreated in each iteration!
+        # so it doesn't need to be recreated in each iteration!
+        fc_i = np.array([f_i, c_i])
 
         # unsure about these k_weights...
         # c2_i = np.linalg.pinv(f_i.T)
@@ -520,7 +521,7 @@ class BandStructureModel:
                 b = np.einsum("nk,nid,njd,nd->kij", c_i_E_mat_c,
                               eigvecs, eigvecs_c, diff, optimize=mat_t_path)
                 if combined_path is None:
-                    #combined_path, info = np.einsum_path("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i], [b, b], optimize="optimal")
+                    # combined_path, info = np.einsum_path("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, [f_i, f_i], [b, b], optimize="optimal")
                     # print(combined_path, info)
                     # HACK: sometimes einsum_path completely fails! This is a path that works well for my most common case:
                     combined_path = [
@@ -731,8 +732,7 @@ class BandStructureModel:
             else:
                 raise ValueError("unrecognised format for file " + filename)
         if format not in {"python", "json", "wannier90hr", "wannier90tb"}:
-            raise ValueError(
-                'supported formats are "python", "json" and "wannier90", but was ' + str(format))
+            raise ValueError('supported formats are "python", "json", "wannier90hr" and "wannier90tb", but was ' + str(format))
         if format == "python":
             with open(filename, "r") as file:
                 H_r_repr = " ".join(file.readlines())

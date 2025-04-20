@@ -7,6 +7,7 @@ from . import json_tb_format
 from . import wannier90_tb_format as tb_fmt
 from .linalg import *
 
+
 class HermitianFourierSeries:
     """
     This class represents a fourier series with a hermitian output for each input position k.
@@ -44,15 +45,15 @@ class HermitianFourierSeries:
         assert i >= 0
         k = np.asarray(k)
         r = self.neighbors[i]
-        return 2j*np.pi * np.exp(2j*np.pi*(k @ r))[...,None] * np.asarray(r)
-    
+        return 2j*np.pi * np.exp(2j*np.pi*(k @ r))[..., None] * np.asarray(r)
+
     def ddf_i(self, k, i):
         """Second derivative of f_i"""
         assert i >= 0
         k = np.asarray(k)
         r = self.neighbors[i]
-        r_sqr = np.asarray(r)[:,None] * np.asarray(r)[None,:]
-        return (2j*np.pi)**2 * np.exp(2j*np.pi*(k @ r))[...,None,None] * r_sqr
+        r_sqr = np.asarray(r)[:, None] * np.asarray(r)[None, :]
+        return (2j*np.pi)**2 * np.exp(2j*np.pi*(k @ r))[..., None, None] * r_sqr
 
     def f(self, k):
         """Compute the hermitian (N, N) matrix"""
@@ -64,7 +65,7 @@ class HermitianFourierSeries:
         # expect H_r[0] to always be hermitian! (this is very important for symmetrization)
         mat += np.asarray(self.f_i(k, 0))[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
-    
+
     def df(self, k):
         """Compute the derivative of f wrt k in the direction dk, outputshape (dim(k), N, N)"""
         mat = np.zeros(np.shape(k) + self.H_r[0].shape, dtype=np.complex128)
@@ -74,20 +75,21 @@ class HermitianFourierSeries:
         mat += np.conj(np.swapaxes(mat, -1, -2))
         mat += np.asarray(self.df_i(k, 0))[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
-    
+
     def ddf(self, k):
         """Compute the second derivative of f wrt k in the direction dk, outputshape (dim(k), dim(k), N, N)"""
-        mat = np.zeros(np.shape(k) + (np.shape(k)[-1],) + self.H_r[0].shape, dtype=np.complex128)
+        mat = np.zeros(np.shape(k) + (np.shape(k)
+                       [-1],) + self.H_r[0].shape, dtype=np.complex128)
         H_r_shape = tuple([1]*(1+len(np.shape(k)))) + self.H_r[0].shape
         for i in range(1, len(self.H_r)):
             mat += np.asarray(self.ddf_i(k, i))[..., None, None] * self.H_r[i].reshape(H_r_shape)
         mat += np.conj(np.swapaxes(mat, -1, -2))
         mat += np.asarray(self.ddf_i(k, 0))[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
-    
+
     def copy(self):
         return HermitianFourierSeries(self.neighbors.copy(), self.H_r.copy())
-    
+
     def unit_matrix(neighbors, n) -> Self:
         """Initialize the fourier series, such that it equals the identity for all k.
 
@@ -102,7 +104,7 @@ class HermitianFourierSeries:
         H_r = np.zeros((len(neighbors), n, n))
         H_r[0] = np.eye(n)
         return HermitianFourierSeries(neighbors, H_r)
-    
+
     def direct_sum(self, other: Self) -> Self:
         if np.any(self.neighbors != other.neighbors):
             raise NotImplementedError("mixing neighbor sets in the direct sum is currently not implemented.")
@@ -123,7 +125,7 @@ class HermitianFourierSeries:
                     raise ValueError("redundant/duplicate neighbors are not allowed")
         self.neighbors = np.concatenate([self.neighbors, neighbors], axis=0)
         self.H_r = np.concatenate([self.H_r, np.zeros((len(neighbors),) + self.H_r.shape[1:])], axis=0)
-    
+
     def limit_neighbors(self, max_length: float):
         """Remove all neighbors that have a vector length more than a given threshold length.
 
@@ -133,7 +135,7 @@ class HermitianFourierSeries:
         keep = np.linalg.norm(self.neighbors, axis=-1) <= max_length + 1e-8
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
-    
+
     def limit_neighbor_count(self, max_count: int):
         """Remove all neighbors that exceed the targeted number of neighbors.
 
@@ -144,7 +146,7 @@ class HermitianFourierSeries:
         sort = np.argsort(np.linalg.norm(self.neighbors, axis=-1))[:max_count]
         self.neighbors = np.array(self.neighbors[sort])
         self.H_r = np.array(self.H_r[sort])
-    
+
     def cleanup_neighbors(self, min_norm):
         """Remove all neighbors that have a coefficient matrix with a norm smaller than a given threshold.
 
@@ -152,9 +154,10 @@ class HermitianFourierSeries:
             min_norm (float): Minimal norm for the neighbor coefficients. Everything else gets cut off.
         """
         keep = np.linalg.norm(self.H_r, axis=(-1, -2)) >= min_norm
-        keep[0] = True # always keep the 0
+        keep[0] = True  # always keep the 0
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
+
 
 class AsymTightBindingModel:
     """
@@ -167,7 +170,7 @@ class AsymTightBindingModel:
         assert S is None or type(S) == HermitianFourierSeries
         self.H = H
         self.S = HermitianFourierSeries.unit_matrix([(0,)*H.dim()], np.shape(H.H_r)[1]) if S is None else S
-    
+
     def new(neighbors: np.ndarray, band_count: int) -> Self:
         """Create a new empty model.
 
@@ -196,7 +199,7 @@ class AsymTightBindingModel:
 
     def copy(self):
         return AsymTightBindingModel(self.H.copy(), self.S.copy())
-    
+
     def init_from_ref(neighbors, k_smpl, ref_bands, use_S=False) -> Self:
         """Initialize a tight binding model from reference data."""
         assert len(k_smpl[0]) == len(neighbors[0])
@@ -210,7 +213,8 @@ class AsymTightBindingModel:
         k0_bands = ref_bands[k0_index]
         model_bands = k0_bands
         # add random matrices for the k dependence to break the gradient descent subspace
-        scale = (np.max(model_bands) - np.min(model_bands)) * 0.001 # TODO make this per band as otherwise it will become really large for far apart bands
+        # TODO make this per band as otherwise it will become really large for far apart bands
+        scale = (np.max(model_bands) - np.min(model_bands)) * 0.001
         H_r = [np.diag(model_bands)] + [random_hermitian(len(model_bands)) * scale for _ in range(param_count-1)]
         if use_S:
             tb = AsymTightBindingModel(HermitianFourierSeries(neighbors, H_r), HermitianFourierSeries.unit_matrix(neighbors, len(H_r[0])))
@@ -228,12 +232,12 @@ class AsymTightBindingModel:
         if format not in {"json"}:
             raise ValueError('only supported format is "json"')
         opt = np.get_printoptions()
-        np.set_printoptions(precision=16, suppress=False, threshold=100000, legacy='1.25')
+        np.set_printoptions(precision=None, suppress=False, floatmode="unique", threshold=100000, legacy='1.25')
         if format == "json":
             json_tb_format.save(filename, self.H.neighbors, self.H.H_r)
             # TODO save the S matrix part as well, maybe in a separate file? Or extend the format...
-    
-        np.set_printoptions(**opt) # reset printoptions
+
+        np.set_printoptions(**opt)  # reset printoptions
 
     def load(filename, format=None) -> Self:
         if format is None:
@@ -241,12 +245,14 @@ class AsymTightBindingModel:
                 format = "python"
             elif filename.endswith(".json"):
                 format = "json"
-            elif filename.endswith(".dat"):
-                format = "wannier90"
+            elif filename.endswith("tb.dat"):
+                format = "wannier90tb"
+            elif filename.endswith("hr.dat"):
+                format = "wannier90hr"
             else:
                 raise ValueError("unrecognised format for file " + filename)
-        if format not in {"python", "json", "wannier90"}:
-            raise ValueError('supported formats are "python", "json" and "wannier90", but was ' + str(format))
+        if format not in {"python", "json", "wannier90hr", "wannier90tb"}:
+            raise ValueError('supported formats are "python", "json", "wannier90hr" and "wannier90tb", but was ' + str(format))
         if format == "python":
             with open(filename, "r") as file:
                 H_r_repr = " ".join(file.readlines())
@@ -256,21 +262,24 @@ class AsymTightBindingModel:
                 if len(sym) > 1:
                     # multiply the parameters with correct weights
                     weights = Symmetry(S, inversion=False).r_class_size(neighbors)
-                    H_r[1:] /= weights[1:,None,None]
+                    H_r[1:] /= weights[1:, None, None]
                     # complete neighbors and H_r using sym
                     complete_neighbors, order = sym.complete_neighbors(neighbors, return_order=True)
                     model = AsymTightBindingModel(HermitianFourierSeries(complete_neighbors, H_r[order]))
                     raise ValueError("input with coefficient symmetry is currently not supported as there is some inconsistency somewhere")
                 else:
                     model = AsymTightBindingModel(HermitianFourierSeries(neighbors, H_r))
-        elif format == "wannier90":
-            neighbors, H_r, w_r_H_r = tb_fmt.load(filename)
+        elif format == "wannier90hr":
+            neighbors, H_r = tb_fmt.load_hr(filename)
+            model = AsymTightBindingModel(HermitianFourierSeries(neighbors, H_r))
+        elif format == "wannier90tb":
+            neighbors, H_r, w_r_params, degeneracies, A = tb_fmt.load_tb(filename)
             model = AsymTightBindingModel(HermitianFourierSeries(neighbors, H_r))
         elif format == "json":
             neighbors, H_r = json_tb_format.load(filename)
             model = AsymTightBindingModel(HermitianFourierSeries(neighbors, H_r))
         return model
-    
+
     def randomize(self, sigma, keep_zeros=False, randomize_S=False):
         """
         Randomize parameters with normal distributed numbers with a standard deviation sigma.
@@ -294,12 +303,12 @@ class AsymTightBindingModel:
         """
         assert len(k_smpl) == len(ref_bands)
         assert len(band_weights) == len(ref_bands[0])
-        bands = self.bands(k_smpl)[:,band_offset:][:,:len(ref_bands[0])]
+        bands = self.bands(k_smpl)[:, band_offset:][:, :len(ref_bands[0])]
         err = bands - ref_bands
         max_err = np.max(np.abs(err), axis=0)
         err *= np.reshape(band_weights, (1, -1))
         return np.linalg.norm(err) / len(k_smpl)**0.5, max_err
-    
+
     def loss(self, k_smpl, ref_bands, band_weights, band_offset):
         """
         Returns:
@@ -307,10 +316,10 @@ class AsymTightBindingModel:
         """
         assert len(k_smpl) == len(ref_bands)
         assert len(band_weights) == len(ref_bands[0])
-        bands = self.bands(k_smpl)[:,band_offset:][:,:len(ref_bands[0])]
+        bands = self.bands(k_smpl)[:, band_offset:][:, :len(ref_bands[0])]
         err = (bands - ref_bands) * np.reshape(band_weights, (1, -1))
         return np.linalg.norm(err) / len(k_smpl)**0.5
-    
+
     def print_error(self, k_smpl, ref_bands, band_weights, band_offset, prefix="", log=None):
         """Print the loss and the maximal error per band"""
         band_weights = np.broadcast_to(np.ravel(band_weights / np.mean(band_weights)), (len(ref_bands[0]),))
@@ -338,7 +347,7 @@ class AsymTightBindingModel:
             H_r_mask = np.where(np.abs(self.H.H_r) < 1e-14, 0.0, 1.0)
             if train_S:
                 S_r_mask = np.where(np.abs(self.S.H_r) < 1e-14, 0.0, 1.0)
-        if batch_div == 1 and use_pinv: # improved optimization
+        if batch_div == 1 and use_pinv:  # improved optimization
             if max_accel_global is None:
                 max_accel_global = 1.0
             log.add_message(f"maximal acceleration {max_accel_global}")
@@ -346,32 +355,36 @@ class AsymTightBindingModel:
         f_i = np.zeros((len(k_smpl), len(self.H.H_r)), dtype=np.complex128)
         for i in range(len(self.H.H_r)):
             f_i[:, i] = self.H.f_i(k_smpl, i)
-        f_i[:, 0] /= 2 # divide by 2 because it is added without the symmetrization
+        f_i[:, 0] /= 2  # divide by 2 because it is added without the symmetrization
         # find the perfect "anti-coefficients", such that c_i @ f_i.T = I
-        c_i = np.conj(f_i) # modified gradient descent with conjugated derivatives
-        if batch_div == 1 and use_pinv: # improved optimization
+        # modified gradient descent with conjugated derivatives
+        c_i = np.conj(f_i)
+        if batch_div == 1 and use_pinv:  # improved optimization
             log.add_message("preparing pseudoinverse for H")
             # NOTE: the order of k_smpl is arbitrary and not important for the following calculation
             c_i = np.linalg.pinv(f_i.T)
             # counteract the usual treatment:
-            c_i[:,0] *= 2
+            c_i[:, 0] *= 2
             norm = len(f_i[0]) - 1 + 0.5**3
             c_i *= norm
             c_i *= len(k_smpl)
         if train_S:
             # memoize self.S.f_i here using a rectangular matrix
-            s_f_i = np.zeros((len(k_smpl), len(self.S.H_r)), dtype=np.complex128)
+            s_f_i = np.zeros((len(k_smpl), len(self.S.H_r)),
+                             dtype=np.complex128)
             for i in range(len(self.S.H_r)):
                 s_f_i[:, i] = self.S.f_i(k_smpl, i)
-            s_f_i[:, 0] /= 2 # divide by 2 because it is added without the symmetrization
+            # divide by 2 because it is added without the symmetrization
+            s_f_i[:, 0] /= 2
             # find the perfect "anti-coefficients", such that c_i @ f_i.T = I
-            s_c_i = np.conj(s_f_i) # modified gradient descent with conjugated derivatives
-            if batch_div == 1 and use_pinv: # improved optimization
+            # modified gradient descent with conjugated derivatives
+            s_c_i = np.conj(s_f_i)
+            if batch_div == 1 and use_pinv:  # improved optimization
                 log.add_message("preparing pseudoinverse for S")
                 # NOTE: the order of k_smpl is arbitrary and not important for the following calculation
                 s_c_i = np.linalg.pinv(s_f_i.T)
                 # counteract the usual treatment:
-                s_c_i[:,0] *= 2
+                s_c_i[:, 0] *= 2
                 norm = len(s_f_i[0]) - 1 + 0.5**3
                 s_c_i *= norm
                 s_c_i *= len(k_smpl)
@@ -401,7 +414,7 @@ class AsymTightBindingModel:
                 if batch_div != 1 and use_pinv:
                     batch_c_i = np.linalg.pinv(batch_f_i.T)
                     # counteract the usual treatment:
-                    batch_c_i[:,0] *= 2
+                    batch_c_i[:, 0] *= 2
                     norm = len(batch_f_i[0]) - 1 + 0.5**3
                     batch_c_i *= norm
                     batch_c_i *= len(batch)
@@ -417,8 +430,8 @@ class AsymTightBindingModel:
                     H = np.einsum("nkl,in->ikl", self.S.H_r, batch_s_f_i)
                     S += np.conj(np.swapaxes(S, -1, -2))
                 eigvals, eigvecs = geigh(H, S)
-                eigvals = eigvals[:,band_offset:][:,:len(batch_ref[0])]
-                eigvecs = eigvecs[:,:,band_offset:][:,:,:len(batch_ref[0])]
+                eigvals = eigvals[:, band_offset:][:, :len(batch_ref[0])]
+                eigvecs = eigvecs[:, :, band_offset:][:, :, :len(batch_ref[0])]
                 eigvecs_c = np.conj(eigvecs)
 
                 # the following "norm" makes sure that if only one k_smpl is used, then the convergence happens in one step.
@@ -431,14 +444,15 @@ class AsymTightBindingModel:
                 diff = batch_ref - eigvals
                 if batch_div == 1:
                     max_err = np.max(np.abs(diff), axis=0)
-                
+
                 # implementation of the following einsum
                 #H_r_add = np.einsum("bik,bjk,bk,b,bn,k->nij", eigvecs, eigvecs_c, diff, 2 / s, batch_f_i, weights, optimize="greedy") / len(batch)
                 # but faster: (I don't know why it's faster...)
                 diff *= band_weights
                 if batch_div == 1:
                     assert len(batch) == len(k_smpl)
-                    loss = np.linalg.norm(diff) / len(batch)**.5 # this is how the loss is computed in self.error
+                    # this is how the loss is computed in self.error
+                    loss = np.linalg.norm(diff) / len(batch)**.5
 
                 # check if the iteration is already converged
                 if iteration % 100 == 0 or batch_div == 1:
@@ -449,10 +463,10 @@ class AsymTightBindingModel:
                         break
                     last_loss = loss
                     log.add_data(iteration, loss, max_err)
-                
+
                 # band_weights with new stepsize estimation, needs these squared
                 diff *= band_weights
-                H_diff = diff / norm[:,None]
+                H_diff = diff / norm[:, None]
 
                 H_diff = eigvecs @ (H_diff[...,None] * np.swapaxes(eigvecs_c, 1, 2))
                 H_r_add = np.einsum("nij,nk->kij", H_diff, batch_c_i)
@@ -529,10 +543,11 @@ class AsymTightBindingModel:
         for ki, k in enumerate(k_smpl):
             for i in range(len(self.H.H_r)):
                 f_i[ki, i] = self.H.f_i(k, i)
-        f_i[:, 0] /= 2 # divide by 2 because it is added without the symmetrization
+        # divide by 2 because it is added without the symmetrization
+        f_i[:, 0] /= 2
         c_i = np.conj(f_i)
         fc_i = np.array([f_i, c_i])
-        
+
         if train_S:
             # memoize self.S.f_i here using a rectangular matrix
             s_f_i = np.zeros((len(k_smpl), len(self.S.H_r)),
@@ -540,7 +555,8 @@ class AsymTightBindingModel:
             for ki, k in enumerate(k_smpl):
                 for i in range(len(self.S.H_r)):
                     s_f_i[ki, i] = self.S.f_i(k, i)
-            s_f_i[:, 0] /= 2 # divide by 2 because it is added without the symmetrization
+            # divide by 2 because it is added without the symmetrization
+            s_f_i[:, 0] /= 2
             s_c_i = np.conj(s_f_i)
 
         # unsure about these k_weights...
@@ -570,16 +586,16 @@ class AsymTightBindingModel:
             E_mat = np.eye(len(f_i[0]))
             E_mat_c = np.eye(len(f_i[0]))
             c_i_E_mat_c = c_i
+
             def precond(x):
                 return x
-
 
         self.normalize()
 
         if not train_S:
             # precompute S for every k_smpl
             S = self.S.f(k_smpl)
-        
+
         # loss = self.loss(k_smpl, ref_bands, band_, band_offset)
         loss = float("inf")
         try:
@@ -662,7 +678,7 @@ class AsymTightBindingModel:
         self.S.H_r[0] = (self.S.H_r[0] + self.S.H_r[0].T.conj()) / 2
         # first normalize S such that S(0)=1
         # NOTE: I think using cholestky instead of matrix sqrt can break symmetries...
-        #L = np.conj(np.linalg.inv(np.linalg.cholesky(self.S.f(((0,)*self.dim(),))[0])).T)
+        # L = np.conj(np.linalg.inv(np.linalg.cholesky(self.S.f(((0,)*self.dim(),))[0])).T)
         la, ev = np.linalg.eigh(self.S.f(((0,)*self.dim(),))[0])
         L = ev @ np.diag(la**-.5) @ np.conj(ev.T)
         self.H.H_r = np.einsum("ji,njk,kl->nil", np.conj(L), self.H.H_r, L)
@@ -689,18 +705,18 @@ class AsymTightBindingModel:
                         self.S.H_r[1:, :, i] *= sign
                         self.S.H_r[1:, i, :] *= np.conj(sign)
                     else:
-                        pass # TODO switch to a different cell to normalize
+                        pass  # TODO switch to a different cell to normalize
         # normalize continuous DoF (TODO)
 
     def permute(self, order):
         """apply a permutation to the basis of the hamiltonian"""
         for i in range(len(self.H.H_r)):
             self.H.H_r[i] = self.H.H_r[i][order]
-            self.H.H_r[i] = self.H.H_r[i][:,order]
+            self.H.H_r[i] = self.H.H_r[i][:, order]
         for i in range(len(self.S.S_r)):
             self.S.S_r[i] = self.S.S_r[i][order]
-            self.S.S_r[i] = self.S.S_r[i][:,order]
-    
+            self.S.S_r[i] = self.S.S_r[i][:, order]
+
     def transform(self, A):
         """Apply a transformation on the neighbors in the fourier series.
         This is useful to go from a crystal space fit to the reciprocal space fit.
@@ -711,7 +727,6 @@ class AsymTightBindingModel:
         """
         self.H.neighbors = np.einsum("ji,ni->nj", A, self.H.neighbors)
         self.S.neighbors = np.einsum("ji,ni->nj", A, self.S.neighbors)
-        
 
     def params_complex(self):
         """
@@ -721,7 +736,7 @@ class AsymTightBindingModel:
             ndarray: The coefficients of the HermitianFourierSeries `self.H`
         """
         return self.H.H_r
-    
+
     def set_from_complex(self, H_r):
         """Set `self.H` from the values of the complex fourier coefficients $H_r$.
 
@@ -729,7 +744,7 @@ class AsymTightBindingModel:
             H_r (arraylike): the complex matrices, that appear in the fourier series, matching the neighbor list of this model.
         """
         self.H.H_r = np.asarray(H_r).astype(np.complex128)
-    
+
     def bands(self, k_smpl):
         """Compute the bandstructure for a given set of k samples.
 
@@ -740,10 +755,10 @@ class AsymTightBindingModel:
             arraylike: the bandstructure in shape (N_k, N_b)
         """
         return geigvalsh(self.H.f(k_smpl), self.S.f(k_smpl))
-    
+
     def __call__(self, k_smpl):
         return self.bands(k_smpl)
-    
+
     def bands_grad(self, k_smpl):
         """Computes the gradients of the bands (group velocities).
         Because that requires computing the bandstructure, the bandstructure is also returned.
@@ -755,7 +770,7 @@ class AsymTightBindingModel:
             (arraylike(N_k, N_b), arraylike(N_k, dim, N_b)): (bands, grads)
         """
         return tuple(geigh_grad(self.H.f(k_smpl), self.S.f(k_smpl), self.H.df(k_smpl), self.S.df(k_smpl))[:2])
-    
+
     def bands_grad_hess(self, k_smpl):
         """Computes the hessians of the bands (effective inverse masses).
         Because that requires computing the bandstructure and its gradients, they are also returned.
@@ -775,12 +790,13 @@ class AsymTightBindingModel:
         grads = np.real(np.diagonal(df_ev, axis1=2, axis2=3))
         hess1 = np.real(np.einsum("mji, mpqjk, mki -> mpqi", np.conj(ev), ddf, ev))
         # second order perturbation theory terms
-        no_diag = np.array(df_ev) # copy before modification (grads is a view)
-        for i in range(len(grads[0,0])):
-            no_diag[:,:,i,i] = 0 # zero out diagonal terms
-        #dev = ev[:,None,:,:] @ (no_diag / (bands[:,None,:,None] - bands[:,None,None,:] + 1e-40))
-        #hess2 = np.real(np.einsum("mji, mpjk, mqki -> mpqi", 2*np.conj(ev), df, dev))
-        db = no_diag / (bands[:,None,:,None] - bands[:,None,None,:] + 1e-40)
+        no_diag = np.array(df_ev)  # copy before modification (grads is a view)
+        for i in range(len(grads[0, 0])):
+            no_diag[:, :, i, i] = 0  # zero out diagonal terms
+        # dev = ev[:,None,:,:] @ (no_diag / (bands[:,None,:,None] - bands[:,None,None,:] + 1e-40))
+        # hess2 = np.real(np.einsum("mji, mpjk, mqki -> mpqi", 2*np.conj(ev), df, dev))
+        db = no_diag / (bands[:, None, :, None] -
+                        bands[:, None, None, :] + 1e-40)
         hess2 = np.real(np.einsum("mpik, mqki -> mpqi", df_ev, db))
         return bands, grads, hess1 - 2*hess2
 
@@ -833,7 +849,7 @@ class AsymTightBindingModel:
                         H_r2[k, i*n:(i+1)*n, j*n:(j+1)*n] = H_r[m] if not mirror else np.conj(H_r[m].T)
         model = AsymTightBindingModel(HermitianFourierSeries(new_neighbors, H_r2))
         return model
-    
+
     def __add__(self, other) -> Self:
         if type(other) == type(self):
             # direct sum of the models -> combine the bandstructures
@@ -844,7 +860,7 @@ class AsymTightBindingModel:
             H = self.H.copy()
             H.H_r[0] += self.S.H_r[0] * float(other)
             return AsymTightBindingModel(H, S=self.S.copy())
-    
+
     def __mul__(self, fac: float) -> Self:
         return AsymTightBindingModel(HermitianFourierSeries(self.H.neighbors, self.H.H_r * fac), S=self.S.copy())
 

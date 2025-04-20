@@ -500,7 +500,8 @@ class Symmetry:
         It will be ordered appropriately for a reshape into a grid (useful for interpolation).
         
         If the input list of k-points contains symmetrically equivalent points,
-        the output will have duplicates! There is a warning printed if this happens.
+        the output will have duplicates! There is a warning printed if this happens, however
+        the duplicates are deduplicated for the output.
 
         Args:
             k_smpl (arraylike(N_k, dim(k))): List of points, that this symmetry is applied to.

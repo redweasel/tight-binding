@@ -84,7 +84,7 @@ def plot_3D_fermi_surface(model, fermi_energy, N=32, elev=35, azim=20, k_range=[
     ax = fig.add_subplot(111, projection='3d')
 
     plot_3D_fermi_surface_to_ax(
-        ax, model, fermi_energy, N, elev, azim, k_range)
+        ax, model, fermi_energy, N, k_range)
 
     ax.view_init(elev=elev, azim=azim)
     
@@ -152,23 +152,24 @@ def plot_2D_fermi_surface(model, fermi_energy, z=[0, 1/2], N=50, show=plt.show, 
     y_ = np.linspace(*k_range, N)
     z_ = np.array([0.0])
     x, y, z_ = np.meshgrid(x_, y_, z_, indexing='ij')
-
+    models = model if "__iter__" in dir(model) else [model]
     for z2 in z:
         z_ = z_*0.0 + z2
         k_smpl = np.stack([x, y, z_], axis=-1)
         shape = list(np.shape(k_smpl))
-        la = model(np.reshape(k_smpl, (-1, 3)))
-        color_index = 0
-        for i in range(len(la[0])):
-            volume = np.reshape(la[:, i], shape[:-1]) - fermi_energy
-            if np.any(volume > 0) and np.any(volume < 0):
-                cs = plt.contour(x.reshape((N, N)), y.reshape(
-                    (N, N)), volume.reshape((N, N)), (0,), colors=f"C{color_index}")
-                # plt.clabel(cs, inline=1, fontsize=10) # for the case where more than 1 line is plotted
-                for c in cs.collections:
-                    c.set_label(f"Band {i}")
-                # print(i)
-                color_index += 1
+        for m, model in enumerate(models):
+            la = model(np.reshape(k_smpl, (-1, 3)))
+            color_index = 0
+            for i in range(len(la[0])):
+                volume = np.reshape(la[:, i], shape[:-1]) - fermi_energy
+                if np.any(volume > 0) and np.any(volume < 0):
+                    cs = plt.contour(x.reshape((N, N)), y.reshape(
+                        (N, N)), volume.reshape((N, N)), (0,), colors=f"C{color_index}", linestyles=["solid", "dashed", "dashdot", "dotted"][m % 4])
+                    # plt.clabel(cs, inline=1, fontsize=10) # for the case where more than 1 line is plotted
+                    for c in cs.collections:
+                        c.set_label(f"Band {i}")
+                    # print(i)
+                    color_index += 1
         # set limits for the case, that there is no bands plotted
         plt.xlim(k_range[0], k_range[1])
         plt.ylim(k_range[0], k_range[1])
