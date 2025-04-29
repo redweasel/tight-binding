@@ -40,30 +40,69 @@ def gauss_6_f(f, mu, beta):
     f_smpl = f(x_smpl)
     return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0) / beta * 2*np.log(2)
 
-# explicitly compute the value of the convolution of the states
-# function with the derivative of the fermi function at a given point.
-# takes a piecewise linear representation of the states function
-# and returns the exact convolution.
 def convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=None):
+    """explicitly compute the value of the convolution of the states
+    function with the negative derivative of the Fermi-function.
+    takes a piecewise linear representation of the states function
+    and returns the exact convolution.
+
+    Args:
+        x (float): The energy value to evaluate the convolution at.
+        energy_smpl (arraylike[N_e]): The energy points of the piecewise linear approximation.
+        states (arraylike[..., N_e]): The values of the piecewise linear approximation. Usually the number of states.
+        beta (float): the inverse temperature 1/(k_B*T)
+        extrapolation (str, optional): How to extrapolate beyond the piecewise linear part. Either "flat" for a constant piece on both sides, or None. Defaults to 'flat'.
+        extrapolation_point (Tuple[float, float], optional): If given, (highest_energy, band_count) of the right extrapolation point. The left extrapolation point is assumed to be at (0, 0). Defaults to None.
+    """
     def f(e):
         return scipy.special.expit(-beta*e) # overflow free variant of 1 / (1 + exp(beta*e)), just to silence the warnings
-    #def F(e):
-    #    return -np.log1p(np.exp(-beta*e)) / beta
+    def F(e):
+        #return -np.log1p(np.exp(-beta*e)) / beta
+        return scipy.special.log_expit(beta*e) / beta # overflow free variant
     def F_diff(e0, e1):
-        #return F(e1) - F(e0)
-        return np.log(scipy.special.expit(beta*e1) + 1/(np.exp(beta*e0) + np.exp(beta*(e0-e1)))) / beta
+        return F(e1) - F(e0)
+        #return np.log(scipy.special.expit(beta*e1) + np.exp(-beta*e0)/(1 + np.exp(-beta*e1))) / beta
     def segment(x, x0, x1, y0, y1):
         return y1*f(x-x1) - y0*f(x-x0) + (y1-y0)/(x1-x0)*F_diff(x-x0, x-x1)
-    s = np.sum(segment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1), states)[1:])
+    s = np.sum(segment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1, axis=-1), states)[...,1:], axis=-1)
     # add segments/other functions as extrapolation on both side to get correct high temperature behavior
     if extrapolation == 'flat':
         if extrapolation_point is None:
-            s += f(x - energy_smpl[0]) * states[0]
-            s += f(energy_smpl[-1] - x) * states[-1]
+            s += f(x - energy_smpl[0]) * states[...,0]
+            s += f(energy_smpl[-1] - x) * states[...,-1]
         else:
             # assume N(mu) starts at 0 and ends at N(extrapolation_point[0]) = extrapolation_point[1]
             s += f(extrapolation_point[0] - x) * extrapolation_point[1]
-    # TODO add an option for the free electron gas as extrapolation
+    return s
+
+def convolve_ddf(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=None):
+    """The analytic derivative of `convolve_df`
+
+    Args:
+        x (float): The energy value to evaluate the convolution at.
+        energy_smpl (arraylike[N_e]): The energy points of the piecewise linear approximation.
+        states (arraylike[..., N_e]): The values of the piecewise linear approximation. Usually the number of states.
+        beta (float): the inverse temperature 1/(k_B*T)
+        extrapolation (str, optional): How to extrapolate beyond the piecewise linear part. Either "flat" for a constant piece on both sides, or None. Defaults to 'flat'.
+        extrapolation_point (Tuple[float, float], optional): If given, (highest_energy, band_count) of the right extrapolation point. The left extrapolation point is assumed to be at (0, 0). Defaults to None.
+    """
+    def df(e):
+        return -0.25*beta / np.cosh(-0.5*beta*e)**2 # ignore warning here. (Could use scipy.stats.hypsecant here to avoid the warnings)
+    def f(e):
+        return scipy.special.expit(-beta*e) # overflow free variant of 1 / (1 + exp(beta*e)), just to silence the warnings
+    def f_diff(e0, e1):
+        return f(e1) - f(e0)
+    def dsegment(x, x0, x1, y0, y1):
+        return y1*df(x-x1) - y0*df(x-x0) + (y1-y0)/(x1-x0)*f_diff(x-x0, x-x1)
+    s = np.sum(dsegment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1, axis=-1), states)[...,1:], axis=-1)
+    # add segments/other functions as extrapolation on both side to get correct high temperature behavior
+    if extrapolation == 'flat':
+        if extrapolation_point is None:
+            s += df(x - energy_smpl[0]) * states[...,0]
+            s += df(energy_smpl[-1] - x) * states[...,-1]
+        else:
+            # assume N(mu) starts at 0 and ends at N(extrapolation_point[0]) = extrapolation_point[1]
+            s += df(extrapolation_point[0] - x) * extrapolation_point[1]
     return s
 
 # finds the inverse of strictly monotonic functions on the full range of real numbers
@@ -262,11 +301,11 @@ class DensityOfStates:
         states = 0.0
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
-                states += self.smearing[i].volume(energy)
+                states += np.mean(self.smearing[i].volume(energy))
             elif band_range[1] <= energy:
                 states += 1.0 # completely full
         return states
-    
+
     # returns states_below, density
     def states_density(self, energy: float):
         states = 0.0
@@ -274,29 +313,29 @@ class DensityOfStates:
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
                 volume, dvolume = self.smearing[i].volume_dvolume(energy)
-                states += volume
-                density += dvolume
+                states += np.mean(volume)
+                density += np.mean(dvolume)
             elif band_range[1] <= energy:
                 states += 1.0 # completely full
         return states, density
-    
+
     # returns density
     def density(self, energy: float):
         density = 0.0
         for i in range(len(self.bands_range)):
             density += self.density_band(energy, i)
         return density
-    
+
     # returns density for a specific band
     def density_band(self, energy: float, i: int):
         if self.bands_range[i][0] < energy < self.bands_range[i][1]:
-            return self.smearing[i].dvolume(energy)
+            return np.mean(self.smearing[i].dvolume(energy))
         return 0.0
-    
+
     # returns density but split into the band contributions
     def density_bands(self, energy: float):
         return [self.density_band(energy, i) for i in range(self.model_bandcount())]
-    
+
     # get the indices of the bands, that cut the given energy
     def cut_band_indices(self, energy: float):
         indices = []
@@ -304,7 +343,7 @@ class DensityOfStates:
             if band_range[0] < energy < band_range[1]:
                 indices.append(i)
         return indices
-    
+
     def full_curve(self, N=10, T=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Compute the full density of states curve for a given electronic temperature.
 
@@ -327,18 +366,51 @@ class DensityOfStates:
             states.append(states_)
             density.append(density_)
         if T != 0:
-            # smooth the curve
+            # smooth the curve using the Fermi-distribution
             beta = 1 / (k_B * T) # 1/eV
             energy_smpl_T0, states_T0, density_T0 = energy_smpl, states, density
             delta = 5.0 / beta
             energy_smpl = np.concatenate([np.linspace(energy_smpl[0] - delta, energy_smpl[0], N, endpoint=False), energy_smpl, np.flip(np.linspace(energy_smpl[-1] + delta, energy_smpl[-1], N, endpoint=False))], axis=0)
             states = [convolve_df(x, energy_smpl_T0, states_T0, beta) for x in energy_smpl]
-            density = [convolve_df(x, energy_smpl_T0, density_T0, beta) for x in energy_smpl]
+            density = [convolve_df(x, energy_smpl_T0, density_T0, beta, extrapolation=None) for x in energy_smpl]
         return np.array(energy_smpl), np.array(states), np.array(density)
-    
-    # for a given number of electrons per cell (float in general)
-    # compute the fermi energy (correct for metals and isolators)
+
+    def k_resolved_density(self, mu, T, N=10):
+        """Compute the k-resolved density of states, that would be
+        visible with ARPES (angle-resolved photoemission spectroscopy).
+
+        Args:
+            mu (float): The chemical potential/energy.
+            T (float): temperature.
+            N (int, optional): _description_. Defaults to 10.
+
+        Returns:
+            ndarray[N_kx, N_ky, N_kz]: The density of states, matching `self.k_smpl`.
+        """
+        assert T >= 0, "Temperature must be non-negative"
+        if T == 0:
+            return sum([s.dvolume(mu) for s in self.smearing])
+        e0, e1 = self.energy_range()
+        beta = 1 / (k_B * T) # 1/eV
+        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-mu)), scipy.special.expit(-beta*(e1-mu)), N)) - 1 + 1e-16) / beta + mu
+        states = np.stack([sum([s.volume(e) for s in self.smearing]) for e in energy_smpl], axis=-1)
+        return convolve_ddf(mu, energy_smpl, states, beta)
+
     def fermi_energy(self, electrons: float, tol=1e-8, maxsteps=30) -> float:
+        """Compute the Fermi-energy (chemical potential at T=0) for a given number of electrons per cell.
+        The number of electrons can be fractional to correctly handle doping or spin.
+
+        Args:
+            electrons (float): The number of valence electrons per cell.
+            tol (float, optional): The precision of the root-finding procedure. Defaults to 1e-8.
+            maxsteps (int, optional): The maximal number of steps for the root-finding procedure. Defaults to 30.
+
+        Raises:
+            ValueError: If the root search failed.
+
+        Returns:
+            float: The Fermi-energy.
+        """
         assert electrons >= 0 and electrons <= len(self.bands_range), f'"electrons" (got {electrons:.2f}) must be between 0 and the number of bands ({len(self.bands_range)})'
         # check if the material is an isolator
         e_int = round(electrons)
@@ -369,6 +441,14 @@ class DensityOfStates:
 
     # returns the approximate bandgap if the model describes an isolator, 0 if it describes a metal
     def bandgap(self, electrons: float) -> float:
+        """Return the (already precomputed) bandgap.
+
+        Args:
+            electrons (float): The number of valence electrons per cell. If this is not an integer, there is no gap, so this function returns 0.
+
+        Returns:
+            float: The size of the bandgap.
+        """
         # first approximation from integer number of electrons
         assert electrons >= 0 and electrons <= len(self.bands_range)
         e_int = round(electrons)
@@ -380,12 +460,33 @@ class DensityOfStates:
         if max_below < min_above:
             return min_above - max_below # isolator
         return 0.0 # metal
-    
-    # returns the minimum and maximum energy in the used band structure
+
     def energy_range(self) -> Tuple[float, float]:
+        """Get the minimal and maximal energy in the used band structure.
+
+        Returns:
+            Tuple[float, float]: minimal energy, maximal energy
+        """
         return self.bands_range[0][0], self.bands_range[-1][1]
 
     def chemical_potential(self, electrons: float, T_smpl, N=30, tol=1e-8, maxsteps=30) -> np.ndarray:
+        """Compute the chemical potential for a given number of electrons per cell at multiple temperatures.
+        The number of electrons can be fractional to correctly handle doping or spin.
+
+        Note: when batching the temperatures in one call, this method is faster,
+          however the approximations involved will slightly differ
+          (with an error in the same order of magnitude).
+
+        Args:
+            electrons (float): The number of valence electrons per cell.
+            T_smpl (arraylike[N_T]): The temperatures for batched computation of chemical potentials.
+            N (int, optional): The number of points used to approximate the smeared states. Defaults to 30.
+            tol (float, optional): The precision of the root-finding procedure. Defaults to 1e-8.
+            maxsteps (int, optional): The maximal number of steps for the root-finding procedure. Defaults to 30.
+
+        Returns:
+            ndarray[N_T]: The Fermi-energy.
+        """
         fermi_energy = self.fermi_energy(electrons, tol=tol, maxsteps=maxsteps)
         # use a good distribution for energy_smpl,
         # such that this works for small T!
@@ -419,7 +520,7 @@ class DensityOfStates:
                 beta = new_beta
                 res.append(secant(electrons, lambda x: convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=(e1, self.model_bandcount())), fermi_energy, fermi_energy + 1/beta, tol, maxsteps))
         return np.array(res)
-    
+
     # TODO currently WRONG
     def energy(self, mu: float, T=0.0, N=100) -> float:
         if T <= 0.0:

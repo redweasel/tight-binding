@@ -16,7 +16,7 @@ class SmearingMethod:
             value (float): maximal value of the data to be considered inside the volume.
 
         Returns:
-            float: the volume of the implicit function that has a smaller value than "value"
+            ndarray[N_k]: the volume of the implicit function for each cell, that has a smaller value than "value"
         """
         raise NotImplementedError()
     
@@ -27,7 +27,7 @@ class SmearingMethod:
             value (float): maximal value of the data to be considered inside the volume.
 
         Returns:
-            float: the derivative of `volume` wrt value.
+            ndarray[N_k]: the derivative of `volume` wrt value.
         """
         raise NotImplementedError()
     
@@ -38,7 +38,7 @@ class SmearingMethod:
             value (float): maximal value of the data to be considered inside the volume.
 
         Returns:
-            (float, float): `volume`, `dvolume`
+            (ndarray[N_k], ndarray[N_k]): `volume`, `dvolume`
         """
         return self.volume(value), self.dvolume(value)
     
@@ -214,14 +214,14 @@ class CubesSmearing(SmearingMethod):
         self.scale = np.abs(np.linalg.det(np.swapaxes(basis2[:,:,1:], -1, -2) @ L @ basis[:,:,1:]))
 
     def volume(self, value: float):
-        return np.mean(cube_cut_volume(value - self.cubes[0], *self.cubes[1:]))
+        return cube_cut_volume(value - self.cubes[0], *self.cubes[1:])
 
     def dvolume(self, value: float):
-        return np.mean(cube_cut_dvolume(value - self.cubes[0], *self.cubes[1:]))
+        return cube_cut_dvolume(value - self.cubes[0], *self.cubes[1:])
     
     def volume_dvolume(self, value: float):
         volume, dvolume = cube_cut_volume_dvolume(value - self.cubes[0], *self.cubes[1:])
-        return np.mean(volume), np.mean(dvolume)
+        return volume, dvolume
 
     def samples(self, value: float):
         area, x = cube_cut_area_com(value - self.cubes[0], *self.cubes[1:])
@@ -335,16 +335,16 @@ class TetraSmearing(SmearingMethod):
             self.tetras = np.array(a)[:,:-1,:-1,:-1]
 
     def volume(self, value: float):
-        return np.mean(cube_tetra_cut_volume(value - self.tetras))
+        return cube_tetra_cut_volume(value - self.tetras)
 
     def dvolume(self, value: float):
-        return np.mean(cube_tetra_cut_dvolume(value - self.tetras))
+        return cube_tetra_cut_dvolume(value - self.tetras)
 
     def volume_dvolume(self, value: float):
         shifted_tetras = value - self.tetras
         volume = cube_tetra_cut_volume(shifted_tetras)
         dvolume = cube_tetra_cut_dvolume(shifted_tetras)
-        return np.mean(volume), np.mean(dvolume)
+        return volume, dvolume
 
 # cut a sphere with volume 1 and therefore radius r=0.62035=cbrt(3/4pi)
 def unit_sphere_cut(a0, ax, ay, az):
@@ -396,7 +396,7 @@ class SphereSmearing(SmearingMethod):
 
     def volume_dvolume(self, value: float):
         volume, dvolume = unit_sphere_cut(value - self.values, *self.grads)
-        return np.mean(volume), np.mean(dvolume)
+        return volume, dvolume
 
     def volume(self, value: float):
         return self.volume_dvolume(value)[0]

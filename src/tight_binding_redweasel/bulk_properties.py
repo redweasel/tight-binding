@@ -314,18 +314,19 @@ class KIntegral:
         R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
         return R_H, R_H_error # in m^3/C = Ohm m/T
     
-    def conductivity_hall_tensor(self, A, spin_factor=2):
+    def conductivity_hall_tensor(self, A, spin_factor=2, tau=None):
         """Compute the conductivity tensors of rank 2 and rank 3,
         which are required for the Drude weight and the hall coefficient.
         The formulas are:
         ```
-        sigma2_ij = v_i v_j
-        sigma3_ijk = epsilon_kab v_i M^-1_ja v_b
+        sigma2_ij = tau(k) v_i v_j
+        sigma3_ijk = tau(k) epsilon_kab v_i M^-1_ja v_b
         ```
 
         Args:
             A (arraylike[3, 3]): The lattice vectors in units of Angstrom.
             spin_factor (int, optional): The number of electrons per band. Defaults to 2.
+            tau (Callable[[arraylike[N_d]], float]): The scattering time as a function of k. Defaults to None.
 
         Returns:
             ((arraylike[3, 3], arraylike[3, 3]), (arraylike[3, 3, 3], arraylike[3, 3, 3])):
@@ -334,8 +335,10 @@ class KIntegral:
         # From the book "C. Hurd, The Hall Coeffcient of Metals and Alloys (Plenum, New York, 1972)"
         # Assuming constant relaxation time for now -> independent of it
         V_EZ = np.linalg.det(A*1e-10)
-        I, error = self.integrate_df_A(A, lambda _e, v, h, _k: np.einsum("yds,na,ns,nbd->naby", antisym_tensor, v, v, h), hessians=True)
-        I2, error2 = self.integrate_df_A(A, lambda _e, v, _k: v[:,None,:] * v[:,:,None], hessians=False)
+        tau_1 = (lambda v, _: v) if tau is None else (lambda v, k: v * tau(k))
+        tau_2 = (lambda v, _: v) if tau is None else (lambda v, k: v * tau(k)**2)
+        I, error = self.integrate_df_A(A, lambda _e, v, h, k: tau_2(np.einsum("yds,na,ns,nbd->naby", antisym_tensor, v, v, h), k), hessians=True)
+        I2, error2 = self.integrate_df_A(A, lambda _e, v, k: tau_1(v[:,None,:] * v[:,:,None], k), hessians=False)
         sigma3 = 1/V_EZ * elementary_charge**3/eV * spin_factor * I
         sigma2 = 1/V_EZ * elementary_charge**2/eV * spin_factor * I2
         return (sigma2, sigma2/I2*error2), (sigma3, sigma3/I*error)
