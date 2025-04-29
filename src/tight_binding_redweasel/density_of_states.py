@@ -373,6 +373,7 @@ class DensityOfStates:
             energy_smpl = np.concatenate([np.linspace(energy_smpl[0] - delta, energy_smpl[0], N, endpoint=False), energy_smpl, np.flip(np.linspace(energy_smpl[-1] + delta, energy_smpl[-1], N, endpoint=False))], axis=0)
             states = [convolve_df(x, energy_smpl_T0, states_T0, beta) for x in energy_smpl]
             density = [convolve_df(x, energy_smpl_T0, density_T0, beta, extrapolation=None) for x in energy_smpl]
+            #density = [convolve_ddf(x, energy_smpl_T0, states_T0, beta) for x in energy_smpl]
         return np.array(energy_smpl), np.array(states), np.array(density)
 
     def k_resolved_density(self, mu, T, N=10):
