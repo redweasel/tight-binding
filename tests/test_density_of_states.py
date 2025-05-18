@@ -1,7 +1,6 @@
 import numpy as np
 
-from tight_binding_redweasel import (BandStructureModel, Symmetry, dos)
-from tight_binding_redweasel import bulk_properties as bulk
+from tight_binding_redweasel import (BandStructureModel, Symmetry, dos, bulk)
 
 def test_cubic_density_of_states():
     t = 2.0
@@ -70,13 +69,13 @@ def test_sin_density_of_states():
 
     dos_model = dos.DensityOfStates(model, N=N, A=np.eye(3), ranges=[[-0.5, 0.5]]*3)
     density_a = dos_model.density(0.1)
-    kint = bulk.KIntegral(dos_model, n, 0)
+    kint = bulk.KIntegral(dos_model, n, [0])
     mu_a = kint.mu
     a = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0]
 
     dos_model = dos.DensityOfStates(model, N=N, A=np.array([[0.5, 0, 0], [0, 1, 1], [0, -1, 1]]).T, ranges=[[-0.5, 0.5]]*3, wrap=True)
     density_b = dos_model.density(0.1)
-    kint = bulk.KIntegral(dos_model, n, 0)
+    kint = bulk.KIntegral(dos_model, n, [0])
     mu_b = kint.mu
     b = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0]
     assert abs(density_a - density_b) / abs(density_a) < 5e-2, "error in density calculation"
@@ -165,8 +164,8 @@ def test_linear_density_of_states():
             sigma_T0 = dos.gauss_7_df(foo, mu, beta)
             
             sigma1 = (2 * bulk.elementary_charge**2/bulk.eV / cell_length**3) * sigma_T0
-            sigma2 = bulk.KIntegral(dos_model, 2, T).drude_factor(np.eye(3)*cell_length*1e10, 2)[0][0,0]
-            sigma3 = bulk.KIntegral(dos_model, 2, T).conductivity_over_tau(cell_length, 2)[0,0]
+            sigma2 = bulk.KIntegral(dos_model, 2, [T], rtol=1e-6).drude_factor(np.eye(3)*cell_length*1e10, 2)[0][0,0]
+            sigma3 = bulk.KIntegral(dos_model, 2, [T], rtol=1e-6).transport_coefficients(np.eye(3)*cell_length*1e10, 2, max_a=0)[0][0,0,0]
             assert abs(sigma1 - sigma2) / abs(sigma1) < 1e-4, f"error in sigma {(sigma1 - sigma2)/sigma1:%}"
             assert abs(sigma2 - sigma3) / abs(sigma2) < 1e-6, f"error in sigma {(sigma2 - sigma3)/sigma2:%}"
 

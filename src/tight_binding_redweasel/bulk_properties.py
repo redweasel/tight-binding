@@ -2,6 +2,8 @@
 # meaning properties in the volume of the material, not the surface.
 
 import numpy as np
+import scipy.special
+import math
 from typing import Callable
 from . import density_of_states as _dos
 import warnings
@@ -84,18 +86,69 @@ def hall_coefficients(sigma2, sigma3):
     ```
 
     Args:
-        sigma2 ((arraylike[3, 3])):    rank 2 conductivity tensor
-        sigma3 ((arraylike[3, 3, 3])): rank 3 conductivity tensor
+        sigma2 ((arraylike[..., 3, 3])):    rank 2 conductivity tensor
+        sigma3 ((arraylike[..., 3, 3, 3])): rank 3 conductivity tensor
     
     Returns:
-        (ndarray[3, 3, 3]): R_ijk Hall tensor
+        (ndarray[..., 3, 3, 3]): R_ijk Hall tensor
     """
     # For reference see: BoltzTraP. A code for calculating band-structure dependent quantities
     # Authors: Georg K.H. Madsena, David J. Singhb
 
     sigma2_inv = np.linalg.inv(sigma2)
-    return np.einsum("aj,abk,ib->ijk", sigma2_inv, sigma3, sigma2_inv)
+    return np.einsum("...aj,...abk,...ib->...ijk", sigma2_inv, sigma3, sigma2_inv)
 
+def _integration_points(fermi_energy, T_min, T_max, N):
+    assert N > 0
+    if N == 1:
+        return np.array([fermi_energy])
+    # just use gauss integration points for T_max, as the T_max integral is always the most difficult.
+    assert T_min <= T_max
+    assert N % 2 == 1
+    beta_min = 1 / (_dos.k_B * T_max)
+    beta_mid = 1 / (_dos.k_B * (T_max + T_min)/2)
+    mu_j = [fermi_energy, fermi_energy] # for now just one mu
+    beta_j = [beta_min, beta_mid]
+    # equations for two points!
+    I_f2_c = [2 * scipy.special.zeta(n) * (1 - 2**(1-n)) if n % 2 == 0 else 0 for n in range(2*N)]
+    I_f3 = lambda n, m: I_f2_c[n + m] / np.float128(math.factorial(2 * max(n, m)) // math.factorial(n + m) * math.factorial(2 * min(m, n)))
+    I_nj = lambda n, m, j: sum(scipy.special.binom(n, k) * (mu_j[j]-mu_j[0])**(n-k)*beta_j[j]**(-k-m)*I_f3(m, k) for k in range(n+1))
+    if T_min == T_max:
+        mat = np.array([[I_nj(n, m, 0) for n in range(N)] for m in range(N+1)])
+    else:
+        mat = np.array([[I_nj(n, m, 0) for n in range(N//2-1)] + [I_nj(n, m, 1) for n in range(N-(N//2-1))] for m in range(N+1)])
+    q, _ = scipy.linalg.qr(mat)
+    poly = [c / math.factorial(2 * (N - i)) for i, c in enumerate(reversed(q[:,-1]))]
+    assert len(poly) == N+1
+    return fermi_energy + np.array(sorted([np.real(r) for r in np.roots(poly)]))
+
+def _integration_weights(x, beta_j, mu_j, E_min, E_max, rtol=1e-4):
+    assert len(x) % 2 == 1
+    if len(x) == 1:
+        return np.array([1.0])
+    b = [2 * scipy.special.zeta(n) * (1 - 2**(1-n)) if n % 2 == 0 else 0 for n in range(len(x))]
+    I_nj = lambda n, j: beta_j[j]**(-n)*b[n]
+    # sum_i X_ijn w_ij = I_jn
+    # M = #j linear equations of the form
+    # X_in w_i = I_n
+    w = []
+    assert len(beta_j) == len(mu_j)
+    for j, (mu, beta) in enumerate(zip(mu_j, beta_j)):
+        if beta > 1e16:
+            w_j = np.zeros(len(x))
+            x_i = np.argmin(np.abs(x - mu))
+            assert abs(x[x_i] - mu) < 1e-10
+            w_j[x_i] = 1
+        else:
+            X = [[(x_ - mu)**n/math.factorial(n) for x_ in x] for n in range(len(x))]
+            I = [I_nj(n, j) for n in range(len(x))]
+            w_j = np.linalg.solve(X, I)
+        w.append(w_j)
+    w = np.array(w)
+    # filter weights, which are irrelevant due to the integrated function being bounded
+    # Note, leaving them out from the beginning leads to worse results.
+    select = (np.max(w / np.max(w, axis=1, keepdims=True), axis=0) > rtol * len(x)) & (x > E_min) & (x < E_max)
+    return np.array(x[select]), np.array(w[:, select])
 
 class KIntegral:
     """
@@ -105,23 +158,28 @@ class KIntegral:
     The integrals are of different forms, so look for the `integrate..` functions for details.
     """
 
-    def __init__(self, dos_model: _dos.DensityOfStates, electrons: float, T: float, errors=False):
-        """Initialize an Integral over the bandstructure (k-space) 
+    def __init__(self, dos_model: _dos.DensityOfStates, electrons: float, T: list, N=None, errors=False, rtol=1e-4):
+        """Initialize an Integral over the bandstructure (k-space)
 
         Args:
             dos_model (DensityOfStates): Density of states (DoS) model which contains all important information.
             electrons (int): Number of electrons/filled bands in the model.
-            T (float): Temperature at which the integral is computed.
+            T (list): Temperatures at which the integral is computed. Best at the highest T and at T=0, but interpolated physically inbetween.
+            N (int, optional): The number of Fermi-surfaces to be used in the integration. Defaults to 5 if only one temperature is used, otherwise 9.
             errors (bool, optional): If True, a second less precise integration will be done to compute the error of the result. Defaults to False.
         """
+        assert all(T_ >= 0 for T_ in T), f"Only non negative temperatures are allowed, but got {T}"
         self.errors = errors
         self.bandgap = dos_model.bandgap(electrons)
         self.metal = self.bandgap == 0.0
         self.model = dos_model.model
         self.A = dos_model.A
-        self.mu = dos_model.chemical_potential(electrons, [T], N=50)[0] # compute mu here with good enough precision
-        self.beta = 1 / (_dos.k_B * T) if T > 0 else 0.0 # in 1/eV
-        self.e_smpl = []
+        self.mu = dos_model.chemical_potential(electrons, T, N=50) # compute mu here with good enough precision
+        self.fermi_energy = dos_model.fermi_energy(electrons)
+        if N is None:
+            N = (1 if T[0] == 0 else 13) if len(T) == 1 else 11
+        assert N % 2 == 1, f"only odd N are allowed, but got {N}"
+        self.beta = 1 / (_dos.k_B * np.array(T) + 1e-20) # in 1/eV
         # prepared data for the integration
         self.k_smpl = []
         self.band_indices = []
@@ -130,36 +188,28 @@ class KIntegral:
         # TODO allow the use of the dos grid instead of the exact fermi surface
         # -> faster, less precise
         improved_points = False # True makes it much more robust -> extrapolation possible, however it doesn't increase the convergence order
-        def collect_smpl(e_smpl):
-            for e in e_smpl:
-                k_smpl, band_indices, weights, _ = dos_model.fermi_surface_samples(e, improved_points=improved_points, improved_weights=False, normalize=None)
-                self.e_smpl.append(e)
-                self.k_smpl.append(k_smpl)
-                self.band_indices.append(band_indices)
-                self.weights.append(weights)
-            return e_smpl
-        if T > 0:
+        non_zero_T = [T_ for T_ in T if T_ > 0]
+        if non_zero_T:
             if self.metal:
-                # this only really works for metals for low temperatures with smooth state density.
-                _dos.gauss_7_df(collect_smpl, self.mu, self.beta)
-                if errors:
-                    # for estimating the error
-                    # - overestimated if the integral method is good
-                    # - randomly underestimated if the integral method is bad
-                    _dos.gauss_5_df(collect_smpl, self.mu, self.beta)
+                self.e_smpl = _integration_points(self.fermi_energy, min(non_zero_T), max(T), N)
+                self.e_smpl, self.integration_weights = _integration_weights(self.e_smpl, self.beta, self.mu, *dos_model.energy_range(), rtol=rtol)
             else:
-                # do two (3 point and 2 point) Gauss-Laguerre integrations at the upper and lower bandgap boundary
+                # do Gauss-Laguerre integrations at the upper and lower bandgap boundary
                 # TODO
                 raise NotImplementedError("integrals for isolators (semiconductors) are currently not implemented")
         else:
-            assert T == 0, "No negative temperatures allowed"
             if self.metal:
-                # just the Fermi-surface
-                collect_smpl([self.mu])
+                self.e_smpl = np.array([self.fermi_energy])
+                self.integration_weights = np.array([[1]])
             else:
-                # isolator at 0 temperature has no Fermi-surface -> all integrals 0
+                # no e_smpl, all integrals are empty for T=0
                 pass
         self.e_smpl = np.array(self.e_smpl)
+        for e in self.e_smpl:
+            k_smpl, band_indices, weights, _ = dos_model.fermi_surface_samples(e, improved_points=improved_points, improved_weights=False, normalize=None)
+            self.k_smpl.append(k_smpl)
+            self.band_indices.append(band_indices)
+            self.weights.append(weights)
         self.v = None # group velocities
         self.h = None # hessians
         self.w = None # weights divided by absolute group velocities
@@ -211,57 +261,37 @@ class KIntegral:
             hessians (bool, optional): If True, the hessians are given to the function g, otherwise the (positional) argument is ommited. Defaults to False.
 
         Returns:
-            skalar: The value of the integral.
-            float: The absolute error of the integral, if available, otherwise 0.0.
-                   This error is just the error if the integration. The larger error usually comes from the DensityOfStates.
+            ndarray[N_T]: The value of the integral at each temperature.
         """
         if self.v is None or (hessians and self.h is None):
             self.precompute(hessians)
 
-        def int_e(e_smpl):
-            res = []
-            for e in e_smpl:
-                # 1. find index of e in self.e_smpl
-                index = np.argmin(np.abs(self.e_smpl - e))
-                assert np.abs(self.e_smpl[index] - e) < 1e-8, "internal error, precomputed energies don't match used energies"
-                # 2. use data for that precomputed case
-                if hessians:
-                    f_res = g(e, self.v[index], self.h[index], self.k_smpl[index])
-                    res.append(np.sum(f_res * self.w[index].reshape((-1,)+(1,)*len(np.shape(f_res)[1:])), axis=0))
-                else:
-                    f_res = g(e, self.v[index], self.k_smpl[index])
-                    res.append(np.sum(f_res * self.w[index].reshape((-1,)+(1,)*len(np.shape(f_res)[1:])), axis=0))
-            return res
-
-        error = 0.0
-        if self.beta == 0:
-            # zero temperature case
-            if self.metal:
-                I = int_e([self.mu])
-                assert len(I) == 1
-                I = I[0]
-                # TODO error estimation
+        res = []
+        for index, e in enumerate(self.e_smpl):
+            # use data from the precomputation
+            if hessians:
+                f_res = g(e, self.v[index], self.h[index], self.k_smpl[index])
+                res.append(np.sum(f_res * self.w[index].reshape((-1,)+(1,)*len(np.shape(f_res)[1:])), axis=0))
             else:
+                f_res = g(e, self.v[index], self.k_smpl[index])
+                res.append(np.sum(f_res * self.w[index].reshape((-1,)+(1,)*len(np.shape(f_res)[1:])), axis=0))
+
+        if self.metal:
+            I = []
+            for w_j in self.integration_weights:
+                I.append(sum(r * w for r, w in zip(res, w_j)))
+            return np.array(I)
+        else:
+            if len(self.beta) == 1 and self.beta[0] > 1e16:
                 # no fermi surface!
                 # to get the output shape right, evaluate g at one point
                 if hessians:
                     I = 0.0 * np.asanyarray(g(self.mu, np.zeros((1, 3)), np.eye(3)[None], np.zeros((1, 3))))
                 else:
                     I = 0.0 * np.asanyarray(g(self.mu, np.zeros((1, 3)), np.zeros((1, 3))))
-        else:
-            if self.metal:
-                # this only really works for metals for low temperatures with smooth state density.
-                I = _dos.gauss_7_df(int_e, self.mu, self.beta)
-                if self.errors:
-                    # for estimating the error
-                    # - overestimated if the integral method is good
-                    # - randomly underestimated if the integral method is bad
-                    I2 = _dos.gauss_5_df(int_e, self.mu, self.beta)
-                    error = np.abs(I - I2)
-            else:
-                # TODO see comment in __init__
-                raise NotImplementedError("integrals for isolators (semiconductors) are currently not implemented")
-        return I, error
+                return np.array([I])
+            # TODO see comment in __init__
+            raise NotImplementedError("integrals for isolators (semiconductors) are currently not implemented")
 
     def integrate_df_A(self, A, g: Callable, hessians=False):
         """Integrate with the derivative of the fermi function as weight function.
@@ -282,9 +312,7 @@ class KIntegral:
             hessians (bool, optional): If True, the hessians are given to the function g, otherwise the (positional) argument is ommited. Defaults to False.
 
         Returns:
-            skalar: The value of the integral.
-            float: The absolute error of the integral, if available, otherwise 0.0.
-                   This error is just the error if the integration. The larger error usually comes from the DensityOfStates.
+            ndarray[N_T]: The value of the integral at each temperature.
         """
         # consider DoS space matrix as an already applied A matrix
         A = A @ np.linalg.inv(self.A)
@@ -302,7 +330,7 @@ class KIntegral:
                 res = g(e, v, h, k)
                 assert len(res) == len(k)
                 return res
-            value, error = self.integrate_df(g2, hessians=True)
+            return self.integrate_df(g2, hessians=True)
         else:
             def g2(e, v, k):
                 k = np.einsum("ji,ni->nj", B, k)
@@ -310,8 +338,7 @@ class KIntegral:
                 res = g(e, v, k)
                 assert len(res) == len(k)
                 return res
-            value, error = self.integrate_df(g2, hessians=False)
-        return value, error
+            return self.integrate_df(g2, hessians=False)
 
     def transport_coefficients(self, A, spin_factor=2, tau=None, max_a=2):
         """Transport coefficients `L^(n)`. To get usual experimental values,
@@ -338,22 +365,24 @@ class KIntegral:
             tau = lambda _: tau_v
         tau_1 = (lambda v, _: v) if tau is None else (lambda v, k: v * tau(k))
         a = np.arange(max_a + 1)[None,:]
-        I, error = self.integrate_df_A(A, lambda e, v, k: v[:,None,None,:] * v[:,None,:,None] * tau_1((e - self.mu)**a, k)[:,:,None,None], hessians=False)
+        # TODO build this mu dependence into the temperature dependent weights! -> use the full mu curve
+        I = self.integrate_df_A(A, lambda e, v, k: v[:,None,None,:] * v[:,None,:,None] * tau_1((e - self.mu[0])**a, k)[:,:,None,None], hessians=False)
         a = np.arange(max_a + 1)[:,None,None]
         D = spin_factor * elementary_charge**(2-a) * I/eV**(1-a) / V_EZ
-        return D, D/I*error
+        return D
 
     # conductivity divided by the electron scattering time tau. Assuming constant tau. Result in 1/(Ohm*m*s)
     def drude_factor(self, A, spin_factor=2):
         V_EZ = np.linalg.det(A*1e-10)
-        I, error = self.integrate_df_A(A, lambda _e, v, _k: v[:,None,:] * v[:,:,None], hessians=False)
+        I = self.integrate_df_A(A, lambda _e, v, _k: v[:,None,:] * v[:,:,None], hessians=False)
         D = spin_factor * elementary_charge**2 * I/eV / V_EZ
-        return D, D/I*error # result is in 1/(Ohm*m)/s
+        return D # result is in 1/(Ohm*m)/s
 
     # electric part of the volumetric heat capacity c_V in J/m^3
     # (This is better computed by the DoS itself)
     def heat_capacity(self, spin_factor=2):
-        I, error = self.integrate_df(lambda e, _v, _k: e*(e - self.mu), hessians=False)
+        warnings.warn("The function heat_capacity is known to misbehave.", DeprecationWarning)
+        I = self.integrate_df(lambda e, _v, _k: e*(e - self.mu), hessians=False)
         cV_T = spin_factor * I * eV
         T = 1 / (self.beta * _dos.k_B)
         return cV_T / T
@@ -367,26 +396,26 @@ class KIntegral:
         # I canceled one e from sigma_xx with e^2 from sigma_xyz
         V_EZ = np.linalg.det(A*1e-10)
         #sigma_xyz = elementary_charge/c/eV * self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)
-        I, error = self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)
-        I2, error2 = self.integrate_df_A(A, lambda _e, v, _k: v[:,0]**2, hessians=False)
+        I = self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)
+        I2 = self.integrate_df_A(A, lambda _e, v, _k: v[:,0]**2, hessians=False)
         sigma_xyz = -elementary_charge/eV * spin_factor * I
         sigma_xx = elementary_charge/eV * spin_factor * I2
         R_H = sigma_xyz / sigma_xx**2 * V_EZ
-        R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
-        return R_H, R_H_error # in m^3/C = Ohm m/T
+        #R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
+        return R_H # in m^3/C = Ohm m/T
 
     def hall_coefficient_metal_cubic(self, A, spin_factor=2):
         # PhysRevB.45.10886 Hall effect formula with constant relaxation time over k.
         # In reality the relaxation times are different over k-space or even just for different spins in the same band. (PhysRev.97.647)
         # I canceled one e from sigma_0 with e^2 from sigma_H
         V_EZ = np.linalg.det(A*1e-10)
-        I, error = self.integrate_df_A(A, lambda _e, v, h, _k: np.einsum("ni,nij,nj->n", v, h, v) - np.einsum("nj,nj,nii->n", v, v, h), hessians=True)
-        I2, error2 = self.integrate_df_A(A, lambda _e, v, _k: (v**2).sum(-1), hessians=False)
+        I = self.integrate_df_A(A, lambda _e, v, h, _k: np.einsum("ni,nij,nj->n", v, h, v) - np.einsum("nj,nj,nii->n", v, v, h), hessians=True)
+        I2 = self.integrate_df_A(A, lambda _e, v, _k: (v**2).sum(-1), hessians=False)
         sigma_H = elementary_charge/eV * spin_factor/6 * I
         sigma_0 = elementary_charge/eV * spin_factor/3  * I2
         R_H = sigma_H / sigma_0**2 * V_EZ
-        R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
-        return R_H, R_H_error # in m^3/C = Ohm m/T
+        #R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
+        return R_H # in m^3/C = Ohm m/T
 
     def conductivity_hall_tensor(self, A, spin_factor=2, tau=None):
         """Compute the conductivity tensors of rank 2 and rank 3,
@@ -414,11 +443,11 @@ class KIntegral:
             tau = lambda _: tau_v
         tau_1 = (lambda v, _: v) if tau is None else (lambda v, k: v * tau(k))
         tau_2 = (lambda v, _: v) if tau is None else (lambda v, k: v * tau(k)**2)
-        I, error = self.integrate_df_A(A, lambda _e, v, h, k: tau_2(np.einsum("yds,na,ns,nbd->naby", antisym_tensor, v, v, h), k), hessians=True)
-        I2, error2 = self.integrate_df_A(A, lambda _e, v, k: tau_1(v[:,None,:] * v[:,:,None], k), hessians=False)
+        I = self.integrate_df_A(A, lambda _e, v, h, k: tau_2(np.einsum("yds,na,ns,nbd->naby", antisym_tensor, v, v, h), k), hessians=True)
+        I2 = self.integrate_df_A(A, lambda _e, v, k: tau_1(v[:,None,:] * v[:,:,None], k), hessians=False)
         sigma3 = 1/V_EZ * elementary_charge**3/eV * spin_factor * I
         sigma2 = 1/V_EZ * elementary_charge**2/eV * spin_factor * I2
-        return (sigma2, sigma2/I2*error2), (sigma3, sigma3/I*error)
+        return sigma2, sigma3
 
     # electric part of the heat conductivity kappa in J/m^3 (if cell_length is given in meters)
     def heat_conductivity(self, A, spin_factor=2, print_error=False):

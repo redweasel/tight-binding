@@ -87,7 +87,7 @@ def convolve_ddf(x, energy_smpl, states, beta, extrapolation='flat', extrapolati
         extrapolation_point (Tuple[float, float], optional): If given, (highest_energy, band_count) of the right extrapolation point. The left extrapolation point is assumed to be at (0, 0). Defaults to None.
     """
     def df(e):
-        return -0.25*beta / np.cosh(-0.5*beta*e)**2 # ignore warning here. (Could use scipy.stats.hypsecant here to avoid the warnings)
+        return -0.25*beta / np.cosh(0.5*beta*e)**2 # ignore warning here. (Could use scipy.stats.hypsecant here to avoid the warnings)
     def f(e):
         return scipy.special.expit(-beta*e) # overflow free variant of 1 / (1 + exp(beta*e)), just to silence the warnings
     def f_diff(e0, e1):
