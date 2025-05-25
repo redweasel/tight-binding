@@ -268,7 +268,7 @@ def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", period
         assert sym.dim() == dim, f"dimensions of the symmetry and the k_smpl data don't match, symmetry: {sym.dim()}, k_smpl: {dim}"
         k_smpl_orig = k_smpl
         k_smpl, bands = sym.realize_symmetric_data(
-            k_smpl, bands, unit_cell=periodic)
+            k_smpl, bands, unit_cell=periodic, average_bad_duplicates=True)
     n = round(len(k_smpl)**(1/dim))
     assert n**dim == len(k_smpl), "could reconstruct full square/cubic volume"
 
@@ -345,11 +345,12 @@ DIAMOND_PATH = KPath('L').to('G').to('X2').to('U').to('G').to('K')
 SC_PATH_2D = KPath('G2d').to('X2d').to('M2d').to('G2d')
 PATH_1D = KPath('G1d').to('X1d', N=100)
 
+# TODO implement https://www.nature.com/articles/s41524-020-00383-7
+# to get all the paths.
+
 # internal function to compute the more complicated
 # symmetry points from the face centered points
 # hsp = high symmetry point (abbreviated because it is internal and used often)
-
-
 def _hsp(a, b=None, c=None):
     res = [np.linalg.norm(a)**2]
     mat = [a]
@@ -382,6 +383,48 @@ def hexagonal_points(r: float, h: float) -> dict:
     points['L'] = (np.array([0.5*r, 0.5/3**.5*r, h/2]), 'L')
     return points
 
+def tetragonal_bc_points(c: float) -> dict:
+    """Generate the symmetry points for the tetragonal centered lattice (a, a, c).
+    It is body centered in real space and face centered in reciprocal space.
+    The length a is assumed to be 1 in real space.
+
+    Args:
+        c (float): _description_
+
+    Returns:
+        dict: _description_
+    """
+    if c == 1:
+        return points # cubic, is contained in the global points dict
+    points = {}
+    points['G'] = (np.zeros(3), 'Γ')
+    points['X'] = (np.array([0.5, 0.5, 0]), 'X')
+    if c < 1:
+        points['M'] = (np.array([1., 0, 0]), 'M')
+        points['N'] = (np.array([0.5, 0, 0.5/c]), 'N')
+        points['Z1'] = (_hsp(points['N'][0], points['M'][0]), '$Z_1$')
+        points['Z'] = (np.array([0, 0, 2*points['N'][0][2] - points['Z1'][0][2]]), 'Z')
+        points['P'] = (np.array([0.5, 0.5, points['N'][0][2]]), 'P')
+    else:
+        # there are two label types "SC" and "BI", both are implemented here
+        points['M'] = (np.array([0, 0, 1/c]), 'M')
+        points['M2'] = (np.array([0, 0, -1/c]), '$M_2$')
+        points['Z'] = (np.array([0, 0, 1/c]), 'Z')
+        points['N'] = (np.array([0.5, 0, 0.5/c]), 'N')
+        points['N0'] = (np.array([0.5, 0, -0.5/c]), '$N_0$')
+        points['N1'] = (np.array([0, 0.5, 0.5/c]), '$N_1$')
+        points['Sig'] = (_hsp(points['N'][0], points['N0'][0]), 'Σ')
+        points['S0'] = (points['Sig'][0], '$S_0$')
+        points['S'] = (_hsp(points['M'][0], points['N'][0]), 'S')
+        points['Sig1'] = (points['S'][0], '$\Sigma_1$')
+        points['S2'] = (points['S'][0]*np.array([1,1,-1]), '$S_2$')
+        points['R'] = (_hsp(points['N'][0], points['N0'][0], points['X'][0]), 'R')
+        points['Y'] = (points['R'][0], 'Y')
+        points['P'] = (_hsp(points['N'][0], points['N1'][0], points['X'][0]), 'P')
+        points['Y1'] = (_hsp(points['N'][0], points['N1'][0], points['M'][0]), '$Y_1$')
+        points['GG'] = (points['Y1'][0], 'G')
+        points['G0'] = (points['Y1'][0]*np.array([1,1,-1]), '$G_0$')
+    return points
 
 def trigonal_points(alpha: float, mirror_x=False) -> dict:
     """Generate the symmetry points for a trigonal/rhombohedral reciprocal lattice of a real trigonal with lattice constant 1.

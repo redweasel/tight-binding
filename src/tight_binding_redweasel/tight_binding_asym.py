@@ -905,7 +905,7 @@ def free_electron_model_orthogonal(a: float, b: float, c: float, neighbor_count:
     return model2, eV_unit
 
 
-def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symmetry, start_neighbors_count=2, add_bands_below=0, add_bands_above=0):
+def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symmetry, start_neighbors_count=2, add_bands_below=0, add_bands_above=0, randomize=True):
     """
     This function creates a fit for a given dataset and
     saves it at various checkpoints as json file `asym_{name}_{neighbors_count}.json`.
@@ -926,6 +926,7 @@ def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symm
     best_tb_error = float("inf")
     best_tb = None # type: AsymTightBindingModel
     for _ in range(4):
+        print("restart with new model")
         tb = AsymTightBindingModel.new(neighbors, add_bands_below + np.shape(ref_bands)[-1] + add_bands_above)
         tb.randomize(0.01)
         tb.normalize()
@@ -954,9 +955,9 @@ def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symm
             tb.H.add_neighbors(new_neighbors)
         print("fit with neighbors", neighbors_src[:neighbors_count])
         neighbors_count += 1
-        for _ in range(10):
+        for _ in range(10 if randomize else 1):
             # small randomisation seems to help convergence...?!?
-            tb.randomize(log.last_loss() * 0.1)
+            tb.randomize(log.last_loss() * (0.1 if randomize else 0.01))
             tb.normalize()
             tb.optimize_cg(k_smpl, ref_bands, band_weights, add_bands_below, 100, convergence_threshold=1e-3, max_cg_iterations=5, log=log)
             # save checkpoint

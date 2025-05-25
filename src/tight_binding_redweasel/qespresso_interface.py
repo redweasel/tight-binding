@@ -292,7 +292,7 @@ def version() -> str:
     return version
 
 class QECrystal:
-    def __init__(self, name: str, A, basis: list, types: list, kinetic_energy_cutoff: float=None, unit="angstrom"):
+    def __init__(self, name: str, A, basis: list, types: list, kinetic_energy_cutoff: float=None, unit="angstrom", relativistic=False):
         """Constructor of QECrystal. Use `from_disk` instead if the data is already there.
 
         Args:
@@ -309,6 +309,7 @@ class QECrystal:
         self.A = np.asarray(A)
         self.basis = np.asarray(basis)
         self.types = np.asarray(types)
+        self.relativistic = relativistic
         assert len(self.types) == len(self.basis), "every basis atom needs a matching type"
         #self.ibrav = ibrav_map[symmetry]
         self.ibrav = 0 # use CELL_PARAMETERS instead!
@@ -377,10 +378,14 @@ class QECrystal:
         ax.plot(limits[0], [0]*2, [0]*2, 'k--')
         ax.plot([0]*2, limits[1], [0]*2, 'k--')
         ax.plot([0]*2, [0]*2, limits[2], 'k--')
+        ax.set_xlabel(f"x [{self.unit.replace("angstrom", "Å")}]")
+        ax.set_ylabel(f"y [{self.unit.replace("angstrom", "Å")}]")
+        ax.set_zlabel(f"z [{self.unit.replace("angstrom", "Å")}]")
+        if restrict:
+            ax.set_xlim(np.min(deformed_cube[0]), np.max(deformed_cube[0]))
+            ax.set_ylim(np.min(deformed_cube[1]), np.max(deformed_cube[1]))
+            ax.set_zlim(np.min(deformed_cube[2]), np.max(deformed_cube[2]))
         ax.set_aspect("equal")
-        ax.set_xlabel(f"x [{self.unit}]")
-        ax.set_ylabel(f"y [{self.unit}]")
-        ax.set_zlabel(f"z [{self.unit}]")
         ax.legend()
     
     def _mass_per_cell(self) -> float:
@@ -873,7 +878,7 @@ class QECrystal:
             # Notes:
             # The following is just for non relativistic calculations
             # for relativistic calculations, use the additional parameters
-            # lspinorb=.true., noncolin=.true.
+            # 
             file.write(f"""&control
     calculation='scf',
     pseudo_dir = './pseudo/',
@@ -886,7 +891,8 @@ class QECrystal:
 &system
     ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff},
-    occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6}
+    occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6},
+    {"lspinorb=.true., noncolin=.true.," if self.relativistic else ""}
 /
 &electrons
     diagonalization='david',
@@ -923,6 +929,7 @@ class QECrystal:
     ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff},
     occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6}
+    {"lspinorb=.true., noncolin=.true.," if self.relativistic else ""}
 /
 &electrons
     diagonalization='david',
@@ -968,6 +975,7 @@ class QECrystal:
 &system
     ibrav = {self.ibrav}, nat={len(self.basis)}, ntyp= {len(set(self.types))},{f" celldm(1)={self.cell_scale}," if self.ibrav != 0 else ""}
     ecutwfc = {self.kinetic_energy_cutoff}, nbnd = {band_count},
+    {"lspinorb=.true., noncolin=.true.," if self.relativistic else ""}
 /
 &electrons
     diagonalization='david',
@@ -1040,6 +1048,7 @@ filband='{self.name}.Bandx.dat'
     nbnd={band_count},
     force_symmorphic = true,
     occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6}
+    {"lspinorb=.true., noncolin=.true.," if self.relativistic else ""}
 /
 &electrons
     diagonalization='david',
@@ -1071,6 +1080,7 @@ filband='{self.name}.Bandx.dat'
     noinv = true,
     nbnd={band_count}
     occupations='smearing', smearing='{"marzari-vanderbilt" if self.T == 0 else "fermi-dirac"}', degauss={0.02 if self.T == 0 else self.T*6.3336231269e-6}
+    {"lspinorb=.true., noncolin=.true.," if self.relativistic else ""}
 /
 &electrons
     diagonalization='david',

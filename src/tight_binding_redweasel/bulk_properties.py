@@ -116,6 +116,7 @@ def _integration_points(fermi_energy, T_min, T_max, N):
     if T_min == T_max:
         mat = np.array([[I_nj(n, m, 0) for n in range(N)] for m in range(N+1)])
     else:
+        # this is sometimes unstable...
         mat = np.array([[I_nj(n, m, 0) for n in range(N//2-1)] + [I_nj(n, m, 1) for n in range(N-(N//2-1))] for m in range(N+1)])
     q, _ = scipy.linalg.qr(mat)
     poly = [c / math.factorial(2 * (N - i)) for i, c in enumerate(reversed(q[:,-1]))]
@@ -145,6 +146,8 @@ def _integration_weights(x, beta_j, mu_j, E_min, E_max, rtol=1e-4):
             w_j = np.linalg.solve(X, I)
         w.append(w_j)
     w = np.array(w)
+    if np.sum(w < -0.005) > 0:
+        warnings.warn("There are negative weights, which indicates that the integation will be unstable.", RuntimeWarning)
     # filter weights, which are irrelevant due to the integrated function being bounded
     # Note, leaving them out from the beginning leads to worse results.
     select = (np.max(w / np.max(w, axis=1, keepdims=True), axis=0) > rtol * len(x)) & (x > E_min) & (x < E_max)

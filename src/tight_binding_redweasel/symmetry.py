@@ -493,7 +493,7 @@ class Symmetry:
                 return False
         return True
 
-    def realize_symmetric(self, k_smpl, unit_cell=False) -> Tuple[np.ndarray, np.ndarray]:
+    def realize_symmetric(self, k_smpl, unit_cell=False, collect_bad_duplicates=False) -> Tuple[np.ndarray, np.ndarray]:
         """Takes a reduced set of k-points and computes
         the full set of k points that can be inferred using symmetry.
         The result is sorted, such that if it's a grid.
@@ -552,25 +552,37 @@ class Symmetry:
         # if there is duplicate k, then they would be next to one another at this point
         # -> quick check and warning if duplicates are generated, which refer to different source indices!
         unique_full_k = [full_k[0]]
-        unique_order = [order[0]]
+        unique_order = [order[0] if not collect_bad_duplicates else [order[0]]]
         bad_duplicates = False
+        dupl_group = 0
         for i in range(1, len(full_k)):
             if np.linalg.norm(full_k[i-1] - full_k[i]) < 1e-6:
                 # duplicate found
-                if order[i-1] == order[i]:
-                    # can be handled by ignoring it
-                    continue
-                else:
-                    # can not be handled. Add to the list of unique_full_k -> output is not unique anymore
+                if order[i-1] != order[i]:
+                    # can not be handled by ignoring it
                     bad_duplicates = True
+                # can not be handled. Add to the list of unique_full_k -> output is not unique anymore
+                if collect_bad_duplicates:
+                    dupl_group += 1
+                    continue
+                continue
+            elif dupl_group > 0:
+                del unique_order[-1]
+                unique_order.append(list(np.unique([order[j] for j in range(i - dupl_group - 1, i)])))
+                dupl_group = 0
             unique_full_k.append(full_k[i])
-            unique_order.append(order[i])
+            unique_order.append(order[i] if not collect_bad_duplicates else [order[i]])
+        if dupl_group > 0:
+            del unique_order[-1]
+            unique_order.append(list(np.unique([order[j] for j in range(len(full_k) - dupl_group - 1, len(full_k))])))
         # warn if duplicates fromm different k_smpl are found
         if bad_duplicates:
             warnings.warn("duplicate k-points generated in realize_symmetric")
+        if collect_bad_duplicates:
+            return np.asarray(unique_full_k), unique_order
         return np.asarray(unique_full_k), np.asarray(unique_order)
 
-    def realize_symmetric_data(self, k_smpl, data, unit_cell=False) -> Tuple[np.ndarray, np.ndarray]:
+    def realize_symmetric_data(self, k_smpl, data, unit_cell=False, average_bad_duplicates=False) -> Tuple[np.ndarray, np.ndarray]:
         """Same as `realize_symmetric` but instead of returning the source indices,
         the information is immediately used to copy the given data for the new k-points.
 
@@ -583,8 +595,16 @@ class Symmetry:
         Returns:
             Tuple[np.ndarray, np.ndarray]: new k-points, data at the new k-points
         """
-        full_k, order = self.realize_symmetric(k_smpl, unit_cell=unit_cell)
-        return full_k, np.array(np.asarray(data)[order])
+        full_k, order = self.realize_symmetric(k_smpl, unit_cell=unit_cell, collect_bad_duplicates=average_bad_duplicates)
+        if average_bad_duplicates:
+            data = np.asarray(data)
+            full_data = np.array([np.mean(data[i], axis=0) for i in order])
+            full_data_std = np.max([np.ptp(data[i], axis=0) for i in order])
+            if full_data_std > 0:
+                warnings.warn(f"duplicate k-points generated in realize_symmetric_data, max averaging error: {full_data_std}")
+            return full_k, full_data
+        else:
+            return full_k, np.array(np.asarray(data)[order])
 
     def reduce_symmetric_data(self, k_smpl, data, checked=True) -> Tuple[np.ndarray, np.ndarray]:
         """Reduce symmetric data to only include one representant for each k equivalence class.
