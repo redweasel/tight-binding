@@ -13,7 +13,6 @@ eV = elementary_charge  # in Joule
 hbar = 1.05457181764616e-34  # in SI J*s
 c = 299792458.0  # speed of light in m/s
 
-# TODO try to find it in numpy
 antisym_tensor = np.array([
     [[0, 0, 0],
      [0, 0, 1],

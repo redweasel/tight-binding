@@ -8,6 +8,7 @@ import warnings
 # The following has a lot of it, but is missing a part which I deemed crucial for the performance.
 # https://qsymm.readthedocs.io/en/latest/tutorial/bloch_generator.html
 
+
 def neighbor_function(neighbors, err=1e-4) -> Callable[[np.ndarray], tuple[int, bool]]:
     """A function that returns a function that maps positions to (neighbor_index, is_mirrored)
     and raises a ValueError if the neighbor isn't found.
@@ -65,6 +66,7 @@ class Symmetry:
     """
     class for symmetries. All symmetries (except inversion symmetry) are saved as transformation matrices
     """
+
     def __init__(self, S: Iterable, inversion=False, projective=False):
         """Initialize the symmetry from a list of matrices.
 
@@ -153,12 +155,15 @@ class Symmetry:
             S = S + list(-self.S)
         return np.array(S)
 
-    # initialize the symmetry group from the lattice matrix A and the basis atoms b
-    # b is a list of lists of basis positions with the meaning bpos = b[type][index]
-    # TODO unfinished
     @staticmethod
     def from_lattice(A, b) -> 'Symmetry':
-        assert False
+        """
+        initialize the symmetry group from the lattice matrix A and the basis atoms b
+        b is a list of lists of basis positions with the meaning bpos = b[type][index]
+
+        TODO unfinished
+        """
+        raise NotImplementedError()
         # TODO find the integer valued symmetry operations in crystal space,
         # which get transformed to orthogonal symmetries using A
         # TODO find translational symmetries

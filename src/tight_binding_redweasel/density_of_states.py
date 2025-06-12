@@ -6,42 +6,39 @@ import scipy
 from .smearing import *
 from collections.abc import Callable, Iterable
 from typing import Any
-k_B = 8.61733326214518e-5  # eV/K
 
-# gauss integration using the derivative of the fermi function as weight function (integration over const 1 is always 1)
+k_B = 8.61733326214518e-5  # eV/K
 
 
 def gauss_5_df(f, mu, beta):
+    """gauss integration using the derivative of the fermi function as weight function (integration over const 1 is always 1)"""
     x = np.array([-8.211650879369324585, -3.054894371595123559, 0.0, 3.054894371595123559, 8.211650879369324585])
     w = np.array([0.0018831678927720540279, 0.16265409664449248517, 0.6709254709254709216, 0.16265409664449248517, 0.0018831678927720540279])
     x_smpl = x / beta + mu
     f_smpl = f(x_smpl)
     return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0)
 
-# gauss integration using the derivative of the fermi function as weight function (integration over const 1 is always 1)
-
 
 def gauss_7_df(f, mu, beta):
+    """gauss integration using the derivative of the fermi function as weight function (integration over const 1 is always 1)"""
     x = np.array([-13.208619179276130495, -6.822258565704534483, -2.74015863439980345, 0.0, 2.74015863439980345, 6.822258565704534483, 13.208619179276130495])
     w = np.array([1.5006783863250833195e-05, 0.0054715468031045289346, 0.18481163647966422636, 0.61940361986673598773, 0.18481163647966422636, 0.0054715468031045289346, 1.5006783863250833195e-05])
     x_smpl = x / beta + mu
     f_smpl = f(x_smpl)
     return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0)
 
-# gauss integration using the half-fermi function 1/(1+e^abs(x)) as weight function
-
 
 def gauss_4_f(f, mu, beta):
+    """gauss integration using the half-fermi function 1/(1+e^abs(x)) as weight function"""
     x = np.array([-5.7755299052817408167, -1.3141165029468411252, 1.3141165029468411252, 5.7755299052817408167])
     w = np.array([0.013822390808990555472, 0.48617760919100944106, 0.48617760919100944106, 0.013822390808990555472])
     x_smpl = x / beta + mu
     f_smpl = f(x_smpl)
     return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0) / beta * 2 * np.log(2)
 
-# gauss integration using the half-fermi function 1/(1+e^abs(x)) as weight function
-
 
 def gauss_6_f(f, mu, beta):
+    """gauss integration using the half-fermi function 1/(1+e^abs(x)) as weight function"""
     x = np.array([-10.612971636582431145, -4.7544317516063152596, -1.1799810705877835648, 1.1799810705877835648, 4.7544317516063152596, 10.612971636582431145])
     w = np.array([0.00013527426019966680491, 0.02778699826589691238, 0.47207772747390341905, 0.47207772747390341905, 0.02778699826589691238, 0.00013527426019966680491])
     x_smpl = x / beta + mu
@@ -121,13 +118,14 @@ def convolve_ddf(x, energy_smpl, states, beta, extrapolation='flat', extrapolati
             s += df(extrapolation_point[0] - x) * extrapolation_point[1]
     return s
 
-# finds the inverse of strictly monotonic functions on the full range of real numbers
-# is unstable at points where the derivative of f is very small (-> strictly monotonic)
-# converges faster than secant_bisect
-# use the more precise start estimate for b, because it is kept in the first step
-
 
 def secant(y, f, a, b, tol=1e-16, max_i=100):
+    """
+    finds the inverse of strictly monotonic functions on the full range of real numbers
+    is unstable at points where the derivative of f is very small (-> strictly monotonic)
+    converges faster than secant_bisect
+    use the more precise start estimate for b, because it is kept in the first step
+    """
     fa = f(a) - y
     fb = f(b) - y
     for i in range(max_i):
@@ -147,22 +145,22 @@ def secant(y, f, a, b, tol=1e-16, max_i=100):
 
 def _Li2(x):
     return scipy.special.spence(1 - x)
-# 0 at x=0
 
 
 def _int_df(x):
+    # 0 at x=0
     return 0.5 * np.tanh(x / 2)
-# 0 at x=±inf
 
 
 def _int_xdf(x):
+    # 0 at x=±inf
     x = -np.abs(x)
     ex = np.exp(x)  # small
     return (x * ex) / (1 + ex) - np.log1p(ex)
-# 0 at x=0
 
 
 def _int_xxdf(x):
+    # 0 at x=0
     # use symmetry to avoid cancellation
     sign = np.sign(x)
     x = -np.abs(x)
@@ -339,8 +337,8 @@ class DensityOfStates:
                 states += 1.0  # completely full
         return states
 
-    # returns states_below, density
     def states_density(self, energy: float):
+        """returns states_below, density"""
         states = 0.0
         density = 0.0
         for i, band_range in enumerate(self.bands_range):
@@ -352,25 +350,25 @@ class DensityOfStates:
                 states += 1.0  # completely full
         return states, density
 
-    # returns density
     def density(self, energy: float):
+        """returns density of states"""
         density = 0.0
         for i in range(len(self.bands_range)):
             density += self.density_band(energy, i)
         return density
 
-    # returns density for a specific band
     def density_band(self, energy: float, i: int):
+        """returns density for a specific band"""
         if self.bands_range[i][0] < energy < self.bands_range[i][1]:
             return np.mean(self.smearing[i].dvolume(energy))
         return 0.0
 
-    # returns density but split into the band contributions
     def density_bands(self, energy: float):
+        """returns density but split into the band contributions"""
         return [self.density_band(energy, i) for i in range(self.model_bandcount())]
 
-    # get the indices of the bands, that cut the given energy
     def cut_band_indices(self, energy: float):
+        """get the indices of the bands, that cut the given energy"""
         indices = []
         for i, band_range in enumerate(self.bands_range):
             if band_range[0] < energy < band_range[1]:
@@ -473,7 +471,6 @@ class DensityOfStates:
                 return fermi_energy
         raise ValueError(f"root search didn't converge in {maxsteps} steps. {abs((states - electrons) / density)} > {tol}.")
 
-    # returns the approximate bandgap if the model describes an isolator, 0 if it describes a metal
     def bandgap(self, electrons: float) -> float:
         """Return the (already precomputed) bandgap.
 

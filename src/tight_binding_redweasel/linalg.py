@@ -3,8 +3,8 @@ import scipy
 from collections.abc import Callable
 
 
-# direct sum of two matrices (block diagonal concatenation)
 def _direct_sum(a, b):
+    """direct sum of two matrices (block diagonal concatenation)"""
     a = np.asanyarray(a)
     b = np.asanyarray(b)
     a_shape = np.shape(a)
@@ -19,8 +19,8 @@ def _direct_sum(a, b):
     res = np.zeros(np.broadcast_shapes(a_shape[:-2], b_shape[:-2])
                    + (a_shape[-2] + b_shape[-2], a_shape[-1] + b_shape[-1]),
                    dtype=np.promote_types(a.dtype, b.dtype))
-    res[...,:a_shape[-2],:a_shape[-1]] = a
-    res[...,a_shape[-2]:,a_shape[-1]:] = b
+    res[..., :a_shape[-2], :a_shape[-1]] = a
+    res[..., a_shape[-2]:, a_shape[-1]:] = b
     return res
 
 
@@ -50,8 +50,8 @@ def merge_axes(arr: np.ndarray, start_axis=-2, count=2) -> np.ndarray:
     shape = list(np.shape(arr))
     start_axis = start_axis if start_axis >= 0 else len(shape) + start_axis
     assert 0 <= start_axis < len(shape), f"axis {start_axis} is out of bounds for shape {shape}"
-    shape[start_axis] = int(np.prod(shape[start_axis:start_axis+count]))
-    del shape[start_axis+1:start_axis+count]
+    shape[start_axis] = int(np.prod(shape[start_axis:start_axis + count]))
+    del shape[start_axis + 1:start_axis + count]
     return np.reshape(arr, shape)
 
 
@@ -61,7 +61,7 @@ def random_hermitian(n):
 
 
 def random_unitary(n):
-    return np.linalg.qr(np.random.standard_normal((n, n)) + np.random.standard_normal((n, n))*1j)[0]
+    return np.linalg.qr(np.random.standard_normal((n, n)) + np.random.standard_normal((n, n)) * 1j)[0]
 
 
 def geigh(H: np.ndarray, S: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -91,6 +91,7 @@ def geigvalsh(H: np.ndarray, S: np.ndarray) -> np.ndarray:
     else:
         return scipy.linalg.eigvalsh(H, S)
 
+
 def geigh_grad(H: np.ndarray, S: np.ndarray, dH: np.ndarray, dS: np.ndarray):
     """Compute the generalized eigenvalues and eigenvectors using `geigh`.
     Then also compute the gradient w.r.t. a set of first order perturbation matrices.
@@ -99,11 +100,12 @@ def geigh_grad(H: np.ndarray, S: np.ndarray, dH: np.ndarray, dS: np.ndarray):
         # fast path
         return eigh_grad(H, dH)
     bands, ev = geigh(H, S)
-    path = ['einsum_path', (0, 1), (0, 1)] # precomputed path for best speed
+    path = ['einsum_path', (0, 1), (0, 1)]  # precomputed path for best speed
     grads = np.real(np.einsum("...ji,...njk,...ki->...ni", np.conj(ev), dH, ev, optimize=path))
     # TODO check!
-    grads -= np.real(np.einsum("...ji,...njk,...ki->...ni", np.conj(ev), dS, ev, optimize=path)) * bands[:,None,:]
+    grads -= np.real(np.einsum("...ji,...njk,...ki->...ni", np.conj(ev), dS, ev, optimize=path)) * bands[:, None, :]
     return bands, grads, ev
+
 
 def eigh_grad(H: np.ndarray, dH: np.ndarray):
     """Compute the eigenvalues and eigenvectors using `np.linalg.eigh`.
@@ -122,9 +124,10 @@ def eigh_grad(H: np.ndarray, dH: np.ndarray):
         (tuple): (eigvals: ndarray(..., N), grads: ndarray(..., M, N), ev: ndarray(..., N, N))
     """
     eigvals, ev = np.linalg.eigh(H)
-    path = ['einsum_path', (0, 1), (0, 1)] # precomputed path for best speed
+    path = ['einsum_path', (0, 1), (0, 1)]  # precomputed path for best speed
     grads = np.real(np.einsum("...ji,...njk,...ki->...ni", np.conj(ev), dH, ev, optimize=path))
     return eigvals, grads, ev
+
 
 def eigh_grad_hess(H: np.ndarray, dH: np.ndarray, ddH: np.ndarray, epsilon=1e-6):
     """Compute the eigenvalues and eigenvectors using `np.linalg.eigh`.
@@ -149,14 +152,14 @@ def eigh_grad_hess(H: np.ndarray, dH: np.ndarray, ddH: np.ndarray, epsilon=1e-6)
     assert m == ddH_shape[-3] and m == ddH_shape[-4], "number of variables M must be equal for the terms dH, ddH"
     eigvals, ev = np.linalg.eigh(H)
     # first order perturbation theory terms
-    path = ['einsum_path', (0, 1), (0, 1)] # precomputed path for best speed
-    #dH_ev = np.einsum("...ji,...njk,...kl->...nil", np.conj(ev), np.concatenate([dH, merge_axes(ddH, -4, 2)], axis=-3), ev, optimize=path)
+    path = ['einsum_path', (0, 1), (0, 1)]  # precomputed path for best speed
+    # dH_ev = np.einsum("...ji,...njk,...kl->...nil", np.conj(ev), np.concatenate([dH, merge_axes(ddH, -4, 2)], axis=-3), ev, optimize=path)
     dH_ev = np.einsum("...ji,...njk,...kl->...nil", np.conj(ev), dH, ev, optimize=path)
     # hessian contribution from second derivative, first order perturbation theory
-    path = ['einsum_path', (0, 2), (0, 1)] # precomputed path for best speed
+    path = ['einsum_path', (0, 2), (0, 1)]  # precomputed path for best speed
     hess1 = np.real(np.einsum("...ji,...nmjk,...ki->...nmi", np.conj(ev), ddH, ev, optimize=path))
     # second order perturbation theory terms
-    diff = eigvals[...,:,None] - eigvals[...,None,:]
+    diff = eigvals[..., :, None] - eigvals[..., None, :]
     mask = np.abs(diff) < epsilon
     select = np.sum(np.triu(mask, k=1), axis=(-1, -2)) > 0
     if select.sum():
@@ -164,23 +167,23 @@ def eigh_grad_hess(H: np.ndarray, dH: np.ndarray, ddH: np.ndarray, epsilon=1e-6)
         # To keep the efficiency high, only do the second diagonalisation for those which need it.
         # TODO select only works if select.shape != tuple()
         assert len(np.shape(dH_ev[select])) == len(dH_ev.shape)
-        _, ev_dH = np.linalg.eigh(dH_ev[select] * mask[select][...,None,:,:])
+        _, ev_dH = np.linalg.eigh(dH_ev[select] * mask[select][..., None, :, :])
         # stable sort ev such that the order of la doesn't change!
         sorting = np.argsort(np.argmin(np.abs(ev_dH) < 1e-7, axis=-2, keepdims=True), axis=-1)
         ev_dH = np.take_along_axis(ev_dH, sorting, axis=-1)
         # apply basis transformation to the selected dH_ev
         dH_ev[select] = np.einsum("...ji,...jk,...kl->...il", np.conj(ev_dH), dH_ev[select], ev_dH)
-        #hess1[select] = np.einsum("...ji,...jk,...kl->...il", np.conj(ev_dH), hess1[select], ev_dH)
+        # hess1[select] = np.einsum("...ji,...jk,...kl->...il", np.conj(ev_dH), hess1[select], ev_dH)
     # first order eigenvalue change (gradient, actually needs the basis change!)
     grads = np.real(np.diagonal(dH_ev, axis1=-2, axis2=-1))
     # assume that the perturbation term commutes with the hamiltonian.
     # otherwise it can cause non linear sqrt terms in the series development.
     inv_mask = ~mask
-    dH_ev2 = dH_ev * inv_mask[...,None,:,:] # implicit copy
-    dH_ev2 /= (diff + 1e-40)[...,None,:,:]
+    dH_ev2 = dH_ev * inv_mask[..., None, :, :]  # implicit copy
+    dH_ev2 /= (diff + 1e-40)[..., None, :, :]
     # hessian contribution from first derivative, second order perturbation theory
     hess2 = np.real(np.einsum("...pik,...qki->...pqi", dH_ev, dH_ev2))
-    return eigvals, grads, hess1 - 2*hess2
+    return eigvals, grads, hess1 - 2 * hess2
 
 
 def pointcloud_distance(pointcloud1, pointcloud2):
@@ -203,7 +206,7 @@ def lattice_in_sphere(A, dist) -> np.ndarray:
     # first make A as orthogonal as possible using QR decomposition
     for _ in range(3):
         Q, R = np.linalg.qr(A)
-        R /= np.diag(R)[:,None]
+        R /= np.diag(R)[:, None]
         R_inv = np.linalg.inv(R)
         assert abs(abs(np.linalg.det(R_inv)) - 1.0) < 1e-7
         R_inv = np.round(R)
@@ -217,9 +220,9 @@ def lattice_in_sphere(A, dist) -> np.ndarray:
     # The new bounding box can be computed using the mins and max of the resulting 2^n corner vectors.
     # That means this algorithms is exponential in the number of dimensions,
     # however remember that the number of points is also exponential in the dimension.
-    corners = (Vh.T @ (np.stack(np.meshgrid(*n*((-1, 1),)), axis=-1).reshape(-1, n) / S).T).T
+    corners = (Vh.T @ (np.stack(np.meshgrid(*n * ((-1, 1),)), axis=-1).reshape(-1, n) / S).T).T
     # now create the ranges and from there the whole grid
-    ranges = [np.arange(-int(dist*np.max(corners[:,i])), 1+int(dist*np.max(corners[:,i]))) for i in range(n)]
+    ranges = [np.arange(-int(dist * np.max(corners[:, i])), 1 + int(dist * np.max(corners[:, i]))) for i in range(n)]
     pos = S * (Vh @ np.stack(np.meshgrid(*ranges), axis=-1).reshape(-1, n).T).T
     # filter the result to only include positions in the sphere
     pos = pos[np.linalg.norm(pos, axis=-1) < dist]
@@ -227,12 +230,19 @@ def lattice_in_sphere(A, dist) -> np.ndarray:
     return np.array((U @ pos.T).T)
 
 
-# A is a linear symmetric python function
-# b is of the same dimension as A(x0)
-# apart from solving a normal linear eq, it can also be used
-# to calculate the pseudo inverse of A efficiently like this:
-# A_pinv = conjugate_gradient_solve(lambda x: A @ x, np.identity(4), np.diag(1/(np.diag(A) + 1e-12)))
-def conjugate_gradient_solve(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, x0=None, err=1e-9, max_i=None) -> np.ndarray:
+def conjugate_gradient_solve(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, x0: np.ndarray | None = None, err=1e-9, max_i: int | None = None) -> np.ndarray:
+    """Generic conjugate gradient solver for `Ax=b`.
+
+    Args:
+        A (Callable[[np.ndarray], np.ndarray]): linear symmetric python function.
+        b (np.ndarray): result vector of the same dimension as A(x0)
+        x0 (np.ndarray, optional): Starting guess for x. Defaults to None.
+        err (float, optional): The residual error threshold for stopping the iteration. Defaults to 1e-9.
+        max_i (int, optional): Maximal number of iterations. Defaults to None.
+
+    Returns:
+        np.ndarray: The best approximation for the result `x` from `Ax=b`.
+    """
     if x0 is None:
         x = np.zeros_like(b)
         r = -b
@@ -241,24 +251,24 @@ def conjugate_gradient_solve(A: Callable[[np.ndarray], np.ndarray], b: np.ndarra
         r = A(x) - b
     d = r.copy()
     r_sqr = np.sum(r.conj() * r)
-    if max_i == None:
+    if max_i is None:
         max_i = int(np.prod(np.shape(x)) * 2.5) + 1
     i = 0
     while True:
         A_d = A(d)
-        d_sqr = np.real(np.sum(d.conj() * A_d)) # real because A is positive definite!
+        d_sqr = np.real(np.sum(d.conj() * A_d))  # real because A is positive definite!
         if d_sqr == 0:
-            #print("cg", i, "d")
+            # print("cg", i, "d")
             return x
         alpha = r_sqr / d_sqr
         x -= alpha * d
         if r_sqr <= err**2:
-            #print("cg", i)
+            # print("cg", i)
             return x
         if i > max_i:
-            #print(f"conjugate gradient didn't converge ({r_sqr**.5:.2e} > {err:.2e})")
+            # print(f"conjugate gradient didn't converge ({r_sqr**.5:.2e} > {err:.2e})")
             return x
-        
+
         i += 1
         A_d *= alpha
         r -= A_d

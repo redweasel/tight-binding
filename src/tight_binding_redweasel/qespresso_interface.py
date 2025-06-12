@@ -121,7 +121,7 @@ def qe_prepare(pseudo_potential_files_dict=None):
 def plot_bands_generic(bands, x_smpl=None, *args, **kwargs):
     from matplotlib import pyplot as plt
     bands = np.asarray(bands)
-    plt.gca().set_prop_cycle(None)
+    plt.gca().set_prop_cycle(None)  # type: ignore
     for i in range(len(bands[0])):
         if x_smpl is None:
             plt.plot(bands[:,i], *args, **kwargs)
@@ -245,7 +245,7 @@ def k_points(points, unit: str) -> str:
         k_points = k_points + f"{x} {y} {z} 1\n"
     return k_points
 
-def k_grid(size: int, size2: int=None, size3: int=None) -> str:
+def k_grid(size: int, size2: int | None=None, size3: int | None=None) -> str:
     """Generate the parameter string that Quantum Espresso wants for a rectilinear grid.
 
     Args:
@@ -1231,7 +1231,8 @@ begin projections
 {projections}
 end projections
 
-site_symmetry = {"true\nsymmetrize_eps=1d-9" if symmetry else "false"}
+site_symmetry = {'''true
+symmetrize_eps=1d-9''' if symmetry else "false"}
 write_hr = true
 write_tb = {"true" if write_tb else "false"}
 write_xyz = true
