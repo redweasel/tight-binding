@@ -27,6 +27,7 @@ def load_tb(filename):
         assert point_count == len(degeneracy)
         # now read the hamiltonian matrices
         neighbors = []
+        neighbors_set = set()
         params = []
         r_params = []
         index = -1
@@ -38,13 +39,14 @@ def load_tb(filename):
                 # start new matrix or return to existing one
                 pos = tuple([int(x) for x in parts])
                 neg_pos = tuple([-x for x in pos])
-                if pos not in neighbors:
-                    if pos != neg_pos and neg_pos in neighbors:
+                if pos not in neighbors_set:
+                    if pos != neg_pos and neg_pos in neighbors_set:
                         # skip the entry if the adjungated matrix is already in neighbors
                         index = -1
                         continue
                     index = len(neighbors)
                     neighbors.append(pos)
+                    neighbors_set.add(pos)
                     params.append(np.zeros((band_count, band_count), dtype=np.complex128))
                     r_params.append(np.zeros((band_count, band_count, 3), dtype=np.complex128))
                 else:
@@ -77,6 +79,7 @@ def load_tb(filename):
     return neighbors[order], params[order], r_params[order], degeneracy, A
 
 # read the wannier90 ..._hr.dat format
+# Note: this format doesn't have the lattice vectors! The output is in crystal coordinates.
 def load_hr(filename):
     with open(filename, "r") as file:
         file.readline() # just the creation date
@@ -94,6 +97,7 @@ def load_hr(filename):
         assert point_count == len(degeneracy)
         # now read the hamiltonian matrices
         neighbors = []
+        neighbors_set = set()
         params = []
         index = -1
         for line in file:
@@ -104,12 +108,13 @@ def load_hr(filename):
                 # start new matrix or return to existing one
                 pos = tuple([int(x) for x in parts[:3]])
                 neg_pos = tuple([-x for x in pos])
-                if pos not in neighbors:
-                    if pos != neg_pos and neg_pos in neighbors:
+                if pos not in neighbors_set:
+                    if pos != neg_pos and neg_pos in neighbors_set:
                         # skip the entry if the adjungated matrix is already in neighbors
                         continue
                     index = len(neighbors)
                     neighbors.append(pos)
+                    neighbors_set.add(pos)
                     params.append(np.zeros((band_count, band_count), dtype=np.complex128))
                 else:
                     index = neighbors.index(pos)

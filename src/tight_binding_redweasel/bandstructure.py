@@ -6,7 +6,6 @@ from .linalg import *
 from . import logger
 from . import json_tb_format
 from . import wannier90_tb_format as tb_fmt
-import sys
 
 
 def plot_bands_generic(k_smpl, bands, *args, **kwargs):
@@ -94,6 +93,7 @@ class BandStructureModel:
         """
         return len(self.params[0])
 
+    @staticmethod
     def init_tight_binding(symmetry: Symmetry, neighbors, band_count, cos_reduced=False, exp=False) -> Self:
         neighbors = np.array(neighbors, dtype=np.float64)
         # symmetry.check_neighbors(neighbors)
@@ -107,6 +107,7 @@ class BandStructureModel:
         model.exp = exp
         return model
 
+    @staticmethod
     def init_tight_binding_from_ref(symmetry: Symmetry, neighbors, k_smpl, ref_bands, band_offset=0, add_bands=0, cos_reduced=False, exp=False) -> Self:
         neighbors = np.array(neighbors, dtype=np.float64)
         f_i_tb, df_i_tb, ddf_i_tb, term_count, neighbors = _get_tight_binding_coeff_funcs(
@@ -661,7 +662,7 @@ class BandStructureModel:
             if self.cos_reduced:
                 self.params[0] += np.sum(self.params[1:n], axis=0)*2
 
-    def save(self, filename, format=None):
+    def save(self, filename: str, format=None):
         """Save the model to a file format, which can be read with the correspoding `BandStructureModel.load` function.
         This function specifically works for models created with `init_tight_binding_from_ref`
         and raises an exception otherwise.  
@@ -705,7 +706,8 @@ class BandStructureModel:
         # reset printoptions to what they were before
         np.set_printoptions(**opt)
 
-    def load(filename, format=None, cos_reduced=False, exp=True) -> Self:
+    @staticmethod
+    def load(filename: str, format=None, cos_reduced=False, exp=True) -> Self:
         """Import a tight binding model into the given `self.params` specification (cos_reduced, exp).
 
         Warning: the "python" format executes the file as python code. Don't open unchecked files with it.
@@ -749,6 +751,7 @@ class BandStructureModel:
         elif format == "wannier90tb":
             neighbors, H_r, w_r_params, degeneracies, A = tb_fmt.load_tb(
                 filename)
+            # TODO use A to transform neighbors to normalized reciprocal space.
             model = BandStructureModel.init_tight_binding(
                 Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=cos_reduced, exp=exp)
             model.set_params_complex(H_r)

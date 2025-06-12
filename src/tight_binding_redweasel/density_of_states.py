@@ -4,7 +4,7 @@
 import numpy as np
 import scipy
 from .smearing import *
-from typing import Callable, Tuple, Self
+from typing import Callable, Tuple, Self, Iterable
 
 k_B = 8.61733326214518e-5 # eV/K
 
@@ -171,12 +171,12 @@ class DensityOfStates:
             model (Callable[[arraylike[N_k, 3]], bands]): The bandstructure model.
                 This class allows any function to be used as a bandstructure model.
                 However there are special features, that use `model.bands_grad` and `model.bands_grad_hess` to improve the results if it is available.
-                The input k for the model should be in reciprocal space, not in crystal space.
+                The input k for the model should be in reciprocal space specified by A, not in crystal space.
             N (int, optional): Number of k-points per direction. Defaults to 24.
             A (arraylike[3, 3]): Matrix with lattice vectors in its columns. Used for computing the k-grid for sampling the model. Defaults to the unit matrix.
             ranges (arraylike[3, 2], optional): The ranges for each axis in crystal space. This should only be changed to consider symmetries, as the whole cell will still be considered to have volume 1. Defaults to ((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)).
             wrap (bool, optional): _description_. Defaults to True.
-            smearing (str, optional): One of the options {"cubes", "tetras", "spheres"}. "spheres" is really fast. Defaults to "cubes".
+            smearing (str, optional): One of the options {"cubes", "tetras", "spheres"}. For details look at the class `SmearingMethod`. Defaults to "cubes".
             use_gradients (bool, optional): If the smearing supports it, use analytic gradients instead of interpolated gradients for the smearing calculations. Defaults to False.
             midpoint (bool, optional): Shift the k-points by half a cell, such that the borders are not included. Defaults to False.
             check (bool or float, optional): If not False, check the model for correct periodicity. If a float is given instead of a bool, it is interpreted as the tolerance for the check. Defaults to True.
@@ -357,7 +357,7 @@ class DensityOfStates:
         # compute energy samples based on where the bands start and end
         energy_smpl = []
         for (min_e, max_e) in self.bands_range:
-            energy_smpl.extend(list(np.linspace(min_e, max_e, N)))
+            energy_smpl.extend(np.linspace(min_e, max_e, N))
         energy_smpl = sorted(list(set(energy_smpl)))
         states = []
         density = []
@@ -368,7 +368,7 @@ class DensityOfStates:
         if T != 0:
             # smooth the curve using the Fermi-distribution
             beta = 1 / (k_B * T) # 1/eV
-            energy_smpl_T0, states_T0, density_T0 = energy_smpl, states, density
+            energy_smpl_T0, states_T0, density_T0 = energy_smpl, np.asarray(states), np.asarray(density)
             delta = 5.0 / beta
             energy_smpl = np.concatenate([np.linspace(energy_smpl[0] - delta, energy_smpl[0], N, endpoint=False), energy_smpl, np.flip(np.linspace(energy_smpl[-1] + delta, energy_smpl[-1], N, endpoint=False))], axis=0)
             states = [convolve_df(x, energy_smpl_T0, states_T0, beta) for x in energy_smpl]
@@ -480,7 +480,7 @@ class DensityOfStates:
 
         Args:
             electrons (float): The number of valence electrons per cell.
-            T_smpl (arraylike[N_T]): The temperatures for batched computation of chemical potentials.
+            T_smpl (arraylike[N_T]): The (sorted!) temperatures for batched computation of chemical potentials.
             N (int, optional): The number of points used to approximate the smeared states. Defaults to 30.
             tol (float, optional): The precision of the root-finding procedure. Defaults to 1e-8.
             maxsteps (int, optional): The maximal number of steps for the root-finding procedure. Defaults to 30.
@@ -597,6 +597,38 @@ class DensityOfStates:
         energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-mu)), scipy.special.expit(-beta*(e1-mu)), N)) - 1 + 1e-16) / beta + mu
         states = [self.states_below(energy) for energy in energy_smpl]
         return accumulate(T, energy_smpl, states)
+
+    def conductivity(self, mu):
+        # TODO
+        return None
+
+    def seebeck(self, electrons: float, T_smpl: Iterable[float], N=30, h=1e-4) -> np.ndarray:
+        """The Seebeck-coefficient at constant volume can be computed
+        without transport integrals from the derivative of the chemical
+        potential w.r.t. the temperature.
+
+        https://doi.org/10.1103/PhysRevB.98.224101
+
+        Args:
+            electrons (float): Number of filled bands, just like for the chemical potential calculation.
+            T_smpl (arraylike): Temperatures for the computation
+            N (int, optional): The number of energy samples to use for the integration. Defaults to 30.
+
+        Returns:
+            float: The seebeck coefficient at constant volume
+        """
+        # for T=0 the seebeck coefficient is 0
+        T_smpl= np.asarray(T_smpl)
+        subset = np.arange(len(T_smpl))[T_smpl > 0]
+        T_ = T_smpl[subset]
+        inv_order = np.zeros(len(T_smpl), dtype=int)
+        inv_order[subset] = np.arange(len(T_))
+        assert h < np.min(T_), "h needs to be bigger than the smallest positive temperature"
+        T_h = [T+s*h for T in T_ for s in [-1, 1]]
+        # numerical derivative of the chemical potential
+        mu = self.chemical_potential(electrons, T_h, N=N)
+        # Note: the result would be multiplied by 1eV/e = 1V, so this depends on the unit eV!
+        return np.array([(mu[inv_order[i]*2+1] - mu[inv_order[i]*2]) / (2*h) if T_smpl[i] > 0 else 0 for i in range(len(T_smpl))])
 
     def fermi_surface_samples(self,
             energy: float,

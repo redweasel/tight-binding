@@ -1,5 +1,4 @@
 import numpy as np
-import scipy
 from typing import Self
 from .symmetry import *
 from . import logger
@@ -60,10 +59,10 @@ class HermitianFourierSeries:
         mat = np.zeros(np.shape(k)[:-1] + self.H_r[0].shape, dtype=np.complex128)
         H_r_shape = (1,)*len(np.shape(k)[:-1]) + self.H_r[0].shape
         for i in range(1, len(self.H_r)):
-            mat += np.asarray(self.f_i(k, i))[..., None, None] * self.H_r[i].reshape(H_r_shape)
+            mat += self.f_i(k, i)[..., None, None] * self.H_r[i].reshape(H_r_shape)
         mat += np.conj(np.swapaxes(mat, -1, -2))
         # expect H_r[0] to always be hermitian! (this is very important for symmetrization)
-        mat += np.asarray(self.f_i(k, 0))[..., None, None] * self.H_r[0].reshape(H_r_shape)
+        mat += self.f_i(k, 0)[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
 
     def df(self, k):
@@ -71,9 +70,9 @@ class HermitianFourierSeries:
         mat = np.zeros(np.shape(k) + self.H_r[0].shape, dtype=np.complex128)
         H_r_shape = (1,)*len(np.shape(k)) + self.H_r[0].shape
         for i in range(1, len(self.H_r)):
-            mat += np.asarray(self.df_i(k, i))[..., None, None] * self.H_r[i].reshape(H_r_shape)
+            mat += self.df_i(k, i)[..., None, None] * self.H_r[i].reshape(H_r_shape)
         mat += np.conj(np.swapaxes(mat, -1, -2))
-        mat += np.asarray(self.df_i(k, 0))[..., None, None] * self.H_r[0].reshape(H_r_shape)
+        mat += self.df_i(k, 0)[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
 
     def ddf(self, k):
@@ -82,9 +81,9 @@ class HermitianFourierSeries:
                        [-1],) + self.H_r[0].shape, dtype=np.complex128)
         H_r_shape = tuple([1]*(1+len(np.shape(k)))) + self.H_r[0].shape
         for i in range(1, len(self.H_r)):
-            mat += np.asarray(self.ddf_i(k, i))[..., None, None] * self.H_r[i].reshape(H_r_shape)
+            mat += self.ddf_i(k, i)[..., None, None] * self.H_r[i].reshape(H_r_shape)
         mat += np.conj(np.swapaxes(mat, -1, -2))
-        mat += np.asarray(self.ddf_i(k, 0))[..., None, None] * self.H_r[0].reshape(H_r_shape)
+        mat += self.ddf_i(k, 0)[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
 
     def copy(self):
@@ -126,26 +125,37 @@ class HermitianFourierSeries:
         self.neighbors = np.concatenate([self.neighbors, neighbors], axis=0)
         self.H_r = np.concatenate([self.H_r, np.zeros((len(neighbors),) + self.H_r.shape[1:])], axis=0)
 
-    def limit_neighbors(self, max_length: float):
+    def limit_neighbors(self, max_length: float) -> int:
         """Remove all neighbors that have a vector length more than a given threshold length.
 
         Args:
             max_length (float): Maximal length/distance for the neighbors. Everything else gets cut off. Exact values like 2 are safe, as there is a buildin epsilon.
+
+        Returns:
+            int: number of removed neighbors
         """
+        assert max_length >= 0.0, "can only limit with non negative maximal length, as the 0 neighbor needs to be kept"
         keep = np.linalg.norm(self.neighbors, axis=-1) <= max_length + 1e-8
+        old_len = len(self.neighbors)
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
+        return len(self.neighbors) - old_len
 
-    def limit_neighbor_count(self, max_count: int):
+    def limit_neighbor_count(self, max_count: int) -> int:
         """Remove all neighbors that exceed the targeted number of neighbors.
 
         Args:
             max_count (int): Maximal number of neighbors to be kept.
+
+        Returns:
+            int: number of removed neighbors
         """
         # sort neighbors by length first and trim the index list
         sort = np.argsort(np.linalg.norm(self.neighbors, axis=-1))[:max_count]
+        old_len = len(self.neighbors)
         self.neighbors = np.array(self.neighbors[sort])
         self.H_r = np.array(self.H_r[sort])
+        return len(self.neighbors) - old_len
 
     def cleanup_neighbors(self, min_norm):
         """Remove all neighbors that have a coefficient matrix with a norm smaller than a given threshold.
@@ -154,9 +164,11 @@ class HermitianFourierSeries:
             min_norm (float): Minimal norm for the neighbor coefficients. Everything else gets cut off.
         """
         keep = np.linalg.norm(self.H_r, axis=(-1, -2)) >= min_norm
+        old_len = len(self.neighbors)
         keep[0] = True  # always keep the 0
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
+        old_len = len(self.neighbors)
 
 
 class AsymTightBindingModel:
@@ -905,7 +917,7 @@ def free_electron_model_orthogonal(a: float, b: float, c: float, neighbor_count:
     return model2, eV_unit
 
 
-def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symmetry, start_neighbors_count=2, add_bands_below=0, add_bands_above=0, randomize=True):
+def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symmetry, start_neighbors_count=2, add_bands_below=0, add_bands_above=0, randomize=True, restarts=4):
     """
     This function creates a fit for a given dataset and
     saves it at various checkpoints as json file `asym_{name}_{neighbors_count}.json`.
@@ -925,7 +937,7 @@ def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symm
 
     best_tb_error = float("inf")
     best_tb = None # type: AsymTightBindingModel
-    for _ in range(4):
+    for _ in range(restarts):
         print("restart with new model")
         tb = AsymTightBindingModel.new(neighbors, add_bands_below + np.shape(ref_bands)[-1] + add_bands_above)
         tb.randomize(0.01)
@@ -953,8 +965,8 @@ def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symm
         if start_neighbors_count + 1 != neighbors_count:
             new_neighbors = sym.complete_neighbors([neighbors_src[neighbors_count]])
             tb.H.add_neighbors(new_neighbors)
+            neighbors_count += 1
         print("fit with neighbors", neighbors_src[:neighbors_count])
-        neighbors_count += 1
         for _ in range(10 if randomize else 1):
             # small randomisation seems to help convergence...?!?
             tb.randomize(log.last_loss() * (0.1 if randomize else 0.01))

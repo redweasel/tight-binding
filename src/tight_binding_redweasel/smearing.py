@@ -161,6 +161,12 @@ def cube_cut_area_com(a0, ax, ay, az):
 
 
 class CubesSmearing(SmearingMethod):
+    """
+    Smearing method based on the volume of cubes. This is similar to the tetrahedron method,
+    however instead of using tetrahedrons, where the volume of each cut tetrahedron can be computed exactly,
+    this method approximates the energy bands linearly in a cube and uses that to cut the cube.
+    It is 8x faster than the tetrahedron method and has similar precision.
+    """
     def __init__(self, positions, A, values, grads=None, wrap=False):
         self.B = np.linalg.inv(A).T
         # k_smpl are in reciprocal space coordinates.
@@ -321,6 +327,10 @@ def cube_tetra_cut_dvolume(a):
     return tetras
 
 class TetraSmearing(SmearingMethod):
+    """
+    Classical tetrahedron method from literature (O. Jepsen and O. K. Andersen, Solid State Commun. 9,
+    1763 (1971))
+    """
     def __init__(self, values, wrap, B):
         a = [values, np.roll(values, -1, axis=0)]
         a.extend([np.roll(vertex, -1, axis=1) for vertex in a])
@@ -361,6 +371,7 @@ class SphereSmearing(SmearingMethod):
     """A simple approximation for smearing.
     This can be used with computed analytic gradients or with interpolated gradients.
     With interpolated gradients, this method produces results VERY close to the cubic smearing, but much faster (~4x).
+    However, derivatives of the density of states have much larger errors with this method.
     """
     def __init__(self, positions, B, values, grads=None, wrap=False):
         self.positions = positions

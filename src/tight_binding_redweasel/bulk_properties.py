@@ -4,7 +4,7 @@
 import numpy as np
 import scipy.special
 import math
-from typing import Callable
+from typing import Callable, Iterable
 from . import density_of_states as _dos
 import warnings
 
@@ -98,7 +98,7 @@ def hall_coefficients(sigma2, sigma3):
     sigma2_inv = np.linalg.inv(sigma2)
     return np.einsum("...aj,...abk,...ib->...ijk", sigma2_inv, sigma3, sigma2_inv)
 
-def _integration_points(fermi_energy, T_min, T_max, N):
+def _integration_points(fermi_energy: float, T_min: float, T_max: float, N: int):
     assert N > 0
     if N == 1:
         return np.array([fermi_energy])
@@ -123,7 +123,7 @@ def _integration_points(fermi_energy, T_min, T_max, N):
     assert len(poly) == N+1
     return fermi_energy + np.array(sorted([np.real(r) for r in np.roots(poly)]))
 
-def _integration_weights(x, beta_j, mu_j, E_min, E_max, rtol=1e-4):
+def _integration_weights(x: Iterable, beta_j: Iterable, mu_j: Iterable, E_min: float, E_max: float, rtol=1e-4):
     assert len(x) % 2 == 1
     if len(x) == 1:
         return np.array([1.0])
@@ -161,7 +161,7 @@ class KIntegral:
     The integrals are of different forms, so look for the `integrate..` functions for details.
     """
 
-    def __init__(self, dos_model: _dos.DensityOfStates, electrons: float, T: list, N=None, errors=False, rtol=1e-4):
+    def __init__(self, dos_model: _dos.DensityOfStates, electrons: float, T: Iterable, N=None, errors=False, rtol=1e-4):
         """Initialize an Integral over the bandstructure (k-space)
 
         Args:
@@ -247,7 +247,7 @@ class KIntegral:
                 self.v.append(v)
                 self.w.append(weights/(1e-8 + np.linalg.norm(v, axis=-1)))
 
-    def integrate_df(self, g: Callable, hessians=False):
+    def integrate_df(self, g: Callable, hessians=False, moments=0):
         """Integrate with the derivative of the fermi function as weight function.
 
         I = sum_n 1/V_RZ integral_{V_RZ}( g(E_n(k), grad_k E_n(k), hess_k E_n(k), k) * (-df/de(e, mu, T)) dk)
@@ -262,10 +262,12 @@ class KIntegral:
                 Note that the positions in k-space are given in crystal coordinates, meaning they are in the cube [-0.5,0.5]^3.
                 This affects the gradients and hessians as well. Make sure to convert to proper k-space for the gradients.
             hessians (bool, optional): If True, the hessians are given to the function g, otherwise the (positional) argument is ommited. Defaults to False.
+            moments (int, optional): How many moments, i.e. integrals with (e - mu)^a with `0 <= a <= moments` are computed. These come almost for free.
 
         Returns:
             ndarray[N_T]: The value of the integral at each temperature.
         """
+        assert moments >= 0 or type(moments) != int, "moments needs to be non negative integer"
         if self.v is None or (hessians and self.h is None):
             self.precompute(hessians)
 
@@ -280,10 +282,13 @@ class KIntegral:
                 res.append(np.sum(f_res * self.w[index].reshape((-1,)+(1,)*len(np.shape(f_res)[1:])), axis=0))
 
         if self.metal:
-            I = []
-            for w_j in self.integration_weights:
-                I.append(sum(r * w for r, w in zip(res, w_j)))
-            return np.array(I)
+            I_moments = []
+            for a in range(moments + 1):
+                I = []
+                for mu, w_j in zip(self.mu, self.integration_weights):
+                    I.append(sum(r * w * (e - mu)**a for r, e, w in zip(res, self.e_smpl, w_j)))
+                I_moments.append(I)
+            return np.array(I_moments)
         else:
             if len(self.beta) == 1 and self.beta[0] > 1e16:
                 # no fermi surface!
@@ -292,11 +297,11 @@ class KIntegral:
                     I = 0.0 * np.asanyarray(g(self.mu, np.zeros((1, 3)), np.eye(3)[None], np.zeros((1, 3))))
                 else:
                     I = 0.0 * np.asanyarray(g(self.mu, np.zeros((1, 3)), np.zeros((1, 3))))
-                return np.array([I])
+                return np.array([[I]])
             # TODO see comment in __init__
             raise NotImplementedError("integrals for isolators (semiconductors) are currently not implemented")
 
-    def integrate_df_A(self, A, g: Callable, hessians=False):
+    def integrate_df_A(self, A, g: Callable, hessians=False, moments=0):
         """Integrate with the derivative of the fermi function as weight function.
         In contrast to `integrate_df`, this function uses the correct k-space.
 
@@ -313,6 +318,7 @@ class KIntegral:
                 Note that the positions in k-space are given in actual reciprocal space coordinates in 2π/Å, computed using A.
                 The group velocity is in m/s and the inverse_mass_tensor is in 1/kg
             hessians (bool, optional): If True, the hessians are given to the function g, otherwise the (positional) argument is ommited. Defaults to False.
+            moments (int, optional): How many moments, i.e. integrals with (e - mu)^a with `0 <= a <= moments` are computed. These come almost for free.
 
         Returns:
             ndarray[N_T]: The value of the integral at each temperature.
@@ -333,7 +339,7 @@ class KIntegral:
                 res = g(e, v, h, k)
                 assert len(res) == len(k)
                 return res
-            return self.integrate_df(g2, hessians=True)
+            return self.integrate_df(g2, hessians=True, moments=moments)
         else:
             def g2(e, v, k):
                 k = np.einsum("ji,ni->nj", B, k)
@@ -341,9 +347,9 @@ class KIntegral:
                 res = g(e, v, k)
                 assert len(res) == len(k)
                 return res
-            return self.integrate_df(g2, hessians=False)
+            return self.integrate_df(g2, hessians=False, moments=moments)
 
-    def transport_coefficients(self, A, spin_factor=2, tau=None, max_a=2):
+    def transport_coefficients(self, A: np.ndarray, spin_factor=2, tau=None, max_a=2):
         """Transport coefficients `L^(n)`. To get usual experimental values,
         use the functions `conductivity`, `peltier`, `seebeck` and `electronic_thermal_conductivity`.
 
@@ -354,30 +360,28 @@ class KIntegral:
         ```
 
         Args:
-            A (arraylike[3, 3]): The lattice vectors in units of Angstrom.
+            A (arraylike[N_d, N_d]): The lattice vectors in units of Angstrom.
             spin_factor (int, optional): The number of electrons per band. Defaults to 2.
             tau (Callable[[arraylike[N_d]], float], optional): The scattering time as a function of k. Defaults to None.
             max_a (int, optional): The maximal L^(a) to be computed. Defaults to 2.
 
         Returns:
-            (ndarray[3, N_d, N_d], ndarray[3, N_d, N_d]): ((L^(0), L^(1), L^(2)), (errors of L^(a))). Results L^(0) in 1/(Ohm*m)/s, L^(1) in J/C/(Ohm*m)/s, L^(2) in (J/C)^2/(Ohm*m)/s.
+            (ndarray[max_a+1, N_T, N_d, N_d]): (L^(0), L^(1), L^(2)). Results L^(0) in 1/(Ohm*m)/s, L^(1) in J/C/(Ohm*m)/s, L^(2) in (J/C)^2/(Ohm*m)/s.
         """
         V_EZ = np.linalg.det(A*1e-10)
         if isinstance(tau, float):
             tau_v = tau
             tau = lambda _: tau_v
-        tau_1 = (lambda v, _: v) if tau is None else (lambda v, k: v * tau(k))
-        a = np.arange(max_a + 1)[None,:]
-        # TODO build this mu dependence into the temperature dependent weights! -> use the full mu curve
-        I = self.integrate_df_A(A, lambda e, v, k: v[:,None,None,:] * v[:,None,:,None] * tau_1((e - self.mu[0])**a, k)[:,:,None,None], hessians=False)
-        a = np.arange(max_a + 1)[:,None,None]
+        tau_1 = (lambda v, _: v) if tau is None else (lambda v, k: v * np.reshape(tau(k), (-1,1,1)))
+        I = self.integrate_df_A(A, lambda _e, v, k: tau_1(v[:,None,:] * v[:,:,None], k), hessians=False, moments=max_a)
+        a = np.arange(max_a + 1)[:,None,None,None]
         D = spin_factor * elementary_charge**(2-a) * I/eV**(1-a) / V_EZ
         return D
 
     # conductivity divided by the electron scattering time tau. Assuming constant tau. Result in 1/(Ohm*m*s)
-    def drude_factor(self, A, spin_factor=2):
+    def drude_factor(self, A: np.ndarray, spin_factor=2):
         V_EZ = np.linalg.det(A*1e-10)
-        I = self.integrate_df_A(A, lambda _e, v, _k: v[:,None,:] * v[:,:,None], hessians=False)
+        I = self.integrate_df_A(A, lambda _e, v, _k: v[:,None,:] * v[:,:,None], hessians=False)[0]
         D = spin_factor * elementary_charge**2 * I/eV / V_EZ
         return D # result is in 1/(Ohm*m)/s
 
@@ -385,12 +389,12 @@ class KIntegral:
     # (This is better computed by the DoS itself)
     def heat_capacity(self, spin_factor=2):
         warnings.warn("The function heat_capacity is known to misbehave.", DeprecationWarning)
-        I = self.integrate_df(lambda e, _v, _k: e*(e - self.mu), hessians=False)
+        I = self.integrate_df(lambda e, _v, _k: e, hessians=False, moments=1)[1]
         cV_T = spin_factor * I * eV
         T = 1 / (self.beta * _dos.k_B)
         return cV_T / T
 
-    def hall_coefficient(self, A, spin_factor=2):
+    def hall_coefficient(self, A: np.ndarray, spin_factor=2):
         warnings.warn("This function is only left in for reference. Use conductivity_hall_tensor or hall_coefficient_metal_cubic.", DeprecationWarning)
         # TODO remove! This is bad!
         # PhysRevB.82.035103 Hall effect formula with constant relaxation time for all bands over all k.
@@ -399,28 +403,28 @@ class KIntegral:
         # I canceled one e from sigma_xx with e^2 from sigma_xyz
         V_EZ = np.linalg.det(A*1e-10)
         #sigma_xyz = elementary_charge/c/eV * self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)
-        I = self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)
-        I2 = self.integrate_df_A(A, lambda _e, v, _k: v[:,0]**2, hessians=False)
+        I = self.integrate_df_A(A, lambda _e, v, h, _k: (v[:,0]**2*h[:,1,1] - v[:,0]*v[:,1]*h[:,1,0]), hessians=True)[0]
+        I2 = self.integrate_df_A(A, lambda _e, v, _k: v[:,0]**2, hessians=False)[0]
         sigma_xyz = -elementary_charge/eV * spin_factor * I
         sigma_xx = elementary_charge/eV * spin_factor * I2
         R_H = sigma_xyz / sigma_xx**2 * V_EZ
         #R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
         return R_H # in m^3/C = Ohm m/T
 
-    def hall_coefficient_metal_cubic(self, A, spin_factor=2):
+    def hall_coefficient_metal_cubic(self, A: np.ndarray, spin_factor=2):
         # PhysRevB.45.10886 Hall effect formula with constant relaxation time over k.
         # In reality the relaxation times are different over k-space or even just for different spins in the same band. (PhysRev.97.647)
         # I canceled one e from sigma_0 with e^2 from sigma_H
         V_EZ = np.linalg.det(A*1e-10)
-        I = self.integrate_df_A(A, lambda _e, v, h, _k: np.einsum("ni,nij,nj->n", v, h, v) - np.einsum("nj,nj,nii->n", v, v, h), hessians=True)
-        I2 = self.integrate_df_A(A, lambda _e, v, _k: (v**2).sum(-1), hessians=False)
+        I = self.integrate_df_A(A, lambda _e, v, h, _k: np.einsum("ni,nij,nj->n", v, h, v) - np.einsum("nj,nj,nii->n", v, v, h), hessians=True)[0]
+        I2 = self.integrate_df_A(A, lambda _e, v, _k: (v**2).sum(-1), hessians=False)[0]
         sigma_H = elementary_charge/eV * spin_factor/6 * I
         sigma_0 = elementary_charge/eV * spin_factor/3  * I2
         R_H = sigma_H / sigma_0**2 * V_EZ
         #R_H_error = R_H * ((error/I)**2 + (2*error2/I2)**2)**.5
         return R_H # in m^3/C = Ohm m/T
 
-    def conductivity_hall_tensor(self, A, spin_factor=2, tau=None):
+    def conductivity_hall_tensor(self, A: np.ndarray, spin_factor=2, tau=None):
         """Compute the conductivity tensors of rank 2 and rank 3,
         which are required for the Drude weight and the hall coefficient.
         The formulas are:
@@ -446,33 +450,32 @@ class KIntegral:
             tau = lambda _: tau_v
         tau_1 = (lambda v, _: v) if tau is None else (lambda v, k: v * tau(k))
         tau_2 = (lambda v, _: v) if tau is None else (lambda v, k: v * tau(k)**2)
-        I = self.integrate_df_A(A, lambda _e, v, h, k: tau_2(np.einsum("yds,na,ns,nbd->naby", antisym_tensor, v, v, h), k), hessians=True)
-        I2 = self.integrate_df_A(A, lambda _e, v, k: tau_1(v[:,None,:] * v[:,:,None], k), hessians=False)
+        I = self.integrate_df_A(A, lambda _e, v, h, k: tau_2(np.einsum("yds,na,ns,nbd->naby", antisym_tensor, v, v, h), k), hessians=True)[0]
+        I2 = self.integrate_df_A(A, lambda _e, v, k: tau_1(v[:,None,:] * v[:,:,None], k), hessians=False)[0]
         sigma3 = 1/V_EZ * elementary_charge**3/eV * spin_factor * I
         sigma2 = 1/V_EZ * elementary_charge**2/eV * spin_factor * I2
         return sigma2, sigma3
 
-    # electric part of the heat conductivity kappa in J/m^3 (if cell_length is given in meters)
-    def heat_conductivity(self, A, spin_factor=2, print_error=False):
-        pass
 
-
-""" Free electron model in eV for testing, reciprocal lattice k in 2pi/Å """
 class FreeElectrons:
-    def __init__(self, k_neighbors=((0,0,0),), limit_count=None):
+    """
+    Free electron model in eV for testing, reciprocal lattice k in 2pi/Å
+    and non duplicated bands for spin, so spin has to be considered when using it.
+    """
+    def __init__(self, k_neighbors=((0,0,0),), limit_count: int = None):
         eV_unit = 3.80998211 * (2*np.pi)**2 # hbar^2/m_e/2 * (2pi/1Å)^2 / 1eV
         self.fac = eV_unit
         self.k_neighbors = np.asarray(k_neighbors).T
         self.limit_count = limit_count
 
-    def __call__(self, k_smpl):
+    def __call__(self, k_smpl: Iterable):
         k_smpl = k_smpl[:,:,None] - self.k_neighbors[None,:,:]
         bands = self.fac * np.linalg.norm(k_smpl, axis=-2)**2
         if self.limit_count:
             bands = np.sort(bands, axis=-1)[:,:self.limit_count]
         return bands
 
-    def bands_grad(self, k_smpl):
+    def bands_grad(self, k_smpl: Iterable):
         k_smpl = k_smpl[:,:,None] - self.k_neighbors[None,:,:]
         bands = np.linalg.norm(k_smpl, axis=-2)**2
         grad = 2*k_smpl
@@ -482,7 +485,7 @@ class FreeElectrons:
             grad = np.take_along_axis(grad, order[:,None,:], axis=-1)
         return self.fac * bands, self.fac * grad
 
-    def bands_grad_hess(self, k_smpl):
+    def bands_grad_hess(self, k_smpl: Iterable):
         k_smpl = k_smpl[:,:,None] - self.k_neighbors[None,:,:]
         bands = np.linalg.norm(k_smpl, axis=-2)**2
         grad = 2*k_smpl

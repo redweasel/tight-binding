@@ -36,7 +36,7 @@ if not cu_crystal.read_available():
     cu_crystal.nscf(qe.k_grid(16), 10)
 
 k_smpl, bands, symmetries, fermi_energy = cu_crystal.read_bands_crystal()
-A_norm = cu_crystal.A / (abs(cu_crystal.A[0,0])*2) # normalisation for fcc and bcc
+A_norm = cu_crystal.A / (np.max(np.abs(cu_crystal.A), axis=1, keepdims=True)*2) # normalisation for fcc and bcc
 cu_interp_crystal = kpaths.interpolate(k_smpl, bands, Symmetry(symmetries), method="cubic")
 cu_interp = lambda k: cu_interp_crystal(k @ A_norm)
 
@@ -861,6 +861,9 @@ class QECrystal:
 
     def _run(self, program, name):
         os.system(mpi_run + f'{program}{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} -in {self.name}.{name}.in | tee {self.name}.{name}.out')
+    
+    def _run_simple(self, program, args, out_file):
+        os.system(f'{program}{"" if platform == "win32" else ".x"} {args} | tee {out_file}')
 
     def scf(self, k_grid_size, k_grid_size2=None, k_grid_size3=None):
         """Do a self consistent field calculation (solving the Kohn-Sham equations).
@@ -1107,7 +1110,8 @@ begin atoms_frac
         crystal = crystal + "end atoms_frac"
         return crystal
 
-    def epsilon(self, nw=500):
+    def dielectric_function(self, nw=500):
+        # compute the dielectric function
         with open(f"{self.name}.epsilon.in", "w") as file:
             file.write(f"""
 &inputpp
@@ -1128,92 +1132,12 @@ begin atoms_frac
         print(f"computing dielectric function for {self.name}")
         os.system(mpi_run + f'epsilon{"" if platform == "win32" else ".x"} < {self.name}.epsilon.in | tee {self.name}.epsilon.out')
     
-    def read_epsilon(self):
+    def read_dielectric_function(self):
+        # read the dielectric function after having computed it with `dielectric_function`
         data_r = np.loadtxt(f'epsr_{self.name}.dat', skiprows=3)
         data_i = np.loadtxt(f'epsi_{self.name}.dat', skiprows=3)
         return data_r[:,0], data_r[:,1:] + data_i[:,1:] * 1j
 
-    def k_points_wannier(self, points):
-        k_points = "begin kpoints\n"
-        for x, y, z in points:
-            k_points = k_points + f"{x} {y} {z}\n"
-        k_points = k_points + "end kpoints"
-        return k_points
-    
-    # prepare the wannierization parameters and check them
-    # wannier_count is the number of bands in the result if disentanglement is used. Otherwise this is choosen automatically to use all bands.
-    # run this after nscf_nosym()
-    def prepare_wannier(self, wannier_count=None, grid_size=None, iterations=100, projections="random"):
-        # the difficult part is the "projections" part
-        # that part is about which orbitals are used where
-        # using my HamiltonianSymmetry I can accumulate all the information for it.
-        # otherwise I would need to add yet another way to construct it...
-        # PROBLEM: This is the difficult part! and it is just for the starting state!
-        # For now, just use "random" to get it running
-        #
-        # TODO make the kpath for the plotting chooseable using the kpath module, or
-        # don't use bands_plot and implement that part myself using the tb model.
-        k_points, bands, _, _ = self.read_bands_crystal(incomplete=True)
-        if grid_size is None:
-            grid_size = round(np.cbrt(len(k_points)))
-        else:
-            k_points = np.stack(np.meshgrid(*(np.linspace(0, 1.0, grid_size, endpoint=False),)*3), axis=-1).reshape(-1, 3)
-        #assert len(k_points) == grid_size**3, "grid from data is reduced by symmetry, which is strangely not allowed for this step"
-        if wannier_count is None:
-            wannier_count = len(bands[0])
-        with open(f"{self.name}.win", "w") as file:
-            file.write(f"""
-num_bands = {len(bands[0])}
-num_wann = {wannier_count}
-num_iter = {iterations}
-conv_tol = 1.0e-10 ! = default value
-conv_window = 4
-trial_step = 3.0 ! line search, increase if the wannierization doesn't converge
-
-iprint = 2
-num_dump_cycles = 10
-num_print_cycles = 10
-
-dis_win_max = 18.0
-dis_win_min = 11.0
-!dis_froz_max = 13.4
-!dis_froz_min = 11.0
-
-spinors = false
-!auto_projections = true !there is a warning about this not always working with pw2wannier90
-!use_bloch_phases = true ! doesn't work :(
-
-begin projections
-{projections}
-end projections
-
-site_symmetry = true
-!write_hr = true
-write_tb = true
-write_xyz = true
-
-wannier_plot = true
-wannier_plot_supercell = 3
-bands_plot = true
-
-begin kpoint_path
-L 0.50000 0.50000 0.5000 G 0.00000 0.00000 0.0000
-G 0.00000 0.00000 0.0000 X 0.50000 0.00000 0.5000
-end kpoint_path
-
-!exclude_bands=
-
-{self.crystal_wannier()}
-
-mp_grid = {grid_size} {grid_size} {grid_size}
-
-{self.k_points_wannier(k_points)}
-""")
-        # generate a list of required overlaps (written to {name}.nnkp)
-        # for some reason mpirun doesn't work...
-        #os.system(mpi_run + f"wannier90.x -pp {self.name}")
-        os.system(f'wannier90{"" if platform == "win32" else ".x"} -pp {self.name}')
-    
     def projections(self, lwrite_overlaps=False):
         """Compute the projections of the wave functions onto atomic orbitals using `projwfc.x`.
         The results can be read in using `self.read_projections()`"""
@@ -1229,10 +1153,109 @@ lwrite_overlaps={lwrite_overlaps}
         print(f"computing projections onto atomic orbitals for {self.name}")
         self._run("projwfc", "projwfc")
 
+    def k_points_wannier(self, points):
+        k_points = "begin kpoints\n"
+        for x, y, z in points:
+            k_points = k_points + f"{x} {y} {z}\n"
+        k_points = k_points + "end kpoints"
+        return k_points
+    
+    def k_path_wannier(self, kpath, A_norm):
+        k_points = "begin kpoint_path\n"
+        prev = None
+        for i, name in zip(kpath.indices, kpath.names):
+            # x, y, z in crystal coordinates (kpath is given in normalized reciprocal coordinates)
+            x, y, z = A_norm.T @ np.asarray(kpath[i])
+            this = f"{name} {x} {y} {z}"
+            if prev is not None:
+                k_points = k_points + prev + " " + this + "\n"
+            prev = this
+        k_points = k_points + "end kpoint_path"
+        return k_points
+    
+    # prepare the wannierization parameters and check them
+    # wannier_count is the number of bands in the result if disentanglement is used. Otherwise this is choosen automatically to use all bands.
+    # run this after nscf_nosym()
+    def prepare_wannier(self, max_disentangle_energy, max_frozen_energy, wannier_count=None, grid_size=None, iterations=100, disentangle_iterations=500, projections="random", exclude_bands=None, symmetry=False, write_tb=False, write_wannier_functions=False):
+        # the difficult part is the "projections" part
+        # that part is about which orbitals are used where
+        # using my HamiltonianSymmetry I can accumulate all the information for it.
+        # otherwise I would need to add yet another way to construct it...
+        # PROBLEM: This is the difficult part! and it is just for the starting state!
+        # For now, just use "random" to get it running
+        #
+        # Note: write_tb is REALLY slow! It took almost the entire computation in my case!
+        # or maybe it was wannier_plot which was slow?
+        # calling it "write_..." is misleading, as it's actually a flag "compute_..."
+        k_points, bands, _, _ = self.read_bands_crystal(incomplete=True)
+        if grid_size is None:
+            assert symmetry, "can only infer the grid_size when no symmetry is used."
+            grid_size = round(np.cbrt(len(k_points)))
+            assert len(k_points) == grid_size**3, "grid from data is likely reduced by symmetry"
+        else:
+            k_points = np.stack(np.meshgrid(*(np.linspace(0, 1.0, grid_size, endpoint=False),)*3), axis=-1).reshape(-1, 3)
+        if wannier_count is None:
+            wannier_count = len(bands[0])
+        with open(f"{self.name}.win", "w") as file:
+            file.write(f"""
+num_bands = {len(bands[0])}
+num_wann = {wannier_count}
+num_iter = {iterations}
+conv_tol = 1.0e-10 ! = default value
+conv_window = 4
+trial_step = 1.0 ! line search, decrease if the wannierization doesn't converge
+
+iprint = 2
+timing_level = 2
+num_dump_cycles = 10
+num_print_cycles = 10
+
+dis_win_max = {max_disentangle_energy:.3f}
+!dis_win_min = 11.0
+{f"dis_froz_max = {max_frozen_energy:.3f}" if not symmetry else ""}
+!dis_froz_min = 11.0
+dis_num_iter = {disentangle_iterations}
+dis_mix_ratio   = 1.0
+dis_conv_tol = 1e-6
+dis_conv_window = 4
+
+length_unit = { {'angstrom': 'Ang', 'bohr': 'Bohr'}[self.unit]}
+
+spinors = false
+!auto_projections = true !there is a warning about this not always working with pw2wannier90
+!use_bloch_phases = true ! doesn't work :(
+
+begin projections
+{projections}
+end projections
+
+site_symmetry = {"true\nsymmetrize_eps=1d-9" if symmetry else "false"}
+write_hr = true
+write_tb = {"true" if write_tb else "false"}
+write_xyz = true
+translate_home_cell = false
+
+wannier_plot = {"true" if write_wannier_functions else "false"}
+!wannier_plot_supercell = 3
+bands_plot = false
+
+{f"exclude_bands={exclude_bands}" if exclude_bands else ""}
+
+{self.crystal_wannier()}
+
+mp_grid = {grid_size} {grid_size} {grid_size}
+
+{self.k_points_wannier(k_points)}
+""")
+        # generate a list of required overlaps (written to {name}.nnkp)
+        # for some reason mpirun doesn't work...
+        #os.system(mpi_run + f"wannier90.x -pp {self.name}")
+        self._run_simple('wannier90', f"-pp {self.name}", f"{self.name}.wout")
 
     # compute the overlaps of the wavefunctions from the nscf calculation, to be used by wannierization
     # use this after using prepare_wannier()
-    def overlaps_for_wannier(self):
+    def overlaps_for_wannier(self, use_sym=False):
+        # Note: don't write the UNK files as they work really poorly with normal filesystems (there is one for each k-point!)
         with open(f"{self.name}.pw2wan.in", "w") as file:
             file.write(f"""
 &inputpp 
@@ -1240,12 +1263,10 @@ lwrite_overlaps={lwrite_overlaps}
    prefix = '{self.name}'
    seedname = '{self.name}'
    !spin_component = 'none'
-   !write_mmn = true
-   !write_amn = true
-   !write_unk = true ! not compatible with irr_bz
-   !write_dmn = true ! not compatible with irr_bz
-   !wan_mode = 'standalone'
-   irr_bz = true
+   wan_mode = 'standalone'
+   write_mmn = true
+   write_amn = true
+   {"write_dmn = true\nread_sym = true" if use_sym else ""}
 /
 """)
         self._run("pw2wannier90", "pw2wan")
@@ -1256,10 +1277,60 @@ lwrite_overlaps={lwrite_overlaps}
         # written to {name}.mmn and {name}.amn
         # parallel execution doesn't work for some reason...
         #os.system(mpi_run + f"wannier90.x {self.name}")
-        os.system(f'wannier90{"" if platform == "win32" else ".x"} {self.name}')
+        self._run_simple('wannier90', f"{self.name}", f"{self.name}.wout")
 
-    def plot_wannier(self):
-        pass
+    # rerun wannier90 to get the bands of the last computed wannier90 tight binding on a kpath
+    # bands_num_points: then the number of points along the first section of the bandstructure plot given by kpath
+    # the actual plot can be done using plot_wannier_bands()
+    def prepare_plot_wannier_bands(self, kpath, A_norm, wannier_count=None, grid_size=None, bands_num_points=None):
+        if bands_num_points is None:
+            bands_num_points = kpath.indices[1]
+         # TODO read from prior wannier90 run
+         # for no reason whatsoever wannier90 needs all of this data, just to evaluate its tb model.
+        k_points, bands, _, _ = self.read_bands_crystal(incomplete=True)
+        if grid_size is None:
+            grid_size = round(np.cbrt(len(k_points)))
+            assert len(k_points) == grid_size**3, "grid from data is likely reduced by symmetry"
+        else:
+            k_points = np.stack(np.meshgrid(*(np.linspace(0, 1.0, grid_size, endpoint=False),)*3), axis=-1).reshape(-1, 3)
+        if wannier_count is None:
+            wannier_count = len(bands[0])
+        with open(f"{self.name}.win", "w") as file:
+            file.write(f"""
+num_bands = {len(bands[0])}
+num_wann = {wannier_count}
+restart = plot
+num_iter = 0
+dis_num_iter = 0
+
+length_unit = { {'angstrom': 'Ang', 'bohr': 'Bohr'}[self.unit]}
+
+write_hr = false
+write_tb = false
+write_xyz = false
+
+wannier_plot = false
+!wannier_plot_supercell = 3
+bands_plot = true
+bands_num_points = {bands_num_points}
+
+{self.k_path_wannier(kpath, A_norm)}
+
+{self.crystal_wannier()}
+
+mp_grid = {grid_size} {grid_size} {grid_size}
+
+{self.k_points_wannier(k_points)}
+""")
+        # generate a list of required overlaps (written to {name}.nnkp)
+        # for some reason mpirun doesn't work...
+        #os.system(mpi_run + f"wannier90.x -pp {self.name}")
+        self._run_simple('wannier90', self.name, f"{self.name}.wout")
+
+    def plot_wannier_bands(self):
+        from matplotlib import pyplot as plt
+        data = np.loadtxt(f"{self.name}_band.dat", unpack=True)
+        plt.plot(*data, '.')
 
     # show Fermi surface using xcrysden
     def fermi_surface(self):

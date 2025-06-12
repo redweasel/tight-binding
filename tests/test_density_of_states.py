@@ -71,13 +71,13 @@ def test_sin_density_of_states():
     density_a = dos_model.density(0.1)
     kint = bulk.KIntegral(dos_model, n, [0])
     mu_a = kint.mu
-    a = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0]
+    a = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0,0]
 
     dos_model = dos.DensityOfStates(model, N=N, A=np.array([[0.5, 0, 0], [0, 1, 1], [0, -1, 1]]).T, ranges=[[-0.5, 0.5]]*3, wrap=True)
     density_b = dos_model.density(0.1)
     kint = bulk.KIntegral(dos_model, n, [0])
     mu_b = kint.mu
-    b = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0]
+    b = kint.integrate_df_A(A2, lambda e,v,k: np.ones_like(k[:,0]))[0,0]
     assert abs(density_a - density_b) / abs(density_a) < 5e-2, "error in density calculation"
     assert abs(mu_a - mu_b) < 5e-2, "error in chemical potential calculation"
     assert abs(a - b) < 5e-2, "error in bulk.KIntegral.integrate_df_A(...)"

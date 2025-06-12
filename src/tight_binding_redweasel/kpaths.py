@@ -30,6 +30,7 @@ points['M2d'] = (0.5*np.array([1, 1]), 'M')  # Sigma line
 points['G1d'] = (0.5*np.array([0]), 'Γ')
 points['X1d'] = (0.5*np.array([1]), 'X')
 
+
 class KPath(_collections_abc.Sequence):
     def __init__(self, start, name=None, points=points):
         """create new path in k-space.
@@ -73,10 +74,11 @@ class KPath(_collections_abc.Sequence):
                 name if name is not None else self.points[point][1])
             point = self.points[point][0].reshape(1, -1)
         else:
-            self.names.append(name if name is not None else str(
-                np.array(point).reshape(-1)).replace("  ", " "))
+            self.names.append(
+                name if name is not None else "(" + " ".join(f"{x:.3f}" for x in point) + ")")
             point = np.array(point).reshape(1, -1)
-        assert len(point[0]) == len(self.path[0]), f"All points in the path need to have the same dimension. Tried to add a {len(point[0])}d point to a {len(self.path[0])}d path."
+        assert len(point[0]) == len(
+            self.path[0]), f"All points in the path need to have the same dimension. Tried to add a {len(point[0])}d point to a {len(self.path[0])}d path."
         t = np.linspace(0, 1, N, endpoint=False).reshape(-1, 1) + 1/N
         self.path.extend(self.path[-1] + t * (point - self.path[-1]))
         self.indices.append(len(self.path) - 1)
@@ -162,9 +164,11 @@ class KPath(_collections_abc.Sequence):
             # compute the textsize in axis units
             # (the results are a little unprecise, because rounding
             # isn't quite the optimal solution.. just the simplest)
-            textsize = 8 * (ylim[1] - ylim[0]) / plt.gcf().get_figheight() * 0.15
+            textsize = 8 * (ylim[1] - ylim[0]) / \
+                plt.gcf().get_figheight() * 0.15
             # rounded to display precision to avoid label overlap
-            edge_bands = np.round(ibands[-1 if label_bands == "right" else 0] / textsize, 1) * textsize
+            edge_bands = np.round(
+                ibands[-1 if label_bands == "right" else 0] / textsize, 1) * textsize
             y_ticks, inv = np.unique(edge_bands, return_inverse=True)
             y_bands = [[] for i in range(len(y_ticks))]
             for i, j in enumerate(inv):
@@ -220,7 +224,7 @@ class KPath(_collections_abc.Sequence):
         self.plot(func1, band_offset=max(0, -band_offset),
                   label_bands=None, ylim=ylim)
         return self.plot(func2, '--', band_offset=max(0, band_offset),
-                  label_bands=label_bands, ylim=plt.gca().get_ylim())
+                         label_bands=label_bands, ylim=plt.gca().get_ylim())
 
     def dim(self) -> int:
         """Get the dimension of the k-space of this path.
@@ -383,6 +387,7 @@ def hexagonal_points(r: float, h: float) -> dict:
     points['L'] = (np.array([0.5*r, 0.5/3**.5*r, h/2]), 'L')
     return points
 
+
 def tetragonal_bc_points(c: float) -> dict:
     """Generate the symmetry points for the tetragonal centered lattice (a, a, c).
     It is body centered in real space and face centered in reciprocal space.
@@ -395,7 +400,7 @@ def tetragonal_bc_points(c: float) -> dict:
         dict: _description_
     """
     if c == 1:
-        return points # cubic, is contained in the global points dict
+        return points  # cubic, is contained in the global points dict
     points = {}
     points['G'] = (np.zeros(3), 'Γ')
     points['X'] = (np.array([0.5, 0.5, 0]), 'X')
@@ -403,7 +408,8 @@ def tetragonal_bc_points(c: float) -> dict:
         points['M'] = (np.array([1., 0, 0]), 'M')
         points['N'] = (np.array([0.5, 0, 0.5/c]), 'N')
         points['Z1'] = (_hsp(points['N'][0], points['M'][0]), '$Z_1$')
-        points['Z'] = (np.array([0, 0, 2*points['N'][0][2] - points['Z1'][0][2]]), 'Z')
+        points['Z'] = (
+            np.array([0, 0, 2*points['N'][0][2] - points['Z1'][0][2]]), 'Z')
         points['P'] = (np.array([0.5, 0.5, points['N'][0][2]]), 'P')
     else:
         # there are two label types "SC" and "BI", both are implemented here
@@ -416,15 +422,16 @@ def tetragonal_bc_points(c: float) -> dict:
         points['Sig'] = (_hsp(points['N'][0], points['N0'][0]), 'Σ')
         points['S0'] = (points['Sig'][0], '$S_0$')
         points['S'] = (_hsp(points['M'][0], points['N'][0]), 'S')
-        points['Sig1'] = (points['S'][0], '$\Sigma_1$')
-        points['S2'] = (points['S'][0]*np.array([1,1,-1]), '$S_2$')
+        points['Sig1'] = (points['S'][0], '$\\Sigma_1$')
+        points['S2'] = (points['S'][0]*np.array([1, 1, -1]), '$S_2$')
         points['R'] = (_hsp(points['N'][0], points['N0'][0], points['X'][0]), 'R')
         points['Y'] = (points['R'][0], 'Y')
         points['P'] = (_hsp(points['N'][0], points['N1'][0], points['X'][0]), 'P')
         points['Y1'] = (_hsp(points['N'][0], points['N1'][0], points['M'][0]), '$Y_1$')
         points['GG'] = (points['Y1'][0], 'G')
-        points['G0'] = (points['Y1'][0]*np.array([1,1,-1]), '$G_0$')
+        points['G0'] = (points['Y1'][0]*np.array([1, 1, -1]), '$G_0$')
     return points
+
 
 def trigonal_points(alpha: float, mirror_x=False) -> dict:
     """Generate the symmetry points for a trigonal/rhombohedral reciprocal lattice of a real trigonal with lattice constant 1.
