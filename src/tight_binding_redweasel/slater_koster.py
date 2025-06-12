@@ -5,7 +5,7 @@ from . import hamiltonian_symmetry as _hsym
 from . import kpaths as _kpaths
 from . import unitary_representations as _urepr
 from . import linalg as _lin
-from typing import Callable, Tuple, Self
+from typing import Callable, tuple, Self
 
 # This is an implementation of a pure Slater-Koster
 # tight-binding interpolation model.
@@ -299,14 +299,14 @@ class SlaterKoster:
         and sets the corresponding parameter to a given value.
 
         Args:
-            parameter_tuple (tuple): Tuple from `self.parameters`
+            parameter_tuple (tuple): tuple from `self.parameters`
             value (float, complex): value to be inserted for the specified parameter.
         """
         k, i, j, fac = parameter_tuple
         self.model.params[k][i, j] = value / fac
         self.model.params = self.symmetrizer(self.model.params)
 
-    def interactive_widget(self, kpath: _kpaths.KPath, ylim: Tuple[float, float], ref_model: Callable=None, slider_range=5.0, slider_step=0.1, latex=False, use_complex=False):
+    def interactive_widget(self, kpath: _kpaths.KPath, ylim: tuple[float, float], ref_model: Callable=None, slider_range=5.0, slider_step=0.1, latex=False, use_complex=False):
         from matplotlib import pyplot as plt
         import ipywidgets as widgets
         import re

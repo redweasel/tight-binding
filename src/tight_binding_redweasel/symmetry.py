@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.spatial import KDTree
-from typing import Self, Callable, Tuple
+from collections.abc import Callable, Sequence, Iterable
 from .linalg import pointcloud_distance
 import warnings
 
@@ -8,12 +8,20 @@ import warnings
 # The following has a lot of it, but is missing a part which I deemed crucial for the performance.
 # https://qsymm.readthedocs.io/en/latest/tutorial/bloch_generator.html
 
-# a function that returns a function that maps positions to (neighbor_index, is_mirrored)
-# and raises a ValueError if the neighbor isn't found.
-def neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]]:
+def neighbor_function(neighbors, err=1e-4) -> Callable[[np.ndarray], tuple[int, bool]]:
+    """A function that returns a function that maps positions to (neighbor_index, is_mirrored)
+    and raises a ValueError if the neighbor isn't found.
+
+    Args:
+        neighbors (arraylike[Nr, Nd]): The neighbor positions.
+        err (float, optional): The tolerance for neighbors to be considered equivalent. Defaults to 1e-4.
+
+    Returns:
+        Callable[[np.ndarray], tuple[int, bool]]: A function that maps neighbor positions to (their index in the original list, mirror). If only the mirrored neighbor exists, it is returned with mirror=True. Raises a ValueError if the neighbor isn't found.
+    """
     kdtree = KDTree(neighbors)
 
-    def find(r):
+    def find(r: np.ndarray):
         mirror = False
         _dist, j = kdtree.query(r, distance_upper_bound=err)
         if j < 0 or j >= len(neighbors):
@@ -26,7 +34,19 @@ def neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]]:
 
 # a function that returns a function that maps positions to (neighbor_index, is_mirrored)
 # and returns None, None if the neighbor isn't found
-def try_neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]]:
+
+
+def try_neighbor_function(neighbors, err=1e-4) -> Callable[[np.ndarray], tuple[int | None, bool | None]]:
+    """A function that returns a function that maps positions to (neighbor_index, is_mirrored)
+    and raises a ValueError if the neighbor isn't found.
+
+    Args:
+        neighbors (arraylike[Nr, Nd]): The neighbor positions.
+        err (float, optional): The tolerance for neighbors to be considered equivalent. Defaults to 1e-4.
+
+    Returns:
+        Callable[[np.ndarray], tuple[int, bool]]: A function that maps neighbor positions to (their index in the original list, mirror). If only the mirrored neighbor exists, it is returned with mirror=True. Returns (None, None) if the neighbor isn't found.
+    """
     kdtree = KDTree(neighbors)
 
     def find(r):
@@ -41,27 +61,32 @@ def try_neighbor_function(neighbors, err=1e-4) -> Callable[..., Tuple[int, bool]
     return find
 
 
-# class for symmetries. All symmetries (except inversion symmetry) are saved as unitary/orthogonal transformation matrices
-# TODO do they need to be orthogonal? Why not SL(3) or -SL(3)? Those would also create closed sets of symmetries.
 class Symmetry:
-    # initialize symmetry from orthogonal matrices
-    def __init__(self, S, inversion=False, projective=False):
+    """
+    class for symmetries. All symmetries (except inversion symmetry) are saved as transformation matrices
+    """
+    def __init__(self, S: Iterable, inversion=False, projective=False):
+        """Initialize the symmetry from a list of matrices.
+
+        Args:
+            S (arraylike[N, Nd, Nd]): List of Nd-dimensional matrices with determinant `|det|=1`. The first one needs to be the unit matrix.
+            inversion (bool, optional): Add inversion symmetry. Defaults to False.
+            projective (bool, optional): Flag for symmetries with translation component encoded with projective geometry. Defaults to False.
+        """
         self.S = np.asarray(S)
         self.inversion = inversion
         # just a flag for notifying other parts of the code that this represents a symmetry with a translational component
         self.projective = projective
         # important consistency checks
         if np.linalg.norm(self.S[0] - np.eye(len(self.S[0]))) > 1e-7:
-            raise ValueError(
-                "The first entry in the symmetry list needs to be the identity element")
+            raise ValueError("The first entry in the symmetry list needs to be the identity element")
         if [s for s in self.S if abs(abs(np.linalg.det(s)) - 1) > 1e-7]:
-            raise ValueError(
-                "invalid matrix in parameter. All matrices need to have |det| = 1, otherwise the group is infinite")
+            raise ValueError("invalid matrix in parameter. All matrices need to have |det| = 1, otherwise the group is infinite")
         # check if S has inversion symmetry build in
         if pointcloud_distance(self.S, -self.S) < 1e-6:
             # if not inversion:
             #    print("found inversion symmetry")
-            if len(S[0]) % 2 == 1:
+            if len(self.S[0]) % 2 == 1:
                 # keep only the S with positive determinants (works for real matrices in odd dimensions)
                 self.inversion = True
                 self.S = np.array([s for s in self.S if np.linalg.det(s) > 0])
@@ -70,7 +95,7 @@ class Symmetry:
                 # here inversion can be a problem, as it may be in the center, but it's not always a normal subgroup!
                 # for now, disable the inversion symmetry reduction in even dimensions.
                 pass
-        elif inversion and len(S[0]) % 2 == 0:
+        elif inversion and len(self.S[0]) % 2 == 0:
             # realize inversion in even dimensions
             self.S = np.concatenate([self.S, -self.S], axis=0)
             self.inversion = False
@@ -79,14 +104,14 @@ class Symmetry:
         # each symmetry(except for inversion) has a line or a plane on which it's unbroken
         # -> add information about that and add a way to get all the unbroken/broken symmetries for a point
 
-    def copy(self) -> Self:
+    def copy(self) -> 'Symmetry':
         """Deep copy of the symmetry group."""
         return Symmetry(np.array(self.S), self.inversion, self.projective)
 
     def dim(self) -> int:
         """Dimension of the symmetry operations"""
         return len(self.S[0])
-    
+
     def space_dim(self) -> int:
         """Dimension of the symmetry operations, considering projective symmetry as one dimension reduced."""
         return len(self.S[0]) - (1 if self.projective else 0)
@@ -98,13 +123,13 @@ class Symmetry:
 
     def is_orthogonal(self) -> bool:
         """Check if the symmetry operations are orthogonal/unitary matrices"""
-        return np.linalg.norm(np.einsum("nij,nkj->nik", self.S, np.conj(self.S)) - np.eye(self.dim())[None,...]) < 1e-6
+        return np.linalg.norm(np.einsum("nij,nkj->nik", self.S, np.conj(self.S)) - np.eye(self.dim())[None, ...]) < 1e-6
 
-    def transpose(self) -> Self:
+    def transpose(self) -> 'Symmetry':
         """Get the symmetry with all the symmetry operations transposed. That is the symmetry group for the dual lattice/vector space."""
         return Symmetry(np.array(np.swapaxes(self.S, -1, -2)), self.inversion)
 
-    def __eq__(self, other: Self) -> bool:
+    def __eq__(self, other: 'Symmetry') -> bool:
         if self.dim() != other.dim():
             return False
         if self.inversion != other.inversion:
@@ -132,7 +157,7 @@ class Symmetry:
     # b is a list of lists of basis positions with the meaning bpos = b[type][index]
     # TODO unfinished
     @staticmethod
-    def from_lattice(A, b) -> Self:
+    def from_lattice(A, b) -> 'Symmetry':
         assert False
         # TODO find the integer valued symmetry operations in crystal space,
         # which get transformed to orthogonal symmetries using A
@@ -140,7 +165,7 @@ class Symmetry:
 
         # simplify the problem using qr
         _, A = np.linalg.qr(A)
-        A /= A[0, 0] # scaling doesn't change symmetries
+        A /= A[0, 0]  # scaling doesn't change symmetries
         if len(A) == 2:
             S = [np.eye(2)]
             # check which rotation symmetry is given by just testing them
@@ -149,7 +174,7 @@ class Symmetry:
             r = np.max(np.linalg.norm(points, axis=-1))
             # TODO generate a full circle of these points
             for x in [4, 3]:
-                angle = 2*np.pi/x
+                angle = 2 * np.pi / x
                 rot = np.array(((np.cos(angle), np.sin(angle)),
                                (-np.sin(angle), np.cos(angle))))
                 if pointcloud_distance(rot @ points, points) < 1e-7:
@@ -176,7 +201,7 @@ class Symmetry:
             raise NotImplementedError(
                 f"not implemented for dimension {len(A)}")
 
-    def transform(self, basis_transform) -> Self:
+    def transform(self, basis_transform) -> 'Symmetry':
         """Apply a basis transformation to all symmetry operations.
         This is useful to convert reciprocal crystal space symmetries, which only contain integer entries,
         into reciprocal space symmetries using `transform(B)` where
@@ -185,25 +210,25 @@ class Symmetry:
         `S' = B @ S @ inv(B)`
 
         NOTE: this does not change the instance it is called on.
-        
+
         Args:
             basis_transform (matrix): Transform matrix B
-        
+
         Returns:
             Self: The transformed symmetry group
         """
         if self.projective:
-            assert np.shape(basis_transform) == (self.dim()-1,)*2, "basis_transform needs to be a square matrix with matching dimension"
+            assert np.shape(basis_transform) == (self.dim() - 1,) * 2, "basis_transform needs to be a square matrix with matching dimension"
             # TODO test!
             basis_transform = np.block([[basis_transform, np.zeros((3, 1))], [np.zeros((1, 3)), np.eye(1)]])
         else:
-            assert np.shape(basis_transform) == (self.dim(),)*2, "basis_transform needs to be a square matrix with matching dimension"
+            assert np.shape(basis_transform) == (self.dim(),) * 2, "basis_transform needs to be a square matrix with matching dimension"
         S = np.einsum("nij,mi,jk->nmk", self.S,
-                           basis_transform, np.linalg.inv(basis_transform))
+                      basis_transform, np.linalg.inv(basis_transform))
         return Symmetry(S, self.inversion, self.projective)
 
     @staticmethod
-    def from_generator(G, inversion: bool) -> Self:
+    def from_generator(G, inversion: bool) -> 'Symmetry':
         """Create the symmetry group from a set of generators.
 
         Args:
@@ -252,14 +277,14 @@ class Symmetry:
                 break
         return Symmetry(np.array(S), inversion)
 
-    def dual(self) -> Self:
+    def dual(self) -> 'Symmetry':
         """Construct the symmetry on the dual space (e.g. reciprocal space <-> real space)"""
         S = np.swapaxes(self.S, -1, -2)
         S = np.linalg.inv(S)
         return Symmetry(S, self.inversion, self.projective)
 
     @staticmethod
-    def none(dim=3) -> Self:
+    def none(dim=3) -> 'Symmetry':
         """No symmetry for any dimension.
 
         Args:
@@ -271,7 +296,7 @@ class Symmetry:
         return Symmetry([np.eye(dim)], False)
 
     @staticmethod
-    def inv(dim=3) -> Self:
+    def inv(dim=3) -> 'Symmetry':
         """Inversion symmetry for any dimension.
 
         Args:
@@ -281,45 +306,45 @@ class Symmetry:
             Self: The inversion symmetry group
         """
         return Symmetry([np.eye(dim)], True)
-    
+
     @staticmethod
-    def o1(inversion: bool) -> Self:
+    def o1(inversion: bool) -> 'Symmetry':
         """1D lattice (rotation/mirror) symmetry (inversion or nothing)"""
         S = [np.array(((1,),))]
         return Symmetry(S, inversion)
 
     @staticmethod
-    def o2(count: int) -> Self:
+    def o2(count: int) -> 'Symmetry':
         """2D rotation symmetry (n-fold rotation symmetry (includes inversion) where n is from {1, 2, 3, 4, 6} for lattice symmetries)"""
         S = []
         for i in range(count):
-            c = np.cos(i*2*np.pi/count)
-            s = np.sin(i*2*np.pi/count)
+            c = np.cos(i * 2 * np.pi / count)
+            s = np.sin(i * 2 * np.pi / count)
             S.append(((c, s), (-s, c)))
         return Symmetry(S, False)
-    
+
     @staticmethod
-    def cyclic(count: int, inversion: bool) -> Self:
+    def cyclic(count: int, inversion: bool) -> 'Symmetry':
         """3D rotation and inversion symmetry (n-fold rotation symmetry where n is from {1, 2, 3, 4, 6} for lattice symmetries)"""
         S = []
         for i in range(count):
-            c = np.cos(i*2*np.pi/count)
-            s = np.sin(i*2*np.pi/count)
+            c = np.cos(i * 2 * np.pi / count)
+            s = np.sin(i * 2 * np.pi / count)
             S.append(((c, s, 0), (-s, c, 0), (0, 0, 1)))
         return Symmetry(S, inversion)
-    
+
     @staticmethod
-    def dihedral(count: int, inversion: bool) -> Self:
+    def dihedral(count: int, inversion: bool) -> 'Symmetry':
         """3D rotation, mirror and inversion symmetry (n-fold rotation and mirror symmetry where n is from {1, 2, 3, 4, 6} for lattice symmetries)"""
         S = []
         for i in range(count):
-            c = np.cos(i*2*np.pi/count)
-            s = np.sin(i*2*np.pi/count)
+            c = np.cos(i * 2 * np.pi / count)
+            s = np.sin(i * 2 * np.pi / count)
             S.append(((c, s, 0), (-s, c, 0), (0, 0, 1)))
         return Symmetry(S, inversion) * Symmetry.mirror_x(False, 3)
 
     @staticmethod
-    def cubic(inversion: bool) -> Self:
+    def cubic(inversion: bool) -> 'Symmetry':
         """Octahedral group https://en.wikipedia.org/wiki/Octahedral_symmetry
 
         Args:
@@ -331,7 +356,7 @@ class Symmetry:
         return Symmetry.even_perm3() * Symmetry.mirror3(inversion)
 
     @staticmethod
-    def perm3(inversion=False) -> Self:
+    def perm3(inversion=False) -> 'Symmetry':
         """The 3D symmetry created by permuting the axes.
 
         Args:
@@ -349,7 +374,7 @@ class Symmetry:
         return Symmetry(S, inversion=inversion)
 
     @staticmethod
-    def even_perm3(inversion=False) -> Self:
+    def even_perm3(inversion=False) -> 'Symmetry':
         """The 3D permutation group with positive determinant.
         This group is generated by
         ```
@@ -376,7 +401,7 @@ class Symmetry:
         return Symmetry(S, inversion=inversion)
 
     @staticmethod
-    def mirror3(inversion=False) -> Self:
+    def mirror3(inversion=False) -> 'Symmetry':
         """3D Point reflections in all 3 planes (Klein four group V_4),
         or mirror symmetries for all axes if inversion is added.
 
@@ -393,7 +418,7 @@ class Symmetry:
         return Symmetry(S, inversion=inversion)
 
     @staticmethod
-    def mirror_x(inversion=False, dim=3) -> Self:
+    def mirror_x(inversion=False, dim=3) -> 'Symmetry':
         """Mirror symmetry on x-axis.
 
         Args:
@@ -404,11 +429,11 @@ class Symmetry:
             Self: The x-mirror symmetry group with 2/4 elements.
         """
         S = [np.eye(dim), np.eye(dim)]
-        S[1][0,0] = -1
+        S[1][0, 0] = -1
         return Symmetry(S, inversion=inversion)
-    
+
     @staticmethod
-    def mirror_xy(inversion=False, dim=3) -> Self:
+    def mirror_xy(inversion=False, dim=3) -> 'Symmetry':
         """Point reflection symmetry in xy-plane.
 
         Args:
@@ -419,12 +444,12 @@ class Symmetry:
             Self: The xy-plane point reflection symmetry group with 2/4 elements.
         """
         S = [np.eye(dim), np.eye(dim)]
-        S[1][0,0] = -1
-        S[1][1,1] = -1
+        S[1][0, 0] = -1
+        S[1][1, 1] = -1
         return Symmetry(S, inversion=inversion)
 
     @staticmethod
-    def square() -> Self:
+    def square() -> 'Symmetry':
         """The symmetry of a 2D square.
 
         Returns:
@@ -433,9 +458,9 @@ class Symmetry:
         S = [((0, 1), (-1, 0)),
              ((1, 0), (0, -1))]
         return Symmetry.from_generator(S, False)
-    
+
     @staticmethod
-    def icosahedral(inversion=False) -> Self:
+    def icosahedral(inversion=False) -> 'Symmetry':
         """The (full) icosahedral group of order 60 (120) aligned along the z-axis.
         The top off-axis vertex is aligned towards the x-axis.
 
@@ -446,11 +471,11 @@ class Symmetry:
             Self: The (full) icosahedral symmetry group
         """
         c = Symmetry.cyclic(5, inversion)
-        m = ((0, 1, 0), (-5**-.5, 0, 2*5**-.5), (2*5**-.5, 0, 5**-.5))
+        m = ((0, 1, 0), (-5**-.5, 0, 2 * 5**-.5), (2 * 5**-.5, 0, 5**-.5))
         return c * c.transform(m)
-    
+
     @staticmethod
-    def tetrahedral(full=False) -> Self:
+    def tetrahedral(full=False) -> 'Symmetry':
         """The (full) tetrahedral group of order 12 (24 = octahedral group O)
         isomorphic to the alternating group A_4 (symmetric group S_4)
         and rotated to be a subgroup of the octahedral group.
@@ -471,7 +496,7 @@ class Symmetry:
 
     def check_symmetry(self, foo: Callable, verbose=True, tolerance=1e-7) -> bool:
         """Check if a space dependent function satisfies the symmetry.
-        
+
         Args:
             foo (Callable[[arraylike(dim)], arraylike(...)]): The function to be checked. Takes a spacial position and returns some kind of value.
             verbose (bool, optional): If True, a message is printed showing the standard deviation
@@ -493,12 +518,12 @@ class Symmetry:
                 return False
         return True
 
-    def realize_symmetric(self, k_smpl, unit_cell=False, collect_bad_duplicates=False) -> Tuple[np.ndarray, np.ndarray]:
+    def realize_symmetric(self, k_smpl, unit_cell=False, collect_bad_duplicates=False) -> tuple[np.ndarray, np.ndarray | list]:
         """Takes a reduced set of k-points and computes
         the full set of k points that can be inferred using symmetry.
         The result is sorted, such that if it's a grid.
         It will be ordered appropriately for a reshape into a grid (useful for interpolation).
-        
+
         If the input list of k-points contains symmetrically equivalent points,
         the output will have duplicates! There is a warning printed if this happens, however
         the duplicates are deduplicated for the output.
@@ -536,11 +561,11 @@ class Symmetry:
             # make sure all k are inside the [-0.5, 0.5[ region
             # first restrict it to [0, 1[
             full_k %= 1.0
-            full_k %= 0.9999999 # fix the ones which are basically 1.0 but with numerical error
-            full_k = np.where(full_k <= 1e-6, 0.0, full_k) # make them exactly 0
+            full_k %= 0.9999999  # fix the ones which are basically 1.0 but with numerical error
+            full_k = np.where(full_k <= 1e-6, 0.0, full_k)  # make them exactly 0
             # shift to [-0.5, 0.5[
             full_k = np.where(full_k >= 0.4999999, full_k - 1.0, full_k)
-            full_k = np.where(full_k <= 1e-6 - 0.5, -0.5, full_k) # make them exactly -0.5 if they exist.
+            full_k = np.where(full_k <= 1e-6 - 0.5, -0.5, full_k)  # make them exactly -0.5 if they exist.
         # sort by x, y, z compatible with reshape to meshgrid
         for i in range(len(k_smpl[0])):
             # the round here is annoying as it can break at wrong places
@@ -556,9 +581,9 @@ class Symmetry:
         bad_duplicates = False
         dupl_group = 0
         for i in range(1, len(full_k)):
-            if np.linalg.norm(full_k[i-1] - full_k[i]) < 1e-6:
+            if np.linalg.norm(full_k[i - 1] - full_k[i]) < 1e-6:
                 # duplicate found
-                if order[i-1] != order[i]:
+                if order[i - 1] != order[i]:
                     # can not be handled by ignoring it
                     bad_duplicates = True
                 # can not be handled. Add to the list of unique_full_k -> output is not unique anymore
@@ -582,18 +607,18 @@ class Symmetry:
             return np.asarray(unique_full_k), unique_order
         return np.asarray(unique_full_k), np.asarray(unique_order)
 
-    def realize_symmetric_data(self, k_smpl, data, unit_cell=False, average_bad_duplicates=False) -> Tuple[np.ndarray, np.ndarray]:
+    def realize_symmetric_data(self, k_smpl, data, unit_cell=False, average_bad_duplicates=False) -> tuple[np.ndarray, np.ndarray]:
         """Same as `realize_symmetric` but instead of returning the source indices,
         the information is immediately used to copy the given data for the new k-points.
 
         Args:
             k_smpl (arraylike(N_k, dim)): List of points, that this symmetry is applied to.
-                This is not allowed to contain symmetric equivalent points. 
+                This is not allowed to contain symmetric equivalent points.
             data (arraylike(N_k, ...)): Data to be copied along with the k-points.
             unit_cell (bool, optional): If True, the results will be transformed into the unit cell [-1/2, 1/2[^dim. No duplicates are introduced by this.
 
         Returns:
-            Tuple[np.ndarray, np.ndarray]: new k-points, data at the new k-points
+            tuple[np.ndarray, np.ndarray]: new k-points, data at the new k-points
         """
         full_k, order = self.realize_symmetric(k_smpl, unit_cell=unit_cell, collect_bad_duplicates=average_bad_duplicates)
         if average_bad_duplicates:
@@ -606,7 +631,7 @@ class Symmetry:
         else:
             return full_k, np.array(np.asarray(data)[order])
 
-    def reduce_symmetric_data(self, k_smpl, data, checked=True) -> Tuple[np.ndarray, np.ndarray]:
+    def reduce_symmetric_data(self, k_smpl, data, checked=True) -> tuple[np.ndarray, np.ndarray]:
         """Reduce symmetric data to only include one representant for each k equivalence class.
         NOTE: the result can be unstable but usually it's good.
 
@@ -711,11 +736,11 @@ class Symmetry:
         # only half of the neighbor terms are present, but the symmetry is important
         neighbors = np.asarray(neighbors)
         neighbors = neighbors[np.argsort(np.linalg.norm(neighbors, axis=-1))]
-        count = [0]*len(neighbors)
+        count = [0] * len(neighbors)
         for i, r in enumerate(neighbors):
             for s in zip(self.S):
                 # using transposed symmetry operations, as the whole symmetry is meant to be in k-space
-                r_ = s.T @ r
+                r_ = np.transpose(s) @ r
                 # here only the neighbors with an index similar to i need to be checked
                 # TODO replace this search by the KD-Trees
                 start = max(i - len(self.S) * 3, 0)
@@ -725,8 +750,7 @@ class Symmetry:
                 count[j] += 1
         for c in count:
             if c != len(self.S):
-                raise ValueError(
-                    "neighbors need to be choosen to fit the symmetry, however counting occurences has found the numbers " + str(count))
+                raise ValueError(f"neighbors need to be choosen to fit the symmetry, however counting occurences has found the numbers {count}")
 
     def k_weight(self, k_smpl) -> np.ndarray:
         """Calculate the weight of a k-point in a 1-periodic lattice with this symmetry.
@@ -747,7 +771,7 @@ class Symmetry:
         for sign in [-1, 1] if self.inversion else [1]:
             for s in self.S:
                 weights += pingpong_distance(np.einsum("ij,nj->ni",
-                                             sign*s - np.eye(len(s)), k_smpl)).sum(-1) < 1e-7
+                                             sign * s - np.eye(len(s)), k_smpl)).sum(-1) < 1e-7
         return 1 / weights
 
     def r_class_size(self, k_smpl):
@@ -766,7 +790,7 @@ class Symmetry:
         for sign in [-1, 1] if self.inversion else [1]:
             for s in self.S:
                 weights += np.linalg.norm(np.einsum("ij,nj->ni",
-                                          sign*s - np.eye(len(s)), k_smpl), axis=-1) < 1e-7
+                                          sign * s - np.eye(len(s)), k_smpl), axis=-1) < 1e-7
         return len(self) / weights
 
     def find_classes(self, points):
@@ -801,26 +825,26 @@ class Symmetry:
 
         Args:
             tensor (arraylike(dim, ..., dim)): The input tensor to be symmetrized.
-            rank (Tuple[int, int]): number of left (covariant) and right (contravariant) indices of the tensor
+            rank (tuple[int, int]): number of left (covariant) and right (contravariant) indices of the tensor
             pseudo_tensor (bool, optional): If True, the tensor will pick up a negative sign on transformations, which have a negative determinant. Defaults to False.
 
         Returns:
             ndarray(dim, ..., dim): The symmetrized tensor
         """
         orig = np.array(tensor) * 1.0
-        assert len(np.shape(orig)) == rank[0]+rank[1], f"rank parameter {rank} doesn't match tensor of shape {np.shape(orig)}"
+        assert len(np.shape(orig)) == rank[0] + rank[1], f"rank parameter {rank} doesn't match tensor of shape {np.shape(orig)}"
         res = np.zeros_like(orig)
         # hacky but simple...
         letters = "abcdefghijklmnopqrstuvwxyz"
-        in_letters = letters[:rank[0]+rank[1]]
-        out_letters = letters[-rank[0]-rank[1]:]
+        in_letters = letters[:rank[0] + rank[1]]
+        out_letters = letters[-rank[0] - rank[1]:]
         einsum_str = ",".join([b + a if i < rank[0] else a + b for i, (a, b) in enumerate(zip(in_letters, out_letters))] + [in_letters]) + "->" + out_letters
         for s in self.S:
             inv_s = np.linalg.inv(s)
             sign = 1
             if pseudo_tensor:
-                sign = np.sign(np.linalg.det(s)) # what happens with unitary groups where this can be from U(1)?
-            res += np.einsum(einsum_str, *rank[0]*(inv_s,), *rank[1]*(s,), orig * sign, optimize="optimal")
+                sign = np.sign(np.linalg.det(s))  # what happens with unitary groups where this can be from U(1)?
+            res += np.einsum(einsum_str, *rank[0] * (inv_s,), *rank[1] * (s,), orig * sign, optimize="optimal")
         res /= len(self.S)
         return res
 
@@ -842,7 +866,7 @@ class Symmetry:
             s = rem.pop()
             # find equivalent elements
             unique = [s]
-            for i in range(len(rem)-1, -1, -1):
+            for i in range(len(rem) - 1, -1, -1):
                 s2 = rem[i]
                 if equiv_relation(s, s2):
                     unique.append(s2)
@@ -864,7 +888,7 @@ class Symmetry:
             return False
         return self.equivalence_classes(conjugated)
 
-    def subgroup(self, invariant_func) -> Self:
+    def subgroup(self, invariant_func) -> 'Symmetry':
         """Find a subgroup using a class function "invariant_func".
         Class function means, that it has a constant value for all elements of a conjugacy class.
 
@@ -885,20 +909,23 @@ class Symmetry:
         assert sym.check(), "The subgroup is not closed, therefore the function was not a class function or the original group was not closed"
         return sym
 
-    def space_group(S, dim=3) -> Self:
+    @staticmethod
+    def space_group(S: Sequence, dim=3) -> 'Symmetry':
         """Convenience function to automatically set the projective flag when creating a space group."""
-        assert len(S[0]) == dim or len(S[0]) == dim+1, "incompatible dimension"
-        return Symmetry(S, projective=len(S[0])==dim+1)
+        assert len(S[0]) == dim or len(S[0]) == dim + 1, "incompatible dimension"
+        return Symmetry(S, projective=len(S[0]) == dim + 1)
 
-    def point_group(S, dim=3) -> Self:
+    @staticmethod
+    def point_group(S: Sequence, dim=3) -> 'Symmetry':
         """Convenience function to automatically ignoring a projective part if it's present."""
         return Symmetry.space_group(S, dim=dim).ignore_translation()
-    
-    def strict_point_group(S, dim=3) -> Self:
+
+    @staticmethod
+    def strict_point_group(S: Sequence, dim=3) -> 'Symmetry':
         """Convenience function to automatically remove any symmetry with translational component."""
         return Symmetry.space_group(S, dim=dim).remove_translation()
 
-    def remove_translation(self) -> Self:
+    def remove_translation(self) -> 'Symmetry':
         """Get a symmetry without translational component,
         by removing all symmetry operations, which have a translational component.
 
@@ -906,11 +933,11 @@ class Symmetry:
             Self: A cut down symmetry if it was projective, or self (by reference)
         """
         assert self.projective, "no translational symmetries included"
-        sym = self.subgroup(lambda s: np.linalg.norm(s[:-1,-1]) + np.linalg.norm(s[-1,:-1]))
-        sym.S = np.array(sym.S[:,:-1,:-1])
+        sym = self.subgroup(lambda s: np.linalg.norm(s[:-1, -1]) + np.linalg.norm(s[-1, :-1]))
+        sym.S = np.array(sym.S[:, :-1, :-1])
         return sym
-    
-    def ignore_translation(self) -> Self:
+
+    def ignore_translation(self) -> 'Symmetry':
         """Get a symmetry without translational component,
         by cutting it off if it exists.
 
@@ -918,10 +945,10 @@ class Symmetry:
             Self: A cut down symmetry if it was projective, or self (by reference)
         """
         if self.projective:
-            return Symmetry(self.S[:,:-1,:-1], self.inversion, projective=False)
+            return Symmetry(self.S[:, :-1, :-1], self.inversion, projective=False)
         return self
 
-    def __contains__(self, other: Self) -> bool:
+    def __contains__(self, other: 'Symmetry') -> bool:
         """Check if other is a subgroup of self"""
         if len(self) < len(other):
             return False
@@ -936,13 +963,13 @@ class Symmetry:
                 return False
         return True
 
-    def __mul__(self, other: Self) -> Self:
+    def __mul__(self, other: 'Symmetry') -> 'Symmetry':
         """Combine two symmetries by finding the smallest symmetry group, that is generated by them."""
         assert self.dim() == other.dim()
         return Symmetry.from_generator(list(self.S) + list(other.S), inversion=(self.inversion or other.inversion))
 
     # find the factor group or raise a ValueError
-    def __truediv__(self, rhs: Self) -> Self:
+    def __truediv__(self, rhs: 'Symmetry') -> 'Symmetry':
         assert self.dim() == rhs.dim()
         d = self.dim()
         assert (self.inversion or not rhs.inversion) and len(self.S) % len(
@@ -970,7 +997,7 @@ class Symmetry:
                 # if more than one element reaches the identity at the same time, keep all of them in this step.
                 base = np.array(classes[i])
                 powers = np.zeros_like(base) + np.eye(d)[None, :, :]
-                for _ in range(len(self.S)+1):  # no order bigger than the group size
+                for _ in range(len(self.S) + 1):  # no order bigger than the group size
                     powers = powers @ base
                     classes[i] = np.array([a for j, a in enumerate(
                         base) if np.linalg.norm(powers[j] - np.eye(d)) < 1e-7])
@@ -1008,6 +1035,6 @@ class Symmetry:
         if not sym.check():
             raise ValueError("The righthand side is no normal subgroup")
         return sym
-    
-    def __str__(self):
+
+    def __str__(self) -> str:
         return f"Symmetry(dim={self.dim()}, order={len(self)}, inversion={self.inversion}{', projective=True' if self.projective else ''})"

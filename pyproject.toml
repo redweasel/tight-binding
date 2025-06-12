@@ -17,7 +17,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-  'numpy >= 1.23.5',
+  'numpy >= 1.7.0',
   'scipy >= 1.14.0',
   'scikit-image >= 0.20.0',
   'matplotlib >= 3.8.0',
@@ -36,6 +36,11 @@ addopts = [
     "--import-mode=importlib",
 ]
 pythonpath = "src"
+
+[tool.autopep8]
+max_line_length = 120
+ignore = "E501,W6,E731"  # or ["E501", "W6"]
+aggressive = 3
 
 [project.urls]
 Homepage = "https://github.com/redweasel/tight-binding"

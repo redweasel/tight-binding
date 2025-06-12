@@ -4,11 +4,13 @@
 import numpy as np
 import scipy
 from .smearing import *
-from typing import Callable, Tuple, Self, Iterable
-
-k_B = 8.61733326214518e-5 # eV/K
+from collections.abc import Callable, Iterable
+from typing import Any
+k_B = 8.61733326214518e-5  # eV/K
 
 # gauss integration using the derivative of the fermi function as weight function (integration over const 1 is always 1)
+
+
 def gauss_5_df(f, mu, beta):
     x = np.array([-8.211650879369324585, -3.054894371595123559, 0.0, 3.054894371595123559, 8.211650879369324585])
     w = np.array([0.0018831678927720540279, 0.16265409664449248517, 0.6709254709254709216, 0.16265409664449248517, 0.0018831678927720540279])
@@ -17,6 +19,8 @@ def gauss_5_df(f, mu, beta):
     return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0)
 
 # gauss integration using the derivative of the fermi function as weight function (integration over const 1 is always 1)
+
+
 def gauss_7_df(f, mu, beta):
     x = np.array([-13.208619179276130495, -6.822258565704534483, -2.74015863439980345, 0.0, 2.74015863439980345, 6.822258565704534483, 13.208619179276130495])
     w = np.array([1.5006783863250833195e-05, 0.0054715468031045289346, 0.18481163647966422636, 0.61940361986673598773, 0.18481163647966422636, 0.0054715468031045289346, 1.5006783863250833195e-05])
@@ -25,22 +29,27 @@ def gauss_7_df(f, mu, beta):
     return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0)
 
 # gauss integration using the half-fermi function 1/(1+e^abs(x)) as weight function
+
+
 def gauss_4_f(f, mu, beta):
     x = np.array([-5.7755299052817408167, -1.3141165029468411252, 1.3141165029468411252, 5.7755299052817408167])
     w = np.array([0.013822390808990555472, 0.48617760919100944106, 0.48617760919100944106, 0.013822390808990555472])
     x_smpl = x / beta + mu
     f_smpl = f(x_smpl)
-    return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0) / beta * 2*np.log(2)
+    return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0) / beta * 2 * np.log(2)
 
 # gauss integration using the half-fermi function 1/(1+e^abs(x)) as weight function
+
+
 def gauss_6_f(f, mu, beta):
     x = np.array([-10.612971636582431145, -4.7544317516063152596, -1.1799810705877835648, 1.1799810705877835648, 4.7544317516063152596, 10.612971636582431145])
     w = np.array([0.00013527426019966680491, 0.02778699826589691238, 0.47207772747390341905, 0.47207772747390341905, 0.02778699826589691238, 0.00013527426019966680491])
     x_smpl = x / beta + mu
     f_smpl = f(x_smpl)
-    return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0) / beta * 2*np.log(2)
+    return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0) / beta * 2 * np.log(2)
 
-def convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=None):
+
+def convolve_df(x, energy_smpl, states, beta, extrapolation: str | None = 'flat', extrapolation_point=None):
     """explicitly compute the value of the convolution of the states
     function with the negative derivative of the Fermi-function.
     takes a piecewise linear representation of the states function
@@ -52,28 +61,32 @@ def convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolatio
         states (arraylike[..., N_e]): The values of the piecewise linear approximation. Usually the number of states.
         beta (float): the inverse temperature 1/(k_B*T)
         extrapolation (str, optional): How to extrapolate beyond the piecewise linear part. Either "flat" for a constant piece on both sides, or None. Defaults to 'flat'.
-        extrapolation_point (Tuple[float, float], optional): If given, (highest_energy, band_count) of the right extrapolation point. The left extrapolation point is assumed to be at (0, 0). Defaults to None.
+        extrapolation_point (tuple[float, float], optional): If given, (highest_energy, band_count) of the right extrapolation point. The left extrapolation point is assumed to be at (0, 0). Defaults to None.
     """
     def f(e):
-        return scipy.special.expit(-beta*e) # overflow free variant of 1 / (1 + exp(beta*e)), just to silence the warnings
+        return scipy.special.expit(-beta * e)  # overflow free variant of 1 / (1 + exp(beta*e)), just to silence the warnings
+
     def F(e):
-        #return -np.log1p(np.exp(-beta*e)) / beta
-        return scipy.special.log_expit(beta*e) / beta # overflow free variant
+        # return -np.log1p(np.exp(-beta*e)) / beta
+        return scipy.special.log_expit(beta * e) / beta  # overflow free variant
+
     def F_diff(e0, e1):
         return F(e1) - F(e0)
-        #return np.log(scipy.special.expit(beta*e1) + np.exp(-beta*e0)/(1 + np.exp(-beta*e1))) / beta
+        # return np.log(scipy.special.expit(beta*e1) + np.exp(-beta*e0)/(1 + np.exp(-beta*e1))) / beta
+
     def segment(x, x0, x1, y0, y1):
-        return y1*f(x-x1) - y0*f(x-x0) + (y1-y0)/(x1-x0)*F_diff(x-x0, x-x1)
-    s = np.sum(segment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1, axis=-1), states)[...,1:], axis=-1)
+        return y1 * f(x - x1) - y0 * f(x - x0) + (y1 - y0) / (x1 - x0) * F_diff(x - x0, x - x1)
+    s = np.sum(segment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1, axis=-1), states)[..., 1:], axis=-1)
     # add segments/other functions as extrapolation on both side to get correct high temperature behavior
     if extrapolation == 'flat':
         if extrapolation_point is None:
-            s += f(x - energy_smpl[0]) * states[...,0]
-            s += f(energy_smpl[-1] - x) * states[...,-1]
+            s += f(x - energy_smpl[0]) * states[..., 0]
+            s += f(energy_smpl[-1] - x) * states[..., -1]
         else:
             # assume N(mu) starts at 0 and ends at N(extrapolation_point[0]) = extrapolation_point[1]
             s += f(extrapolation_point[0] - x) * extrapolation_point[1]
     return s
+
 
 def convolve_ddf(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=None):
     """The analytic derivative of `convolve_df`
@@ -84,22 +97,25 @@ def convolve_ddf(x, energy_smpl, states, beta, extrapolation='flat', extrapolati
         states (arraylike[..., N_e]): The values of the piecewise linear approximation. Usually the number of states.
         beta (float): the inverse temperature 1/(k_B*T)
         extrapolation (str, optional): How to extrapolate beyond the piecewise linear part. Either "flat" for a constant piece on both sides, or None. Defaults to 'flat'.
-        extrapolation_point (Tuple[float, float], optional): If given, (highest_energy, band_count) of the right extrapolation point. The left extrapolation point is assumed to be at (0, 0). Defaults to None.
+        extrapolation_point (tuple[float, float], optional): If given, (highest_energy, band_count) of the right extrapolation point. The left extrapolation point is assumed to be at (0, 0). Defaults to None.
     """
     def df(e):
-        return -0.25*beta / np.cosh(0.5*beta*e)**2 # ignore warning here. (Could use scipy.stats.hypsecant here to avoid the warnings)
+        return -0.25 * beta / np.cosh(0.5 * beta * e)**2  # ignore warning here. (Could use scipy.stats.hypsecant here to avoid the warnings)
+
     def f(e):
-        return scipy.special.expit(-beta*e) # overflow free variant of 1 / (1 + exp(beta*e)), just to silence the warnings
+        return scipy.special.expit(-beta * e)  # overflow free variant of 1 / (1 + exp(beta*e)), just to silence the warnings
+
     def f_diff(e0, e1):
         return f(e1) - f(e0)
+
     def dsegment(x, x0, x1, y0, y1):
-        return y1*df(x-x1) - y0*df(x-x0) + (y1-y0)/(x1-x0)*f_diff(x-x0, x-x1)
-    s = np.sum(dsegment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1, axis=-1), states)[...,1:], axis=-1)
+        return y1 * df(x - x1) - y0 * df(x - x0) + (y1 - y0) / (x1 - x0) * f_diff(x - x0, x - x1)
+    s = np.sum(dsegment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1, axis=-1), states)[..., 1:], axis=-1)
     # add segments/other functions as extrapolation on both side to get correct high temperature behavior
     if extrapolation == 'flat':
         if extrapolation_point is None:
-            s += df(x - energy_smpl[0]) * states[...,0]
-            s += df(energy_smpl[-1] - x) * states[...,-1]
+            s += df(x - energy_smpl[0]) * states[..., 0]
+            s += df(energy_smpl[-1] - x) * states[..., -1]
         else:
             # assume N(mu) starts at 0 and ends at N(extrapolation_point[0]) = extrapolation_point[1]
             s += df(extrapolation_point[0] - x) * extrapolation_point[1]
@@ -109,6 +125,8 @@ def convolve_ddf(x, energy_smpl, states, beta, extrapolation='flat', extrapolati
 # is unstable at points where the derivative of f is very small (-> strictly monotonic)
 # converges faster than secant_bisect
 # use the more precise start estimate for b, because it is kept in the first step
+
+
 def secant(y, f, a, b, tol=1e-16, max_i=100):
     fa = f(a) - y
     fb = f(b) - y
@@ -126,35 +144,47 @@ def secant(y, f, a, b, tol=1e-16, max_i=100):
     # didn't finish but here is the best available solution
     return (a * fb - b * fa) / (fb - fa)
 
+
 def _Li2(x):
-    return scipy.special.spence(1-x)
+    return scipy.special.spence(1 - x)
 # 0 at x=0
+
+
 def _int_df(x):
-    return 0.5 * np.tanh(x/2)
+    return 0.5 * np.tanh(x / 2)
 # 0 at x=±inf
+
+
 def _int_xdf(x):
     x = -np.abs(x)
-    ex = np.exp(x) # small
-    return (x*ex)/(1 + ex) - np.log1p(ex)
+    ex = np.exp(x)  # small
+    return (x * ex) / (1 + ex) - np.log1p(ex)
 # 0 at x=0
+
+
 def _int_xxdf(x):
     # use symmetry to avoid cancellation
     sign = np.sign(x)
     x = -np.abs(x)
-    ex = np.exp(x) # small
-    f = (x*x*ex)/(1 + ex) - 2*x*np.log1p(ex)-(2*_Li2(-ex) + np.pi**2/6)
+    ex = np.exp(x)  # small
+    f = (x * x * ex) / (1 + ex) - 2 * x * np.log1p(ex) - (2 * _Li2(-ex) + np.pi**2 / 6)
     return -sign * f
+
+
 def int_poly(x0, x1, a, b, c):
     """Integrate (ax^2+bx+c)(-df/de) from x0 to x1 analytically with f(x)=1/(1+e^x)."""
     return a * (_int_xxdf(x1) - _int_xxdf(x0)) + b * (_int_xdf(x1) - _int_xdf(x0)) + c * (_int_df(x1) - _int_df(x0))
 
+
 def naive_fermi_energy(bands, electrons):
     i = round(np.prod(np.shape(bands)[:-1]) * electrons)
-    return np.mean(np.sort(np.ravel(bands))[i:i+2])
+    return np.mean(np.sort(np.ravel(bands))[i:i + 2])
+
 
 def naive_energy(bands, T, mu):
     e = np.ravel(bands)
     return np.mean(e * scipy.special.expit(-(e - mu) / (k_B * T))) * np.shape(bands)[-1]
+
 
 class DensityOfStates:
     """This class represents the density of states for a given 3D bandstructure model.
@@ -164,6 +194,7 @@ class DensityOfStates:
     The bandstructure model, used in this class needs to accept crystal coordinates.
     The cubic cell [-0.5, 0.5]^3 should equal the whole reciprocal crystal cell.
     """
+
     def __init__(self, model: Callable, N=24, A=None, ranges=((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)), wrap=True, smearing="cubes", use_gradients=False, midpoint=False, check=True):
         """Initialize a density of states model from a bandstructure model.
 
@@ -183,13 +214,13 @@ class DensityOfStates:
         """
         assert len(ranges) == 3, "This class can only be used for 3D models. Therefore 3 ranges need to be specified."
         if wrap:
-            xyz = [np.linspace(*r, N, endpoint=False) + (1/2/N*(r[1] - r[0]) if midpoint else 0.0) for r in ranges]
+            xyz = [np.linspace(*r, N, endpoint=False) + (1 / 2 / N * (r[1] - r[0]) if midpoint else 0.0) for r in ranges]  # type: ignore
         else:
             if midpoint:
                 # careful with this! only useful when use_gradients is True!
-                xyz = [np.linspace(*r, N, endpoint=False) + 1/2/N*(r[1] - r[0]) for r in ranges]
+                xyz = [np.linspace(*r, N, endpoint=False) + 1 / 2 / N * (r[1] - r[0]) for r in ranges]  # type: ignore
             else:
-                xyz = [np.linspace(*r, N+1) for r in ranges]
+                xyz = [np.linspace(*r, N + 1) for r in ranges]  # type: ignore
         self.crystal_volume = np.prod([r[1] - r[0] for r in ranges])
         # TODO redefine the grid, such that all stepsizes are equal! This is very important for the fermi surface samples!
         self.step_sizes = np.array([x[1] - x[0] for x in xyz])
@@ -212,15 +243,15 @@ class DensityOfStates:
             if "bands_grad" not in dir(model):
                 raise ValueError(f"The model must implement a method `bands_grad` for computing the bands and gradients for {smearing} smearing.")
             bands, grads = model.bands_grad(np.reshape(self.k_smpl, (-1, 3)))
-            grads = np.reshape(grads, shape+(-1,))
+            grads = np.reshape(grads, shape + (-1,))
         else:
             bands = model(np.reshape(self.k_smpl, (-1, 3)))
-        self.bands = np.reshape(bands, shape[:-1]+(-1,))
+        self.bands = np.reshape(bands, shape[:-1] + (-1,))
         if "bands_grad_hess" in dir(model):
             # compute better band ranges using a Newton step to find the actual extrema in k
             # -> use self.model.bands_grads_hess(...), and do the step if the hessian is positive semi-definite
             # -> only do that if model.bands_grads_hess exists to keep supporting simpler models
-            bands_range_indices = [(np.argmin(self.bands[...,i]), np.argmax(self.bands[...,i])) for i in range(self.bands.shape[-1])]
+            bands_range_indices = [(np.argmin(self.bands[..., i]), np.argmax(self.bands[..., i])) for i in range(self.bands.shape[-1])]
             self.bands_range = []
             for i, band_range_indices in enumerate(bands_range_indices):
                 # find minimum
@@ -232,7 +263,7 @@ class DensityOfStates:
                         break
                     step = np.linalg.pinv(hess[0, :, :, i]) @ grad[0, :, i]
                     if np.max(np.abs(step / self.step_sizes)) > 0.55:
-                        break # don't follow too big steps (e.g. at band crossings)
+                        break  # don't follow too big steps (e.g. at band crossings)
                     min_k -= step
                 # find maximum
                 max_k = np.array(self.k_smpl.reshape(-1, 3)[band_range_indices[1]])
@@ -243,41 +274,41 @@ class DensityOfStates:
                         break
                     step = np.linalg.pinv(hess[0, :, :, i]) @ grad[0, :, i]
                     if np.max(np.abs(step / self.step_sizes)) > 0.55:
-                        break # don't follow too big steps (e.g. at band crossings)
+                        break  # don't follow too big steps (e.g. at band crossings)
                     max_k -= step
                 # compute min/max values and store them
                 self.bands_range.append(tuple(model(np.array([min_k, max_k]))[:, i]))
         else:
-            self.bands_range = [(np.min(self.bands[...,i]), np.max(self.bands[...,i])) for i in range(self.bands.shape[-1])]
+            self.bands_range = [(np.min(self.bands[..., i]), np.max(self.bands[..., i])) for i in range(self.bands.shape[-1])]
         # TODO add bands_range_k_points, because that is useful information in some contexts
         B = np.linalg.inv(self.A).T
         if smearing == "tetras":
             if use_gradients:
                 raise NotImplementedError("use_gradients is not implemented for smearing tetras")
-            self.smearing = [TetraSmearing(values=self.bands[...,i], wrap=wrap, B=B) for i in range(len(self.bands_range))]
+            self.smearing = [TetraSmearing(values=self.bands[..., i], wrap=wrap, B=B) for i in range(len(self.bands_range))]
         elif smearing == "cubes":
             if use_gradients:
-                self.smearing = [CubesSmearing(self.k_smpl, A=A, values=self.bands[...,i], grads=grads[...,i], wrap=wrap) for i in range(len(self.bands_range))]
+                self.smearing = [CubesSmearing(self.k_smpl, A=A, values=self.bands[..., i], grads=grads[..., i], wrap=wrap) for i in range(len(self.bands_range))]
             else:
-                self.smearing = [CubesSmearing(self.k_smpl, A=A, values=self.bands[...,i], wrap=wrap) for i in range(len(self.bands_range))]
+                self.smearing = [CubesSmearing(self.k_smpl, A=A, values=self.bands[..., i], wrap=wrap) for i in range(len(self.bands_range))]
         elif smearing == "spheres":
             if use_gradients:
                 # with gradients (a lot less regular, ig the averaged gradient are really needed)
-                self.smearing = [SphereSmearing(self.k_smpl, values=self.bands[...,i], grads=grads[...,i], B=B, wrap=wrap) for i in range(len(self.bands_range))]
+                self.smearing = [SphereSmearing(self.k_smpl, values=self.bands[..., i], grads=grads[..., i], B=B, wrap=wrap) for i in range(len(self.bands_range))]
             else:
                 # with interpolation (VERY close to "cubes", but no fermi surface sampling)
-                self.smearing = [SphereSmearing(self.k_smpl, values=self.bands[...,i], B=B, wrap=wrap) for i in range(len(self.bands_range))]
+                self.smearing = [SphereSmearing(self.k_smpl, values=self.bands[..., i], B=B, wrap=wrap) for i in range(len(self.bands_range))]
         else:
             raise ValueError(f"{smearing} is not a valid smearing option")
-    
+
     def model_bandcount(self):
         return len(self.bands_range)
-    
+
     def check(self, tolerance=1e-10):
         """
         Check if the tight binding model is periodic wrt the given A matrix.
         If not, an assertion error is raised.
-        
+
         Args:
             tolerance (float, optional): The tolerance when comparing the bandstructure of equivalent cells.
                 This is limited by rounding errors in the model and by rounding of the lattice parameters (self.A). Defaults to 1e-10.
@@ -291,11 +322,13 @@ class DensityOfStates:
 
     def save(self, filename: str):
         # TODO save without self.model
-        pass
+        raise NotImplementedError()
 
-    def load(filename: str, model: Callable=None) -> Self:
+    @staticmethod
+    def load(filename: str, model: Callable | None = None):
         # TODO load without self.model
-        pass
+        raise NotImplementedError()
+        return DensityOfStates(...)
 
     def states_below(self, energy: float):
         states = 0.0
@@ -303,7 +336,7 @@ class DensityOfStates:
             if band_range[0] < energy < band_range[1]:
                 states += np.mean(self.smearing[i].volume(energy))
             elif band_range[1] <= energy:
-                states += 1.0 # completely full
+                states += 1.0  # completely full
         return states
 
     # returns states_below, density
@@ -316,7 +349,7 @@ class DensityOfStates:
                 states += np.mean(volume)
                 density += np.mean(dvolume)
             elif band_range[1] <= energy:
-                states += 1.0 # completely full
+                states += 1.0  # completely full
         return states, density
 
     # returns density
@@ -344,7 +377,7 @@ class DensityOfStates:
                 indices.append(i)
         return indices
 
-    def full_curve(self, N=10, T=0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def full_curve(self, N=10, T=0.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Compute the full density of states curve for a given electronic temperature.
 
         Args:
@@ -352,7 +385,7 @@ class DensityOfStates:
             T (float, optional): Temperature for the calculation. Defaults to 0.
 
         Returns:
-            Tuple[ndarray(N_e), ndarray(N_e), ndarray(N_e)]: energy samples, states, density
+            tuple[ndarray(N_e), ndarray(N_e), ndarray(N_e)]: energy samples, states, density
         """
         # compute energy samples based on where the bands start and end
         energy_smpl = []
@@ -367,16 +400,16 @@ class DensityOfStates:
             density.append(density_)
         if T != 0:
             # smooth the curve using the Fermi-distribution
-            beta = 1 / (k_B * T) # 1/eV
+            beta = 1 / (k_B * T)  # 1/eV
             energy_smpl_T0, states_T0, density_T0 = energy_smpl, np.asarray(states), np.asarray(density)
             delta = 5.0 / beta
             energy_smpl = np.concatenate([np.linspace(energy_smpl[0] - delta, energy_smpl[0], N, endpoint=False), energy_smpl, np.flip(np.linspace(energy_smpl[-1] + delta, energy_smpl[-1], N, endpoint=False))], axis=0)
             states = [convolve_df(x, energy_smpl_T0, states_T0, beta) for x in energy_smpl]
             density = [convolve_df(x, energy_smpl_T0, density_T0, beta, extrapolation=None) for x in energy_smpl]
-            #density = [convolve_ddf(x, energy_smpl_T0, states_T0, beta) for x in energy_smpl]
+            # density = [convolve_ddf(x, energy_smpl_T0, states_T0, beta) for x in energy_smpl]
         return np.array(energy_smpl), np.array(states), np.array(density)
 
-    def k_resolved_density(self, mu, T, N=10):
+    def k_resolved_density(self, mu: float, T: float, N=10):
         """Compute the k-resolved density of states, that would be
         visible with ARPES (angle-resolved photoemission spectroscopy).
 
@@ -392,8 +425,8 @@ class DensityOfStates:
         if T == 0:
             return sum([s.dvolume(mu) for s in self.smearing])
         e0, e1 = self.energy_range()
-        beta = 1 / (k_B * T) # 1/eV
-        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-mu)), scipy.special.expit(-beta*(e1-mu)), N)) - 1 + 1e-16) / beta + mu
+        beta = 1 / (k_B * T)  # 1/eV
+        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - mu)), scipy.special.expit(-beta * (e1 - mu)), N)) - 1 + 1e-16) / beta + mu
         states = np.stack([sum([s.volume(e) for s in self.smearing]) for e in energy_smpl], axis=-1)
         return convolve_ddf(mu, energy_smpl, states, beta)
 
@@ -417,20 +450,20 @@ class DensityOfStates:
         e_int = round(electrons)
         if e_int == electrons:
             if e_int > 0 and e_int < len(self.bands_range):
-                max_below = self.bands_range[e_int-1][1]
+                max_below = self.bands_range[e_int - 1][1]
                 min_above = self.bands_range[e_int][0]
                 fermi_energy = (max_below + min_above) / 2
                 if max_below < min_above:
-                    return fermi_energy # isolator (can only happen at integer electrons)
+                    return fermi_energy  # isolator (can only happen at integer electrons)
             elif e_int == 0:
                 return self.bands_range[0][0]
             else:
-                assert e_int == len(self.bands_range) # already checked above, it's here just as a reminder
+                assert e_int == len(self.bands_range)  # already checked above, it's here just as a reminder
                 return self.bands_range[-1][1]
         # first approximation from a very rough states curve
         e_smpl, states_smpl, _ = self.full_curve(N=2)
         e_index = list(states_smpl > electrons).index(True) - 1
-        fermi_energy = (electrons - states_smpl[e_index])/(states_smpl[e_index+1] - states_smpl[e_index]) * (e_smpl[e_index+1] - e_smpl[e_index]) + e_smpl[e_index]
+        fermi_energy = (electrons - states_smpl[e_index]) / (states_smpl[e_index + 1] - states_smpl[e_index]) * (e_smpl[e_index + 1] - e_smpl[e_index]) + e_smpl[e_index]
         # now do a couple newton steps to find the exact value
         for _ in range(maxsteps):
             states, density = self.states_density(fermi_energy)
@@ -454,23 +487,23 @@ class DensityOfStates:
         assert electrons >= 0 and electrons <= len(self.bands_range)
         e_int = round(electrons)
         if e_int != electrons:
-            return 0.0 # only integers can make isolators
+            return 0.0  # only integers can make isolators
         assert e_int > 0 and e_int < len(self.bands_range)
-        max_below = self.bands_range[e_int-1][1]
+        max_below = self.bands_range[e_int - 1][1]
         min_above = self.bands_range[e_int][0]
         if max_below < min_above:
-            return min_above - max_below # isolator
-        return 0.0 # metal
+            return min_above - max_below  # isolator
+        return 0.0  # metal
 
-    def energy_range(self) -> Tuple[float, float]:
+    def energy_range(self) -> tuple[float, float]:
         """Get the minimal and maximal energy in the used band structure.
 
         Returns:
-            Tuple[float, float]: minimal energy, maximal energy
+            tuple[float, float]: minimal energy, maximal energy
         """
         return self.bands_range[0][0], self.bands_range[-1][1]
 
-    def chemical_potential(self, electrons: float, T_smpl, N=30, tol=1e-8, maxsteps=30) -> np.ndarray:
+    def chemical_potential(self, electrons: float, T_smpl, N=30, tol=1e-8, maxsteps=30) -> np.ndarray[Any, np.dtypes.Float64DType]:
         """Compute the chemical potential for a given number of electrons per cell at multiple temperatures.
         The number of electrons can be fractional to correctly handle doping or spin.
 
@@ -496,30 +529,30 @@ class DensityOfStates:
         # To optimize the performance, all T > ... can be performed with the same distribution linear distribution
         e0, e1 = self.energy_range()
         # any temperature bigger than this can be sampled linear without precision loss
-        T_lin = 0.25 * 0.25 * 2/k_B*max(abs(e0-fermi_energy), abs(e1-fermi_energy))
+        T_lin = 0.25 * 0.25 * 2 / k_B * max(abs(e0 - fermi_energy), abs(e1 - fermi_energy))
         energy_smpl_lin = np.linspace(e0, e1, N)
         T_smpl = np.asarray(T_smpl).reshape(-1)
         if np.max(T_smpl) >= T_lin:
             states_lin = [self.states_below(energy) for energy in energy_smpl_lin]
-        beta = -10000.0 # invalid value
+        beta = -10000.0  # invalid value
         res = []
         for T in T_smpl:
             if T <= 0:
                 res.append(fermi_energy)
             elif T >= T_lin:
-                beta = 1 / (k_B * T) # 1/eV
+                beta = 1 / (k_B * T)  # 1/eV
                 res.append(secant(electrons, lambda x: convolve_df(x, energy_smpl_lin, states_lin, beta, extrapolation='flat'), fermi_energy, fermi_energy + 0.1, tol, maxsteps))
             else:
-                new_beta = 1 / (k_B * T) # 1/eV
+                new_beta = 1 / (k_B * T)  # 1/eV
                 if abs(beta - new_beta) / new_beta > 5e-2:
                     # recalculate distribution for precision
-                    beta = 0.25 / (k_B * T) # 1/eV
-                    energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-fermi_energy)), scipy.special.expit(-beta*(e1-fermi_energy)), N)) - 1 + 1e-16) / beta + fermi_energy
+                    beta = 0.25 / (k_B * T)  # 1/eV
+                    energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - fermi_energy)), scipy.special.expit(-beta * (e1 - fermi_energy)), N)) - 1 + 1e-16) / beta + fermi_energy
                     beta = new_beta
                     states = [self.states_below(energy) for energy in energy_smpl]
                 # keep distribution if it doesn't cause too big errors (performance)
                 beta = new_beta
-                res.append(secant(electrons, lambda x: convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=(e1, self.model_bandcount())), fermi_energy, fermi_energy + 1/beta, tol, maxsteps))
+                res.append(secant(electrons, lambda x: convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=(e1, self.model_bandcount())), fermi_energy, fermi_energy + 1 / beta, tol, maxsteps))
         return np.array(res)
 
     # TODO currently WRONG
@@ -530,7 +563,7 @@ class DensityOfStates:
             # TODO use some better integration than trapez
             e0 = np.min(self.bands_range)
             mu = float(mu)
-            e_smpl = np.linspace(e0, mu, N, endpoint=False) + 1/2/N*(mu - e0)
+            e_smpl = np.linspace(e0, mu, N, endpoint=False) + 1 / 2 / N * (mu - e0)
             density = [self.density(e) for e in e_smpl]
             energy = np.mean(e_smpl * density) * (mu - e0)
             return energy
@@ -544,25 +577,26 @@ class DensityOfStates:
         # Note the shift by mu can be done by
         # integral (e+mu) f(e) rho(e+mu) de = mu*q + integral e f(e) rho(e) de
         # where q is the number electrons per cell
+
         def accumulate(T, energy_smpl, states):
             def segment(T, x0, x1, y0, y1):
                 dx = x1 - x0
                 dy = y1 - y0
-                beta = 1/(k_B * T)
-                a = dy/dx
+                beta = 1 / (k_B * T)
+                a = dy / dx
                 b = y0 - x0 * a
                 # TODO ERROR
-                simple_term = (a*x1*x1/2 + b*x1) * scipy.special.expit(-(x1-mu)*beta) - (a*x0*x0/2 + b*x0) * scipy.special.expit(-(x0-mu)*beta)
-                return simple_term + a/2 * int_poly((x0-mu)*beta, (x1-mu)*beta, 1/beta/beta, 0, 0)/beta
+                simple_term = (a * x1 * x1 / 2 + b * x1) * scipy.special.expit(-(x1 - mu) * beta) - (a * x0 * x0 / 2 + b * x0) * scipy.special.expit(-(x0 - mu) * beta)
+                return simple_term + a / 2 * int_poly((x0 - mu) * beta, (x1 - mu) * beta, 1 / beta / beta, 0, 0) / beta
             s = np.sum(segment(T, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1), states)[1:])
             # can add segments/other functions as extrapolation on both side to get correct high temperature behavior
             # however if they are flat, they have no contribution.
             return s
         # calculate custom distribution for precision/cost balance
-        beta = 0.25 / (k_B * T) # 1/eV
+        beta = 0.25 / (k_B * T)  # 1/eV
         e0, e1 = self.energy_range()
         # TODO this is not correct... it would be good to compute the total energy of each band beforehand and reuse it here
-        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-mu)), scipy.special.expit(-beta*(e1-mu)), N)) - 1 + 1e-16) / beta + mu
+        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - mu)), scipy.special.expit(-beta * (e1 - mu)), N)) - 1 + 1e-16) / beta + mu
         states = [self.states_below(energy) for energy in energy_smpl]
         return accumulate(T, energy_smpl, states)
 
@@ -583,18 +617,18 @@ class DensityOfStates:
             def segment(T, x0, x1, y0, y1):
                 dx = x1 - x0
                 dy = y1 - y0
-                beta = 1/(k_B * T)
+                beta = 1 / (k_B * T)
                 a, b, c = 1, -mu, 0
-                simple_term = ... # TODO!
-                return simple_term/T + dy/dx/T * int_poly(x0*beta, x1*beta, a/beta/beta, b/beta, c)/beta
+                simple_term = ...  # TODO!
+                return simple_term / T + dy / dx / T * int_poly(x0 * beta, x1 * beta, a / beta / beta, b / beta, c) / beta
             s = np.sum(segment(T, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1), states)[1:])
             # can add segments/other functions as extrapolation on both side to get correct high temperature behavior
             # however if they are flat, they have no contribution.
             return s
         # calculate custom distribution for precision/cost balance
-        beta = 0.25 / (k_B * T) # 1/eV
+        beta = 0.25 / (k_B * T)  # 1/eV
         e0, e1 = self.energy_range()
-        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta*(e0-mu)), scipy.special.expit(-beta*(e1-mu)), N)) - 1 + 1e-16) / beta + mu
+        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - mu)), scipy.special.expit(-beta * (e1 - mu)), N)) - 1 + 1e-16) / beta + mu
         states = [self.states_below(energy) for energy in energy_smpl]
         return accumulate(T, energy_smpl, states)
 
@@ -618,25 +652,25 @@ class DensityOfStates:
             float: The seebeck coefficient at constant volume
         """
         # for T=0 the seebeck coefficient is 0
-        T_smpl= np.asarray(T_smpl)
+        T_smpl = np.asarray(T_smpl)
         subset = np.arange(len(T_smpl))[T_smpl > 0]
         T_ = T_smpl[subset]
         inv_order = np.zeros(len(T_smpl), dtype=int)
         inv_order[subset] = np.arange(len(T_))
         assert h < np.min(T_), "h needs to be bigger than the smallest positive temperature"
-        T_h = [T+s*h for T in T_ for s in [-1, 1]]
+        T_h = [T + s * h for T in T_ for s in [-1, 1]]
         # numerical derivative of the chemical potential
         mu = self.chemical_potential(electrons, T_h, N=N)
         # Note: the result would be multiplied by 1eV/e = 1V, so this depends on the unit eV!
-        return np.array([(mu[inv_order[i]*2+1] - mu[inv_order[i]*2]) / (2*h) if T_smpl[i] > 0 else 0 for i in range(len(T_smpl))])
+        return np.array([(mu[inv_order[i] * 2 + 1] - mu[inv_order[i] * 2]) / (2 * h) if T_smpl[i] > 0 else 0 for i in range(len(T_smpl))])
 
     def fermi_surface_samples(self,
-            energy: float,
-            improved_points=True,
-            improved_weights=False,
-            weight_by_gradient=False,
-            normalize=None
-        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+                              energy: float,
+                              improved_points=True,
+                              improved_weights=False,
+                              weight_by_gradient=False,
+                              normalize=None
+                              ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
         """Compute points on the (fermi) surface at the given (fermi) energy.
         If the improved keyword argument is True, the results will be much more precise
         at the cost of an integration over the fermi surface.
@@ -653,11 +687,11 @@ class DensityOfStates:
                     Defaults to None.
 
         Returns:
-            Tuple[ndarray(N, 3), ndarray(N), ndarray(N), float]: points, band_indices, weights, total area
+            tuple[ndarray(N, 3), ndarray(N), ndarray(N), float]: points, band_indices, weights, total area
         """
         assert self.model is not None, "This function needs an underlying model"
         assert normalize in [None, "band", "total"], "normalize needs to be None, 'band' or 'total'"
-        if type(self.smearing[0]) != CubesSmearing:
+        if not isinstance(self.smearing[0], CubesSmearing):
             raise NotImplementedError("This function is not yet implemented for anything but cubes")
         # use cube_cut_area_com() to get points, then
         # use the approximate gradients to do a newton step
@@ -676,11 +710,11 @@ class DensityOfStates:
                 if "bands_grad" in dir(self.model):
                     # if available, evaluate the model with bands and exact gradients (way more precise!)
                     bands, grads = self.model.bands_grad(x)
-                    bands = bands[:,i:i+1] - energy
-                    grads = grads[...,i]
+                    bands = bands[:, i:i + 1] - energy
+                    grads = grads[..., i]
                 else:
                     # evaluate model, but take the gradients from the known approximations
-                    bands = self.model(x)[:,i:i+1] - energy
+                    bands = self.model(x)[:, i:i + 1] - energy
                 x -= grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1, keepdims=True)**2))
             # don't use gradients when computing total area
             w_sum = np.sum(w)
@@ -700,7 +734,7 @@ class DensityOfStates:
         band_indices = np.array(band_indices, dtype=np.int64)
         if improved_weights:
             # The optimal solution here is triangulation, however the whole point of the cutting cubes was to avoid that!
-            
+
             # It's not possible to know the results for plane waves...
             # Some results however are possible to know based on symmetries, if they would be supplied.
 
@@ -708,10 +742,10 @@ class DensityOfStates:
             # -> maybe that could be enough to improve the weights slightly. (use scipy.sparse)
             #   -> problem: it becomes a volume integral instead of a surface integral... This is bad for half metals.
 
-            #N = (len(points) + 7) // 8 * 8 # use at least as many test functions as points to make the linear function invertible!
-            #def func(x):
+            # N = (len(points) + 7) // 8 * 8 # use at least as many test functions as points to make the linear function invertible!
+            # def func(x):
             #    return x # TODO
-            #w = conjugate_gradient_solve(func, np.ones(), np.array(weights))
+            # w = conjugate_gradient_solve(func, np.ones(), np.array(weights))
 
             # The cutting cube weight is computes in a fixed grid above. The points and their derivatives are known.
             # What if one would average over multiple shifted cube grids to get the best weights??? I think that could work well!
@@ -723,17 +757,17 @@ class DensityOfStates:
             if "bands_grad" in dir(self.model):
                 # if available, evaluate the model with bands and exact gradients (way more precise!)
                 bands, grads = self.model.bands_grad(points)
-                bands = np.take_along_axis(bands, band_indices[:,None], axis=-1)[...,0]
-                grads = np.take_along_axis(grads, band_indices[:,None,None], axis=-1)[...,0]
+                bands = np.take_along_axis(bands, band_indices[:, None], axis=-1)[..., 0]
+                grads = np.take_along_axis(grads, band_indices[:, None, None], axis=-1)[..., 0]
                 # do another newton step here for free! (Assume the gradient is constant)
-                points -= grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1)**2))[...,None]
+                points -= grads * (bands / (1e-20 + np.linalg.norm(grads, axis=-1)**2))[..., None]
             else:
                 raise NotImplementedError("No implementation to get gradients from the lattice.")
             # TODO WRONG for A != 1I
-            ax, ay, az = tuple(grads.T * self.step_sizes[:,None]) # transformed for cubes
+            ax, ay, az = tuple(grads.T * self.step_sizes[:, None])  # transformed for cubes
             w = np.zeros(len(weights))
             n = 2
-            offsets = np.stack(np.meshgrid(*3*[np.linspace(-0.5, 0.5, n, endpoint=False)])).reshape(-1, 3)
+            offsets = np.stack(np.meshgrid(*3 * [np.linspace(-0.5, 0.5, n, endpoint=False)])).reshape(-1, 3)
             for offset in offsets:
                 # compute cube indices of the shifted points
                 cube_indices = np.round(offset + points / self.step_sizes) - offset
@@ -749,7 +783,7 @@ class DensityOfStates:
                 else:
                     # TODO COM calculation is not needed
                     w[select] += cube_cut_area_com(a0, ax[select], ay[select], az[select])[0]
-            w /= len(offsets) # mean
+            w /= len(offsets)  # mean
             total_w_sum = np.sum(w)
             if normalize == 'band':
                 # TODO apply band normalisation

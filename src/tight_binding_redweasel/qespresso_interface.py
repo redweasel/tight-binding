@@ -340,9 +340,10 @@ class QECrystal:
     def plot_crystal(self, repeat=1, turntable=14, elevation=35):
         """3d plot of the crystal structure"""
         assert self.ibrav == 0, "only implemented for ibrav = 0"
+        from mpl_toolkits.mplot3d import Axes3D
         from matplotlib import pyplot as plt
         fig = plt.figure()
-        ax = fig.add_subplot(projection="3d")
+        ax: Axes3D = fig.add_subplot(projection="3d") # type: ignore
         restrict = False
         if repeat == 1:
             restrict = True
@@ -378,9 +379,9 @@ class QECrystal:
         ax.plot(limits[0], [0]*2, [0]*2, 'k--')
         ax.plot([0]*2, limits[1], [0]*2, 'k--')
         ax.plot([0]*2, [0]*2, limits[2], 'k--')
-        ax.set_xlabel(f"x [{self.unit.replace("angstrom", "Å")}]")
-        ax.set_ylabel(f"y [{self.unit.replace("angstrom", "Å")}]")
-        ax.set_zlabel(f"z [{self.unit.replace("angstrom", "Å")}]")
+        ax.set_xlabel(f'x [{self.unit.replace("angstrom", "Å")}]')
+        ax.set_ylabel(f'y [{self.unit.replace("angstrom", "Å")}]')
+        ax.set_zlabel(f'z [{self.unit.replace("angstrom", "Å")}]')
         if restrict:
             ax.set_xlim(np.min(deformed_cube[0]), np.max(deformed_cube[0]))
             ax.set_ylim(np.min(deformed_cube[1]), np.max(deformed_cube[1]))
@@ -476,7 +477,7 @@ class QECrystal:
         plt.xlim(np.nanmin(z[0]), np.nanmax(z[0]))
         plt.vlines(sym_x, ymin, ymax, "black", linestyles="dashed", lw=0.55)
         fermi_energy = self.read_bands_crystal()[3]
-        plt.axhline(fermi_energy, 'r')
+        plt.axhline(fermi_energy, color='r')
         plt.ylabel("Energy in eV")
         plt.title(f"Bandstructure of {self.name}")
         return sym_x
@@ -602,7 +603,7 @@ class QECrystal:
             return order, spilling
 
 
-    def read_projections(self, filename: str=None):
+    def read_projections(self, filename: str | None=None):
         """Read data that has been created by `projwfc.x`.
         The result contains the bandstructure and Fermi-energy in eV and the number of electrons per cell, that are not covered by pseudopotentials (as that is included in the file).
         The result also the projections on the atomic orbitals.
@@ -783,6 +784,7 @@ class QECrystal:
                 g_smpl_list.append(mill)
         inv_order = np.zeros(len(order), dtype=np.int64)
         inv_order[np.array(order)-1] = np.arange(len(order))
+        assert B is not None
         return (np.linalg.inv(B) @ np.array([k_smpl[i] for i in inv_order]).T).T, [g_smpl_list[i] for i in inv_order], [evc_list[i] for i in inv_order]
     
     def read_charge_density(self):
@@ -1361,8 +1363,8 @@ def from_disk(name: str, read_output=True, prepare_pseudopotentials=False) -> QE
         QECrystal: The object with all parameters filled in from a previous run.
     """
     crystal = QECrystal(name, np.eye(3), [], [], 0.0)
-    crystal.basis = []
-    crystal.types = []
+    basis = []
+    types = []
     filename = f"./qe-data/{name}.xml"
     bohr_to_angstrom = 0.52917721 # bohr_radius in Angstrom
     with open(filename, 'r') as file:
@@ -1379,9 +1381,9 @@ def from_disk(name: str, read_output=True, prepare_pseudopotentials=False) -> QE
             section = root.getElementsByTagName("output")[0]
         else:
             section = root.getElementsByTagName("input")[0]
-        types = section.getElementsByTagName("atomic_species")[0]
+        types_elem = section.getElementsByTagName("atomic_species")[0]
         positions = section.getElementsByTagName("atomic_positions")[0]
-        for atom in types.getElementsByTagName("species"):
+        for atom in types_elem.getElementsByTagName("species"):
             atom_type = atom.getAttribute("name")
             # ignore atom mass. That means that special isotopes get ignored here...
             _atom_mass = atom.getElementsByTagName("mass")[0].firstChild.nodeValue
@@ -1401,10 +1403,10 @@ def from_disk(name: str, read_output=True, prepare_pseudopotentials=False) -> QE
             atom_pos = [float(x) for x in atom.firstChild.nodeValue.strip().split()]
             # convert atom_pos to crystal coordinates, as those are used by the class
             atom_pos = np.linalg.inv(A) @ atom_pos
-            crystal.basis.append(atom_pos)
-            crystal.types.append(atom_type)
-        crystal.basis = np.array(crystal.basis)
-        crystal.types = np.array(crystal.types)
+            basis.append(atom_pos)
+            types.append(atom_type)
+        crystal.basis = np.array(basis)
+        crystal.types = np.array(types)
         crystal.kinetic_energy_cutoff = float(section.getElementsByTagName("ecutwfc")[0].firstChild.nodeValue)
         #ecutrho = float(section.getElementsByTagName("ecutrho")[0].firstChild.nodeValue)
         smearing = section.getElementsByTagName("smearing")

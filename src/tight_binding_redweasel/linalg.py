@@ -1,6 +1,6 @@
 import numpy as np
 import scipy
-from typing import Tuple, Callable
+from collections.abc import Callable
 
 
 # direct sum of two matrices (block diagonal concatenation)
@@ -50,7 +50,7 @@ def merge_axes(arr: np.ndarray, start_axis=-2, count=2) -> np.ndarray:
     shape = list(np.shape(arr))
     start_axis = start_axis if start_axis >= 0 else len(shape) + start_axis
     assert 0 <= start_axis < len(shape), f"axis {start_axis} is out of bounds for shape {shape}"
-    shape[start_axis] = np.prod(shape[start_axis:start_axis+count])
+    shape[start_axis] = int(np.prod(shape[start_axis:start_axis+count]))
     del shape[start_axis+1:start_axis+count]
     return np.reshape(arr, shape)
 
@@ -64,7 +64,7 @@ def random_unitary(n):
     return np.linalg.qr(np.random.standard_normal((n, n)) + np.random.standard_normal((n, n))*1j)[0]
 
 
-def geigh(H: np.ndarray, S: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def geigh(H: np.ndarray, S: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     if len(H.shape) >= 3:
         if np.linalg.norm(S - np.eye(S.shape[-1])) < 1e-8:
             # fast path
@@ -75,8 +75,8 @@ def geigh(H: np.ndarray, S: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
             res_ev = np.zeros(H.shape, dtype=H.dtype)
             for i in range(len(H)):
                 la, ev = scipy.linalg.eigh(H[i], S[i])
-                res_la.append(la)
-                res_ev.append(ev)
+                res_la[i] = la
+                res_ev[i] = ev
             return np.array(res_la), np.array(res_ev)
     else:
         return scipy.linalg.eigh(H, S)
