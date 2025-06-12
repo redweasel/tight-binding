@@ -1269,7 +1269,8 @@ mp_grid = {grid_size} {grid_size} {grid_size}
    wan_mode = 'standalone'
    write_mmn = true
    write_amn = true
-   {"write_dmn = true\nread_sym = true" if use_sym else ""}
+   {'''write_dmn = true
+   read_sym = true''' if use_sym else ""}
 /
 """)
         self._run("pw2wannier90", "pw2wan")
