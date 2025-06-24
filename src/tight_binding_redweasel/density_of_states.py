@@ -46,7 +46,7 @@ def gauss_6_f(f, mu, beta):
     return np.sum(f_smpl * w.reshape((-1,) + (1,) * len(np.shape(f_smpl)[1:])), axis=0) / beta * 2 * np.log(2)
 
 
-def convolve_df(x, energy_smpl, states, beta, extrapolation: str | None = 'flat', extrapolation_point=None):
+def convolve_df(x, energy_smpl: np.ndarray, states: np.ndarray, beta: float, extrapolation: str | None = 'flat', extrapolation_point=None) -> np.ndarray:
     """explicitly compute the value of the convolution of the states
     function with the negative derivative of the Fermi-function.
     takes a piecewise linear representation of the states function
@@ -73,7 +73,7 @@ def convolve_df(x, energy_smpl, states, beta, extrapolation: str | None = 'flat'
 
     def segment(x, x0, x1, y0, y1):
         return y1 * f(x - x1) - y0 * f(x - x0) + (y1 - y0) / (x1 - x0) * F_diff(x - x0, x - x1)
-    s = np.sum(segment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1, axis=-1), states)[..., 1:], axis=-1)
+    s = np.sum(segment(x, energy_smpl[..., :-1], energy_smpl[..., 1:], states[..., :-1], states[..., 1:]), axis=-1)
     # add segments/other functions as extrapolation on both side to get correct high temperature behavior
     if extrapolation == 'flat':
         if extrapolation_point is None:
@@ -85,7 +85,7 @@ def convolve_df(x, energy_smpl, states, beta, extrapolation: str | None = 'flat'
     return s
 
 
-def convolve_ddf(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=None):
+def convolve_ddf(x, energy_smpl: np.ndarray, states: np.ndarray, beta: float, extrapolation='flat', extrapolation_point=None) -> np.ndarray:
     """The analytic derivative of `convolve_df`
 
     Args:
@@ -107,7 +107,7 @@ def convolve_ddf(x, energy_smpl, states, beta, extrapolation='flat', extrapolati
 
     def dsegment(x, x0, x1, y0, y1):
         return y1 * df(x - x1) - y0 * df(x - x0) + (y1 - y0) / (x1 - x0) * f_diff(x - x0, x - x1)
-    s = np.sum(dsegment(x, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1, axis=-1), states)[..., 1:], axis=-1)
+    s = np.sum(dsegment(x, energy_smpl[..., :-1], energy_smpl[..., 1:], states[..., :-1], states[..., 1:]), axis=-1)
     # add segments/other functions as extrapolation on both side to get correct high temperature behavior
     if extrapolation == 'flat':
         if extrapolation_point is None:
@@ -170,7 +170,11 @@ def _int_xxdf(x):
 
 
 def int_poly(x0, x1, a, b, c):
-    """Integrate (ax^2+bx+c)(-df/de) from x0 to x1 analytically with f(x)=1/(1+e^x)."""
+    """
+    Integrate (ax^2+bx+c)(-df/de) from x0 to x1 analytically with f(x)=1/(1+e^x) so df/de = -1/(2*cosh(x/2))^2.
+    Well tested.
+    """
+    # TODO combine the calculations into one function, as there is lots of overlap
     return a * (_int_xxdf(x1) - _int_xxdf(x0)) + b * (_int_xdf(x1) - _int_xdf(x0)) + c * (_int_df(x1) - _int_df(x0))
 
 
@@ -179,10 +183,21 @@ def naive_fermi_energy(bands, electrons):
     return np.mean(np.sort(np.ravel(bands))[i:i + 2])
 
 
-def naive_energy(bands, T, mu):
+def naive_energy(bands, mu, T, spin_factor=2):
     e = np.ravel(bands)
-    return np.mean(e * scipy.special.expit(-(e - mu) / (k_B * T))) * np.shape(bands)[-1]
+    if T > 0:
+        return np.mean(e * scipy.special.expit(-(e - mu) / (k_B * T))) * np.shape(bands)[-1] * spin_factor
+    else:
+        return np.sum(e[e <= mu]) * (np.shape(bands)[-1]/len(e)) * spin_factor
 
+
+def _samples(e0, e1, mu, beta, N):
+    # sample a range e0 to e1 in such a way, that an integral over -df/de has equal weights for each point. (importance sampling)
+    # for numerical stability, it is required to limit e0 and e1 here
+    e0 = np.maximum(mu - 30 / beta, e0)
+    e1 = np.minimum(mu + 30 / beta, e1)
+    #return np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - mu)), scipy.special.expit(-beta * (e1 - mu)), N)) - 1 + 1e-16) / beta + mu
+    return -scipy.special.logit(np.concatenate([np.linspace(scipy.special.expit(-beta * (e0 - mu)), 0.5, N//2, endpoint=False), np.linspace(0.5, scipy.special.expit(-beta * (e1 - mu)), (N+1)//2)])) / beta + mu
 
 class DensityOfStates:
     """This class represents the density of states for a given 3D bandstructure model.
@@ -198,7 +213,7 @@ class DensityOfStates:
 
         Args:
             model (Callable[[arraylike[N_k, 3]], bands]): The bandstructure model.
-                This class allows any function to be used as a bandstructure model.
+                This class allows any function to be used as a bandstructure model as long as it returns sorted bands.
                 However there are special features, that use `model.bands_grad` and `model.bands_grad_hess` to improve the results if it is available.
                 The input k for the model should be in reciprocal space specified by A, not in crystal space.
             N (int, optional): Number of k-points per direction. Defaults to 24.
@@ -327,14 +342,19 @@ class DensityOfStates:
         # TODO load without self.model
         raise NotImplementedError()
         return DensityOfStates(...)
+    
+    def states_below_band(self, energy: float, i: int):
+        if self.bands_range[i][0] < energy < self.bands_range[i][1]:
+            return np.mean(self.smearing[i].volume(energy))
+        elif self.bands_range[i][1] <= energy:
+            return 1.0  # completely full
+        else:
+            return 0.0
 
     def states_below(self, energy: float):
         states = 0.0
-        for i, band_range in enumerate(self.bands_range):
-            if band_range[0] < energy < band_range[1]:
-                states += np.mean(self.smearing[i].volume(energy))
-            elif band_range[1] <= energy:
-                states += 1.0  # completely full
+        for i in range(len(self.bands_range)):
+            states += self.states_below_band(energy, i)
         return states
 
     def states_density(self, energy: float):
@@ -389,7 +409,7 @@ class DensityOfStates:
         energy_smpl = []
         for (min_e, max_e) in self.bands_range:
             energy_smpl.extend(np.linspace(min_e, max_e, N))
-        energy_smpl = sorted(list(set(energy_smpl)))
+        energy_smpl = np.unique(energy_smpl)
         states = []
         density = []
         for energy in energy_smpl:
@@ -424,7 +444,7 @@ class DensityOfStates:
             return sum([s.dvolume(mu) for s in self.smearing])
         e0, e1 = self.energy_range()
         beta = 1 / (k_B * T)  # 1/eV
-        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - mu)), scipy.special.expit(-beta * (e1 - mu)), N)) - 1 + 1e-16) / beta + mu
+        energy_smpl = _samples(e0, e1, mu, beta, N)
         states = np.stack([sum([s.volume(e) for s in self.smearing]) for e in energy_smpl], axis=-1)
         return convolve_ddf(mu, energy_smpl, states, beta)
 
@@ -509,7 +529,7 @@ class DensityOfStates:
           (with an error in the same order of magnitude).
 
         Args:
-            electrons (float): The number of valence electrons per cell.
+            electrons (float): The number of valence electrons per cell (= filled bands).
             T_smpl (arraylike[N_T]): The (sorted!) temperatures for batched computation of chemical potentials.
             N (int, optional): The number of points used to approximate the smeared states. Defaults to 30.
             tol (float, optional): The precision of the root-finding procedure. Defaults to 1e-8.
@@ -530,7 +550,7 @@ class DensityOfStates:
         energy_smpl_lin = np.linspace(e0, e1, N)
         T_smpl = np.asarray(T_smpl).reshape(-1)
         if np.max(T_smpl) >= T_lin:
-            states_lin = [self.states_below(energy) for energy in energy_smpl_lin]
+            states_lin = np.array([self.states_below(energy) for energy in energy_smpl_lin])
         beta = -10000.0  # invalid value
         res = []
         for T in T_smpl:
@@ -544,101 +564,93 @@ class DensityOfStates:
                 if abs(beta - new_beta) / new_beta > 5e-2:
                     # recalculate distribution for precision
                     beta = 0.25 / (k_B * T)  # 1/eV
-                    energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - fermi_energy)), scipy.special.expit(-beta * (e1 - fermi_energy)), N)) - 1 + 1e-16) / beta + fermi_energy
+                    energy_smpl = _samples(e0, e1, fermi_energy, beta, N)
                     beta = new_beta
-                    states = [self.states_below(energy) for energy in energy_smpl]
+                    states = np.array([self.states_below(energy) for energy in energy_smpl])
                 # keep distribution if it doesn't cause too big errors (performance)
                 beta = new_beta
                 res.append(secant(electrons, lambda x: convolve_df(x, energy_smpl, states, beta, extrapolation='flat', extrapolation_point=(e1, self.model_bandcount())), fermi_energy, fermi_energy + 1 / beta, tol, maxsteps))
         return np.array(res)
 
-    # TODO currently WRONG
-    def energy(self, mu: float, T=0.0, N=100) -> float:
-        if T <= 0.0:
-            # if the temperature is zero, then just integrate the states curve using linear segments
-            # TODO it would be good to compute the total energy of each band beforehand and reuse it here
-            # TODO use some better integration than trapez
-            e0 = np.min(self.bands_range)
-            mu = float(mu)
-            e_smpl = np.linspace(e0, mu, N, endpoint=False) + 1 / 2 / N * (mu - e0)
-            density = [self.density(e) for e in e_smpl]
-            energy = np.mean(e_smpl * density) * (mu - e0)
-            return energy
+    def energy(self, mu: float, T=0.0, N=256, spin_factor=2) -> float:
+        """Compute the total energy of the system defined as: integral e * density(e) * f(e) de.
+        This is done in the most numerically accurate way.
+
+        Args:
+            mu (float): The chemical potential.
+            T (float, optional): Temperature to compute the energy at. Defaults to 0.0K.
+            N (int, optional): Number of samples of the DoS to use. Defaults to 32.
+            spin_factor (int, optional): The number of electrons per band. Defaults to 2.
+
+        Returns:
+            float: The total energy of the system.
+        """
         # energy is integral e f(e) rho(e) de
-        #         = integral (f + e df/de) N(e) de
-        # like usual assume N to be piecewise linear and do the integral
-        # = integral (f + e df/de) (a e + b) de
-        # = integral (a e + b) f + (a e^2 + b e) df/de de
-        # = [(a e^2/2 + b e) f] + integral -(a e^2/2 + b e) df/de + (a e^2 + b e) df/de de
-        # = [(a e^2/2 + b e) f] + integral -a e^2/2 df/de de
-        # Note the shift by mu can be done by
-        # integral (e+mu) f(e) rho(e+mu) de = mu*q + integral e f(e) rho(e) de
-        # where q is the number electrons per cell
+        # = [...] - integral (f + e df/de) N(e) de
+        # The constant from partial integration is 0 if the full integral from -inf to inf is computed like here.
 
-        def accumulate(T, energy_smpl, states):
-            def segment(T, x0, x1, y0, y1):
-                dx = x1 - x0
+        # if the temperature is zero, then just integrate the states curve using linear segments.
+        # The integral above simplifies to
+        # integral -(f + e df/de) N(e) de = mu N(mu) - integral_{-oo}^mu N(e) de
+        # TODO it would be good to compute the total energy of each band beforehand and reuse it here
+        e0, e1 = self.energy_range()
+        mu = float(mu)
+        # instead of equally distributed samples, use samples, which match band corners, such that the flat parts of N(e) are correctly integrated as flat.
+        energy = 0
+        for i, (min_e, max_e) in enumerate(self.bands_range):
+            if min_e < mu:
+                e_smpl = np.linspace(min_e, min(max_e, mu), N//2*2+1)
+                states = np.array([self.states_below_band(e, i) for e in e_smpl])
+                # trapezoidal rule (for arbitrary sorted lists of e_smpl)
+                int1 = np.sum((states[:-1] + states[1:])/2 * (e_smpl[1:] - e_smpl[:-1]))
+                # Romberg extrapolation with just one more step -> ~ Simpson rule.
+                # this assumes that the density is continuous, which is the case for 3D bandstructures.
+                int2 = np.sum((states[:-2:2] + states[2::2])/2 * (e_smpl[2::2] - e_smpl[:-2:2]))
+                energy += mu * states[-1] - (int1 + (int1 - int2)/(4 - 1))
+        # TODO allow more than one T to be used!
+        if T <= 0.0:
+            # this part is pretty well convergent
+            return energy * spin_factor
+        
+        # for high temperatures, one can use the naive formula (see `naive_energy`)
+        # however a different approach is taken here, which works better for small
+        # temperatures, but worse for large temperatures.
+
+        # now compute the correction due to temperature (using f0 as the Fermi-distribution
+        # for T=0, but still centered on mu, as that was used above).
+        # like usual assume N(e) to be piecewise linear and do the remaining integral
+        # = -integral (f-f0(e-mu) + e (df/de + delta(e-mu))) (a e + b) de
+        # = -integral (a e + b) (f-f0) + (a e^2 + b e) df/de de {- (a mu^2 + b mu) if e0<mu<=e1}  | next: integration by parts
+        # = -[(a e^2/2 + b e) (f-f0)] - integral -(a e^2/2 + b e) (df/de + delta(e-mu)) + (a e^2 + b e) df/de de {- (a mu^2 + b mu) if e0<mu<=e1}
+        # = -[(a e^2/2 + b e) (f-f0)] + integral a e^2/2 (-df/de) de {- a mu^2/2 if e0<mu<=e1}
+        # the additional term with mu appears only once in the entire integration, so it is added at the end using the exact a=rho(mu).
+        # A substitution is necessary, as the integrals are defined for f at beta=1 and mu=0, so substitute e->x/beta+mu, x=(e-mu)*beta
+        # = -[(a e^2/2 + b e) (f-f0)] + integral a/2 (x/beta + mu)^2 (-df/dx(x) * beta) dx/beta {- a mu^2/2 if e0<mu<=e1}
+
+        beta = 1 / (k_B * T)  # 1/eV
+        def accumulate(e_smpl, states):
+            def segment(e0, e1, y0, y1):
+                dx = e1 - e0
                 dy = y1 - y0
-                beta = 1 / (k_B * T)
                 a = dy / dx
-                b = y0 - x0 * a
-                # TODO ERROR
-                simple_term = (a * x1 * x1 / 2 + b * x1) * scipy.special.expit(-(x1 - mu) * beta) - (a * x0 * x0 / 2 + b * x0) * scipy.special.expit(-(x0 - mu) * beta)
-                return simple_term + a / 2 * int_poly((x0 - mu) * beta, (x1 - mu) * beta, 1 / beta / beta, 0, 0) / beta
-            s = np.sum(segment(T, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1), states)[1:])
-            # can add segments/other functions as extrapolation on both side to get correct high temperature behavior
-            # however if they are flat, they have no contribution.
+                b = y0 - e0 * a
+                def f(e):
+                    return (a * e / 2 + b) * e * (scipy.special.expit(-(e - mu) * beta) - np.where(e < mu, 1, 0))
+                simple_term = f(e1) - f(e0)
+                return -simple_term + a / 2 * int_poly((e0 - mu) * beta, (e1 - mu) * beta, 1/beta**2, 2*mu/beta, mu*mu)
+            s = np.sum(segment(e_smpl[:-1], e_smpl[1:], states[:-1], states[1:]))
+            # add segments/other functions as extrapolation on both side here to get correct high temperature behavior
+            s += segment(e_smpl[-1], e_smpl[-1] + 8. / beta, self.model_bandcount(), self.model_bandcount()) # flat N(e) above the energy range
             return s
         # calculate custom distribution for precision/cost balance
-        beta = 0.25 / (k_B * T)  # 1/eV
-        e0, e1 = self.energy_range()
-        # TODO this is not correct... it would be good to compute the total energy of each band beforehand and reuse it here
-        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - mu)), scipy.special.expit(-beta * (e1 - mu)), N)) - 1 + 1e-16) / beta + mu
-        states = [self.states_below(energy) for energy in energy_smpl]
-        return accumulate(T, energy_smpl, states)
-
-    # volumetric heat capacity in eV/K
-    # TODO currently WRONG
-    def heat_capacity(self, T: float, mu: float, N=30) -> float:
-        # The heat capacity is du/dT where u is the energy per unit cell
-        # u = integral e*rho(e)*f(e) de = -integral N(e)*(f(e)+e df/de(e)) de
-        # du/dT = -integral N(e)*(-(e-mu)/T*df/de(e)+e/T*(-df/de(e) - (e-mu)*d2f/de2(e))) de
-        # this integral has multiple parts. assume N(e) to be piecewise linear, then there are the following integrals
-        #  (I) integral e^n df/de(e) with n=0,1,2
-        # (II) integral e^n d2f/de2(e) with n=1,2,3
-        # now solve these analytically.
-        # integral e^n d2f/de2(e) = [e^n df/de(e)] - integral n e^(n-1) df/de(e) -> reduction to type (I)
-        # for (I) the solutions are already implemented for n=0,1 in convolve_df
-        # the solution for n=2 includes the Li_2(x) (dilogarithm, can be used from scipy)
-        def accumulate(T, energy_smpl, states):
-            def segment(T, x0, x1, y0, y1):
-                dx = x1 - x0
-                dy = y1 - y0
-                beta = 1 / (k_B * T)
-                a, b, c = 1, -mu, 0
-                simple_term = ...  # TODO!
-                return simple_term / T + dy / dx / T * int_poly(x0 * beta, x1 * beta, a / beta / beta, b / beta, c) / beta
-            s = np.sum(segment(T, np.roll(energy_smpl, 1), energy_smpl, np.roll(states, 1), states)[1:])
-            # can add segments/other functions as extrapolation on both side to get correct high temperature behavior
-            # however if they are flat, they have no contribution.
-            return s
-        # calculate custom distribution for precision/cost balance
-        beta = 0.25 / (k_B * T)  # 1/eV
-        e0, e1 = self.energy_range()
-        energy_smpl = np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - mu)), scipy.special.expit(-beta * (e1 - mu)), N)) - 1 + 1e-16) / beta + mu
-        states = [self.states_below(energy) for energy in energy_smpl]
-        return accumulate(T, energy_smpl, states)
-
-    def conductivity(self, mu):
-        # TODO
-        return None
+        e_smpl = _samples(e0, e1, mu, beta, N)
+        states = np.array([self.states_below(energy) for energy in e_smpl])
+        return (energy + accumulate(e_smpl, states) - self.density(mu) * mu*mu/2) * spin_factor
 
     def seebeck(self, electrons: float, T_smpl: Iterable[float], N=30, h=1e-4) -> np.ndarray:
-        """The Seebeck-coefficient at constant volume can be computed
-        without transport integrals from the derivative of the chemical
-        potential w.r.t. the temperature.
-
-        https://doi.org/10.1103/PhysRevB.98.224101
+        """The derivative of the chemical potential w.r.t. temperature.
+        It can be interpreted as part of the Seebeck-coefficient.
+        (See https://doi.org/10.1103/PhysRevB.98.224101)
 
         Args:
             electrons (float): Number of filled bands, just like for the chemical potential calculation.
@@ -646,7 +658,7 @@ class DensityOfStates:
             N (int, optional): The number of energy samples to use for the integration. Defaults to 30.
 
         Returns:
-            float: The seebeck coefficient at constant volume
+            float: The derivative of the chemical potential
         """
         # for T=0 the seebeck coefficient is 0
         T_smpl = np.asarray(T_smpl)
@@ -660,6 +672,42 @@ class DensityOfStates:
         mu = self.chemical_potential(electrons, T_h, N=N)
         # Note: the result would be multiplied by 1eV/e = 1V, so this depends on the unit eV!
         return np.array([(mu[inv_order[i] * 2 + 1] - mu[inv_order[i] * 2]) / (2 * h) if T_smpl[i] > 0 else 0 for i in range(len(T_smpl))])
+
+    # heat capacity at constant volume in eV/K
+    def heat_capacity(self, mu: float, T: float, N=256, spin_factor=2) -> float:
+        # The heat capacity is du/dT where u is the energy per unit cel
+        # u = integral e*rho(e)*f(e) de = -integral N(e)*(f(e)+e df/de(e)) de
+        # the temperature derivative can be broken up into the part from the change in chemical potential
+        # and the part from the change f(e)
+
+        # du/dT = integral rho(e)*e*(e-mu)/T*(-df/de(e)) de
+        # for 3D bandstructures, rho(e) is continuous,
+        # TODO the following is WRONG!
+        # so this can solved using a piecewise linear interpolaton of rho(e).
+        # the resulting integral has terms up to e^2, for which the analytical
+        # solution is implemented. To use it, the substitution e = x/beta + mu must be made.
+        # -> e*(e-mu) -> (x/beta + mu)*x/beta = x^2/beta^2 + mu*x/beta
+
+        e0, e1 = self.energy_range()
+        mu = float(mu)
+        
+        beta = 1 / (k_B * T)  # 1/eV
+        def accumulate(e_smpl, rho):
+            def segment(e0, e1, y0, y1):
+                #dx = e1 - e0
+                #dy = y1 - y0
+                #a = dy / dx
+                b = (y0 + y1) / 2
+                return b * int_poly((e0 - mu) * beta, (e1 - mu) * beta, 1/beta**2, mu/beta, 0)
+            return np.sum(segment(e_smpl[:-1], e_smpl[1:], rho[:-1], rho[1:]))
+        # calculate custom distribution for precision/cost balance
+        e_smpl = _samples(e0, e1, mu, beta, N)
+        rho = np.array([self.density(energy) for energy in e_smpl])
+        return accumulate(e_smpl, rho) / T * spin_factor
+
+    def conductivity(self, mu):
+        # TODO conductivity from the naive sum
+        return None
 
     def fermi_surface_samples(self,
                               energy: float,
