@@ -43,7 +43,7 @@ class KPath(Sequence):
         self.points = points  # no copy, be careful!
         self.indices = [0]  # symmetry point indices
         additional = []
-        if isinstance(start, type(start)) == tuple:
+        if isinstance(start, list) or isinstance(start, tuple):
             # accept a list of points instead of start
             additional = start[1:]
             start = start[0]
@@ -134,7 +134,7 @@ class KPath(Sequence):
         if label_bands not in {None, "", "left", "right"}:
             raise ValueError("label_bands must be left or right")
         from matplotlib import pyplot as plt
-        ibands = func(np.array(self))
+        ibands = func(np.array(self, dtype=float))
         x_smpl = self.x()
         sym_x_smpl = self.sym_x()
         ax1 = plt.gca()
@@ -206,7 +206,8 @@ class KPath(Sequence):
         """
         from matplotlib import pyplot as plt
         # figure out band_offset by evaluating the model at some point
-        point = np.array([self.path[0]])
+        point = np.array([self.path[0]], dtype=float)
+        assert np.shape(point) == (1, self.dim())
         gamma_bands_mod = func1(point)[0]
         gamma_bands_ref = func2(point)[0]
         nm = len(gamma_bands_mod)

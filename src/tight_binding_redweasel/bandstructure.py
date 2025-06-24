@@ -16,7 +16,7 @@ def plot_bands_generic(k_smpl, bands, *args, **kwargs):
         k_smpl (arraylike): k-space samples in shape (N_k, dim)
         bands (arraylike): bandstructure in shape (N_k, N_b)
     """
-    plt.gca().set_prop_cycle(None) # type: ignore
+    plt.gca().set_prop_cycle(None)  # type: ignore
     for i in range(len(bands[0])):
         if len(np.ravel(k_smpl)) == len(k_smpl):
             plt.plot(k_smpl, [bands[j][i]
@@ -77,7 +77,7 @@ class BandStructureModel:
         assert pshape[1] == pshape[2]
         assert pshape[0] > 0
 
-    def copy(self):
+    def copy(self) -> 'BandStructureModel':
         model = BandStructureModel(self.f_i, self.df_i, self.params.copy(), ddf_i=self.ddf_i)
         model.symmetrizer = self.symmetrizer
         model.sym = self.sym
@@ -86,7 +86,7 @@ class BandStructureModel:
         model.exp = self.exp
         return model
 
-    def band_count(self):
+    def band_count(self) -> int:
         """
         Returns:
             int: Number of bands of the model. Often referred to as N_b
@@ -154,16 +154,15 @@ class BandStructureModel:
         Returns:
             ndarray: The hamiltonian for each k, shape: (N_k, N_b, N_b)
         """
+        k = np.asanyarray(k)
         mat = np.zeros(np.shape(k)[:-1] +
                        self.params[0].shape, dtype=np.complex128)
         params_shape = (1,) * len(np.shape(k)[:-1]) + self.params[0].shape
         for i in range(1, len(self.params)):
-            mat += np.asarray(self.f_i(k, i))[..., None,
-                                              None] * self.params[i].reshape(params_shape)
+            mat += np.asarray(self.f_i(k, i))[..., None, None] * self.params[i].reshape(params_shape)
         mat += np.conj(np.swapaxes(mat, -1, -2))
         # expect params[0] to always be hermitian! (this is very important for symmetrization)
-        mat += np.asarray(self.f_i(k, 0))[..., None,
-                                          None] * self.params[0].reshape(params_shape)
+        mat += np.asarray(self.f_i(k, 0))[..., None, None] * self.params[0].reshape(params_shape)
         return mat
 
     def df(self, k):
@@ -172,14 +171,13 @@ class BandStructureModel:
         Returns:
             ndarray: The hamiltonian gradient for each k, shape: (N_k, dim, N_b, N_b)
         """
+        k = np.asanyarray(k)
         mat = np.zeros(np.shape(k) + self.params[0].shape, dtype=np.complex128)
         params_shape = (1,) * len(np.shape(k)) + self.params[0].shape
         for i in range(1, len(self.params)):
-            mat += np.asarray(self.df_i(k, i))[..., None,
-                                               None] * self.params[i].reshape(params_shape)
+            mat += np.asarray(self.df_i(k, i))[..., None, None] * self.params[i].reshape(params_shape)
         mat += np.conj(np.swapaxes(mat, -1, -2))
-        mat += np.asarray(self.df_i(k, 0))[..., None,
-                                           None] * self.params[0].reshape(params_shape)
+        mat += np.asarray(self.df_i(k, 0))[..., None, None] * self.params[0].reshape(params_shape)
         return mat
 
     def ddf(self, k):
@@ -188,6 +186,7 @@ class BandStructureModel:
         Returns:
             ndarray: The hamiltonian gradient for each k, shape: (N_k, dim, dim, N_b, N_b)
         """
+        k = np.asanyarray(k)
         assert self.ddf_i is not None
         mat = np.zeros(np.shape(k) + (np.shape(k)
                        [-1],) + self.params[0].shape, dtype=np.complex128)
@@ -242,7 +241,7 @@ class BandStructureModel:
             for i, p in enumerate(self.params):
                 print(f"{i:2}: {np.linalg.norm(p)}")
 
-    def optimize(self, k_smpl, k_smpl_weights, ref_bands, band_weights, band_offset: int, iterations: int, batch_div=1, train_k0=True, regularization=1.0, learning_rate=1.0, log=True, max_accel_global=None, use_pinv=True, keep_zeros=False, convergence_threshold=1e-3, loss_threshold=1e-16):
+    def optimize(self, k_smpl, k_smpl_weights, ref_bands, band_weights, band_offset: int, iterations: int, batch_div=1, train_k0=True, regularization=1.0, learning_rate=1.0, log: bool | logger.OptimisationLogger=True, max_accel_global=None, use_pinv=True, keep_zeros=False, convergence_threshold=1e-3, loss_threshold=1e-16):
         """
         This function optimizes the parameters of the model to fit the given data.
         This works for any set of custom functions.
@@ -273,10 +272,10 @@ class BandStructureModel:
         """
         N = np.shape(self.params)[1]
         assert band_offset >= 0 and band_offset <= N - len(ref_bands[0])
-        if not log:
+        if log == False:
             # logger that doesn't print
             log = logger.OptimisationLogger(print_loss=False, verbose=False)
-        elif log:
+        elif log == True:
             # logger that prints
             log = logger.OptimisationLogger(
                 print_loss=True, update_line=True, verbose=True)
@@ -402,7 +401,7 @@ class BandStructureModel:
         log.add_data(iteration, l, err)
         return log
 
-    def optimize_cg(self, k_smpl, k_smpl_weights, ref_bands, band_weights, band_offset: int, iterations: int, log=True, precond=True, keep_zeros=False, convergence_threshold=1e-3, loss_threshold=1e-16, max_cg_iterations=5):
+    def optimize_cg(self, k_smpl, k_smpl_weights, ref_bands, band_weights, band_offset: int, iterations: int, log: bool | logger.OptimisationLogger=True, precond=True, keep_zeros=False, convergence_threshold=1e-3, loss_threshold=1e-16, max_cg_iterations=5):
         """
         This function optimizes the parameters of the model to fit the given data.
         This works for any set of custom functions.
@@ -431,10 +430,10 @@ class BandStructureModel:
         N_B = len(ref_bands[0])
         assert band_offset >= 0 and band_offset <= N - \
             N_B, f"band_offset={band_offset} must be in [0, {N - N_B}]"
-        if not log:
+        if log == False:
             # logger that doesn't print
             log = logger.OptimisationLogger(print_loss=False, verbose=False)
-        elif log:
+        elif log == True:
             # logger that prints
             log = logger.OptimisationLogger(print_loss=True, update_line=True, verbose=True)
         # reshape band_weights (no normalisation!)
@@ -727,11 +726,11 @@ class BandStructureModel:
         if format == "python":
             with open(filename, "r") as file:
                 H_r_repr = " ".join(file.readlines())
-                H_r, neighbors, S, inversion = eval(
-                    H_r_repr.replace("array", "np.array"))
+                # NOTE: very insecure!
+                H_r, neighbors, S, inversion = eval(H_r_repr.replace("array", "np.array"))
                 # TODO for some reason this only works with cos_reduced=True, exp=False
-                model = BandStructureModel.init_tight_binding(Symmetry(
-                    S, inversion=inversion), neighbors, len(H_r[0]), cos_reduced=True, exp=False)
+                model = BandStructureModel.init_tight_binding(
+                    Symmetry(S, inversion=inversion), neighbors, len(H_r[0]), cos_reduced=True, exp=False)
                 model.set_params_complex(H_r)
         elif format == "wannier90hr":
             neighbors, H_r = tb_fmt.load_hr(filename)
@@ -739,8 +738,7 @@ class BandStructureModel:
                 Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=cos_reduced, exp=exp)
             model.set_params_complex(H_r)
         elif format == "wannier90tb":
-            neighbors, H_r, w_r_params, degeneracies, A = tb_fmt.load_tb(
-                filename)
+            neighbors, H_r, w_r_params, degeneracies, A = tb_fmt.load_tb(filename)
             # TODO use A to transform neighbors to normalized reciprocal space.
             model = BandStructureModel.init_tight_binding(
                 Symmetry.none(), neighbors, len(H_r[0]), cos_reduced=cos_reduced, exp=exp)
@@ -946,7 +944,7 @@ def _get_tight_binding_coeff_funcs(sym, neighbors: np.ndarray, cos_reduced=False
 
     def f_i_sym(k, i):
         assert i >= 0
-        k = np.asarray(k)
+        k = np.asanyarray(k)
         if i == 0:
             return np.ones_like(k[..., 0])
         res = 0.0
@@ -961,7 +959,7 @@ def _get_tight_binding_coeff_funcs(sym, neighbors: np.ndarray, cos_reduced=False
     # 1. derivative of f_i
     def df_i_sym(k, i):
         assert i >= 0
-        k = np.asarray(k)
+        k = np.asanyarray(k)
         res = np.zeros_like(k)
         if i == 0:
             return res
@@ -976,7 +974,7 @@ def _get_tight_binding_coeff_funcs(sym, neighbors: np.ndarray, cos_reduced=False
     # 2. derivative of f_i (based on the assumpton ddf = -(scale*r)**2*f)
     def ddf_i_sym(k, i):
         assert i >= 0
-        k = np.asarray(k)
+        k = np.asanyarray(k)
         res = np.zeros(k.shape + (k.shape[-1],))
         if i == 0:
             return res

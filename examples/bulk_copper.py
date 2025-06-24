@@ -30,11 +30,10 @@ plt.plot(e_smpl, density)
 plt.axvline(fermi_energy_dos, color="k")
 plt.show()
 
-kint = bulk.KIntegral(dos_model, electrons, T=0, errors=False)
+kint = bulk.KIntegral(dos_model, electrons, T=[0.0, 300.0])
 # compute the hall coefficient R_h
-hall_coeff, _ = kint.hall_coefficient_metal_cubic(material.A, spin_factor=2)
-print("T=0K:", hall_coeff, "m³/C")
+hall_coeff = kint.hall_coefficient_metal_cubic(material.A, spin_factor=2)
+print("T=0K:", hall_coeff[0], "m³/C")
+print("T=300K:", hall_coeff[1], "m³/C")
 
-kint = bulk.KIntegral(dos_model, electrons, T=300, errors=False)
-hall_coeff, _ = kint.hall_coefficient_metal_cubic(material.A, spin_factor=2)
-print("T=300K:", hall_coeff, "m³/C")
+# TODO symmetrize

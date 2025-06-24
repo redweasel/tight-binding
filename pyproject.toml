@@ -39,7 +39,7 @@ pythonpath = "src"
 
 [tool.autopep8]
 max_line_length = 120
-ignore = "E501,W6,E731"  # or ["E501", "W6"]
+ignore = "E501,W6,E731,E711,E712"  # or ["E501", "W6"]
 aggressive = 3
 
 [project.urls]

@@ -1,10 +1,12 @@
 import numpy as np
 from typing import Self
+from collections.abc import Sequence, Iterable
 from .symmetry import *
 from . import logger
 from . import json_tb_format
 from . import wannier90_tb_format as tb_fmt
 from .linalg import *
+import time
 
 
 class HermitianFourierSeries:
@@ -16,7 +18,7 @@ class HermitianFourierSeries:
     where `H_0` is referring to the matrix at `r=0`, which is skipped in the sum above.
     """
 
-    def __init__(self, neighbors, H_r):
+    def __init__(self, neighbors: Sequence, H_r: Sequence):
         assert np.linalg.norm(neighbors[0]) == 0, "the first neighbor needs to be the 0 coordinate"
         assert len(neighbors) == len(H_r)
         assert np.shape(H_r)[1] == np.shape(H_r)[2]
@@ -25,28 +27,28 @@ class HermitianFourierSeries:
         self.neighbors = np.asarray(neighbors, dtype=float)
         self.H_r = np.asarray(H_r)
 
-    def dim(self):
+    def dim(self) -> int:
         """
         Returns:
             int: Dimension of the neighbor positions. Usually 1, 2 or 3.
         """
         return len(self.neighbors[0])
 
-    def f_i(self, k, i):
+    def f_i(self, k: Iterable, i: int) -> np.ndarray:
         """Exponential function that appears as coefficient in the fourier series."""
         assert i >= 0
         k = np.asarray(k)
         r = self.neighbors[i]
         return np.exp(2j*np.pi*(k @ r))
 
-    def df_i(self, k, i):
+    def df_i(self, k: Iterable, i: int) -> np.ndarray:
         """Derivative of f_i"""
         assert i >= 0
         k = np.asarray(k)
         r = self.neighbors[i]
         return 2j*np.pi * np.exp(2j*np.pi*(k @ r))[..., None] * np.asarray(r)
 
-    def ddf_i(self, k, i):
+    def ddf_i(self, k: Iterable, i: int) -> np.ndarray:
         """Second derivative of f_i"""
         assert i >= 0
         k = np.asarray(k)
@@ -54,7 +56,7 @@ class HermitianFourierSeries:
         r_sqr = np.asarray(r)[:, None] * np.asarray(r)[None, :]
         return (2j*np.pi)**2 * np.exp(2j*np.pi*(k @ r))[..., None, None] * r_sqr
 
-    def f(self, k):
+    def f(self, k: Sequence) -> np.ndarray:
         """Compute the hermitian (N, N) matrix"""
         mat = np.zeros(np.shape(k)[:-1] + self.H_r[0].shape, dtype=np.complex128)
         H_r_shape = (1,)*len(np.shape(k)[:-1]) + self.H_r[0].shape
@@ -65,7 +67,7 @@ class HermitianFourierSeries:
         mat += self.f_i(k, 0)[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
 
-    def df(self, k):
+    def df(self, k: Sequence) -> np.ndarray:
         """Compute the derivative of f wrt k in the direction dk, outputshape (dim(k), N, N)"""
         mat = np.zeros(np.shape(k) + self.H_r[0].shape, dtype=np.complex128)
         H_r_shape = (1,)*len(np.shape(k)) + self.H_r[0].shape
@@ -75,7 +77,7 @@ class HermitianFourierSeries:
         mat += self.df_i(k, 0)[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
 
-    def ddf(self, k):
+    def ddf(self, k: Sequence) -> np.ndarray:
         """Compute the second derivative of f wrt k in the direction dk, outputshape (dim(k), dim(k), N, N)"""
         mat = np.zeros(np.shape(k) + (np.shape(k)
                        [-1],) + self.H_r[0].shape, dtype=np.complex128)
@@ -86,10 +88,11 @@ class HermitianFourierSeries:
         mat += self.ddf_i(k, 0)[..., None, None] * self.H_r[0].reshape(H_r_shape)
         return mat
 
-    def copy(self):
+    def copy(self) -> 'HermitianFourierSeries':
         return HermitianFourierSeries(self.neighbors.copy(), self.H_r.copy())
 
-    def unit_matrix(neighbors, n) -> Self:
+    @staticmethod
+    def unit_matrix(neighbors: Sequence, n: int) -> 'HermitianFourierSeries':
         """Initialize the fourier series, such that it equals the identity for all k.
 
         Args:
@@ -104,12 +107,12 @@ class HermitianFourierSeries:
         H_r[0] = np.eye(n)
         return HermitianFourierSeries(neighbors, H_r)
 
-    def direct_sum(self, other: Self) -> Self:
+    def direct_sum(self, other: 'HermitianFourierSeries') -> 'HermitianFourierSeries':
         if np.any(self.neighbors != other.neighbors):
             raise NotImplementedError("mixing neighbor sets in the direct sum is currently not implemented.")
         return HermitianFourierSeries(self.neighbors, direct_sum(self.H_r, other.H_r))
 
-    def add_neighbors(self, neighbors):
+    def add_neighbors(self, neighbors: Sequence):
         """Add more neighbors with zero coefficients.
 
         Args:
@@ -157,7 +160,7 @@ class HermitianFourierSeries:
         self.H_r = np.array(self.H_r[sort])
         return len(self.neighbors) - old_len
 
-    def cleanup_neighbors(self, min_norm):
+    def cleanup_neighbors(self, min_norm: float) -> int:
         """Remove all neighbors that have a coefficient matrix with a norm smaller than a given threshold.
 
         Args:
@@ -168,8 +171,14 @@ class HermitianFourierSeries:
         keep[0] = True  # always keep the 0
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
-        old_len = len(self.neighbors)
+        return len(self.neighbors) - old_len
 
+    def __add__(self, other: 'HermitianFourierSeries') -> 'HermitianFourierSeries':
+        # do the direct sum of the two series.
+        # 1. bring them to the same number of neigbors
+        # 2. do the direct sum for the coefficient matrices
+        assert np.all(self.neighbors == other.neighbors), "currently only supported for equal neighbors"
+        return HermitianFourierSeries(self.neighbors, direct_sum(self.H_r, other.H_r))
 
 class AsymTightBindingModel:
     """
@@ -235,7 +244,7 @@ class AsymTightBindingModel:
         tb.normalize()
         return tb
 
-    def save(self, filename, format=None):
+    def save(self, filename: str, format=None):
         if format is None:
             if filename.endswith(".json"):
                 format = "json"
@@ -251,7 +260,8 @@ class AsymTightBindingModel:
 
         np.set_printoptions(**opt)  # reset printoptions
 
-    def load(filename, format=None) -> Self:
+    @staticmethod
+    def load(filename: str, format=None) -> Self:
         if format is None:
             if filename.endswith(".repr"):
                 format = "python"
@@ -725,9 +735,9 @@ class AsymTightBindingModel:
         for i in range(len(self.H.H_r)):
             self.H.H_r[i] = self.H.H_r[i][order]
             self.H.H_r[i] = self.H.H_r[i][:, order]
-        for i in range(len(self.S.S_r)):
-            self.S.S_r[i] = self.S.S_r[i][order]
-            self.S.S_r[i] = self.S.S_r[i][:, order]
+        for i in range(len(self.S.H_r)):
+            self.S.H_r[i] = self.S.H_r[i][order]
+            self.S.H_r[i] = self.S.H_r[i][:, order]
 
     def transform(self, A):
         """Apply a transformation on the neighbors in the fourier series.
@@ -812,7 +822,7 @@ class AsymTightBindingModel:
         hess2 = np.real(np.einsum("mpik, mqki -> mpqi", df_ev, db))
         return bands, grads, hess1 - 2*hess2
 
-    def supercell(self, A_original, A_new):
+    def supercell(self, A_original, A_new) -> 'AsymTightBindingModel':
         """
         Generate a tight binding model (with self.neighbors set) for a supercell defined as A' = A Λ,
         where Λ is a non singular integer valued matrix.
@@ -862,7 +872,7 @@ class AsymTightBindingModel:
         model = AsymTightBindingModel(HermitianFourierSeries(new_neighbors, H_r2))
         return model
 
-    def __add__(self, other) -> Self:
+    def __add__(self, other) -> 'AsymTightBindingModel':
         if type(other) == type(self):
             # direct sum of the models -> combine the bandstructures
             return AsymTightBindingModel(self.H + other.H, S=self.S + other.S)
@@ -873,13 +883,13 @@ class AsymTightBindingModel:
             H.H_r[0] += self.S.H_r[0] * float(other)
             return AsymTightBindingModel(H, S=self.S.copy())
 
-    def __mul__(self, fac: float) -> Self:
+    def __mul__(self, fac: float) -> 'AsymTightBindingModel':
         return AsymTightBindingModel(HermitianFourierSeries(self.H.neighbors, self.H.H_r * fac), S=self.S.copy())
 
 
 # free electron model (scaled to have hessian 1I) for testing
 # TODO add basis to allow for fcc and bcc for testing.
-def free_electron_model_orthogonal(a: float, b: float, c: float, neighbor_count: int, bands_per_direction: int) -> AsymTightBindingModel:
+def free_electron_model_orthogonal(a: float, b: float, c: float, neighbor_count: int, bands_per_direction: int) -> tuple[AsymTightBindingModel, float]:
     """Recreate a free electron model using a tight-binding model.
     The model represents H(k) = k^2, so it is completely unitless.
     The second return value is the energy unit in eV, assuming a, b, c are in Ångström.
@@ -925,6 +935,7 @@ def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symm
     see `/examples/fit_copper.py` for an example how to use this function.
     """
     assert add_bands_below >= 0 and add_bands_above >= 0 and start_neighbors_count >= 0
+    start = time.time()
 
     # the fitting requires (k_smpl_sym, ref_bands, band_weights, neighbors)
     # the best fitting protocol requires sorting k by distance to 0.
@@ -955,17 +966,21 @@ def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symm
     tb = best_tb
     # save checkpoint
     tb.save(f"asym_{name}_start.json")
-    print(f"saved asym_{name}_start.json")
+    ellapsed = time.time() - start
+    start = time.time()
+    print(f"saved asym_{name}_start.json (After {ellapsed:.3f}s)")
 
     # now fit with increasing amount of neighbors
     log = logger.OptimisationLogger(update_line=False)
     l, err = tb.error(k_smpl, ref_bands, band_weights, add_bands_below)
     log.add_data(0, l, err)
+    first = True
     while neighbors_count < len(neighbors_src):
-        if start_neighbors_count + 1 != neighbors_count:
+        if not first:
             new_neighbors = sym.complete_neighbors([neighbors_src[neighbors_count]])
             tb.H.add_neighbors(new_neighbors)
             neighbors_count += 1
+        first = False
         print("fit with neighbors", neighbors_src[:neighbors_count])
         for _ in range(10 if randomize else 1):
             # small randomisation seems to help convergence...?!?
@@ -975,5 +990,8 @@ def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symm
             # save checkpoint
             tb.save(f"asym_{name}_{neighbors_count}.json")
             print(f"saved asym_{name}_{neighbors_count}.json")
+        ellapsed = time.time() - start
+        start = time.time()
+        print(f"fit for this neighbor set completed in {ellapsed:.3f}s")
     return tb
 

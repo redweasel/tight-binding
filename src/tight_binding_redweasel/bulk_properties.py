@@ -25,6 +25,7 @@ antisym_tensor = np.array([
      [0, 0, 0]]
 ])
 
+# TODO constant mean free pathlength -> tau = l/v
 
 def conductivity(L_a):
     """Compute the conductivity from L_a from `KIntegral.transport_coefficients`, where only the first L^(0) is needed.
@@ -168,7 +169,7 @@ class KIntegral:
     The integrals are of different forms, so look for the `integrate..` functions for details.
     """
 
-    def __init__(self, dos_model: _dos.DensityOfStates, electrons: float, T: Sequence, N=None, errors=False, rtol=1e-4):
+    def __init__(self, dos_model: _dos.DensityOfStates, electrons: float, T: Sequence, N=None, rtol=1e-4):
         """Initialize an Integral over the bandstructure (k-space)
 
         Args:
@@ -176,10 +177,8 @@ class KIntegral:
             electrons (int): Number of electrons/filled bands in the model.
             T (list): Temperatures at which the integral is computed. Best at the highest T and at T=0, but interpolated physically inbetween.
             N (int, optional): The number of Fermi-surfaces to be used in the integration. Defaults to 5 if only one temperature is used, otherwise 9.
-            errors (bool, optional): If True, a second less precise integration will be done to compute the error of the result. Defaults to False.
         """
         assert all(T_ >= 0 for T_ in T), f"Only non negative temperatures are allowed, but got {T}"
-        self.errors = errors
         self.bandgap = dos_model.bandgap(electrons)
         self.metal = self.bandgap == 0.0
         self.model = dos_model.model
@@ -479,18 +478,20 @@ class FreeElectrons:
     def __call__(self, k_smpl: Iterable):
         k_smpl = np.asarray(k_smpl)[:, :, None] - self.k_neighbors[None, :, :]
         bands = self.fac * np.linalg.norm(k_smpl, axis=-2)**2
+        bands = np.sort(bands, axis=-1)
         if self.limit_count:
-            bands = np.sort(bands, axis=-1)[:, :self.limit_count]
+            bands = bands[:, :self.limit_count]
         return bands
 
     def bands_grad(self, k_smpl: Iterable):
         k_smpl = np.asarray(k_smpl)[:, :, None] - self.k_neighbors[None, :, :]
         bands = np.linalg.norm(k_smpl, axis=-2)**2
         grad = 2 * k_smpl
+        order = np.argsort(bands, axis=-1)
         if self.limit_count:
-            order = np.argsort(bands, axis=-1)[:, :self.limit_count]
-            bands = np.take_along_axis(bands, order, axis=-1)
-            grad = np.take_along_axis(grad, order[:, None, :], axis=-1)
+            order = order[:, :self.limit_count]
+        bands = np.take_along_axis(bands, order, axis=-1)
+        grad = np.take_along_axis(grad, order[:, None, :], axis=-1)
         return self.fac * bands, self.fac * grad
 
     def bands_grad_hess(self, k_smpl: Iterable):
@@ -498,8 +499,9 @@ class FreeElectrons:
         bands = np.linalg.norm(k_smpl, axis=-2)**2
         grad = 2 * k_smpl
         hess = np.array([np.eye(3) * 2] * len(self.k_neighbors[0])).T
+        order = np.argsort(bands, axis=-1)
         if self.limit_count:
-            order = np.argsort(bands, axis=-1)[:, :self.limit_count]
-            bands = np.take_along_axis(bands, order, axis=-1)
-            grad = np.take_along_axis(grad, order[:, None, :], axis=-1)
+            order = order[:, :self.limit_count]
+        bands = np.take_along_axis(bands, order, axis=-1)
+        grad = np.take_along_axis(grad, order[:, None, :], axis=-1)
         return self.fac * bands, self.fac * grad, self.fac * hess[None, ...]

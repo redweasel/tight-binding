@@ -1191,7 +1191,7 @@ lwrite_overlaps={lwrite_overlaps}
         # calling it "write_..." is misleading, as it's actually a flag "compute_..."
         k_points, bands, _, _ = self.read_bands_crystal(incomplete=True)
         if grid_size is None:
-            assert symmetry, "can only infer the grid_size when no symmetry is used."
+            assert not symmetry, "can only infer the grid_size when no symmetry is used."
             grid_size = round(np.cbrt(len(k_points)))
             assert len(k_points) == grid_size**3, "grid from data is likely reduced by symmetry"
         else:
