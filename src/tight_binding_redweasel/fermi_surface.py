@@ -4,7 +4,10 @@
 # plot the fermi surface
 import numpy as np
 from matplotlib import pyplot as plt
-from typing import Callable
+from collections.abc import Callable
+
+# for the class below we need additional dependencies
+from . import AsymTightBindingModel
 
 
 def fermi_surface(model: Callable, fermi_energy: float, k_smpl):
@@ -19,12 +22,12 @@ def fermi_surface(model: Callable, fermi_energy: float, k_smpl):
         (ndarray(), ndarray()): the non-normalized signed distance fields for the bands and the band indices
     """
     shape = np.shape(k_smpl)
-    la = model(np.reshape(k_smpl, (-1, 3))) - fermi_energy
+    bands = model(np.reshape(k_smpl, (-1, 3))) - fermi_energy
     volumes = []
     indices = []
-    for i in range(len(la[0])):
-        if np.any(la[:, i] > 0) and np.any(la[:, i] < 0):
-            volumes.append(np.reshape(la[:, i], shape[:-1]))
+    for i in range(len(bands[0])):
+        if np.any(bands[:, i] > 0) and np.any(bands[:, i] < 0):
+            volumes.append(np.reshape(bands[:, i], shape[:-1]))
             indices.append(i)
     return volumes, indices
 
@@ -34,7 +37,7 @@ def plot_3D_fermi_surface_to_ax(ax, model, fermi_energy, N=32, k_range=[-0.5, 0.
     import matplotlib
     import matplotlib.colors as mcolors
     from skimage import measure
-    x, y, z = np.meshgrid(*3*[np.linspace(*k_range, N)], indexing='ij')
+    x, y, z = np.meshgrid(*3 * [np.linspace(*k_range, N)], indexing='ij')  # type: ignore
     xyz = np.stack([x, y, z], axis=-1)
 
     # define light source
@@ -63,8 +66,7 @@ def plot_3D_fermi_surface_to_ax(ax, model, fermi_energy, N=32, k_range=[-0.5, 0.
         all_verts += 3e-2 * (all_verts - np.mean(all_verts, axis=1, keepdims=True))
         # Display resulting triangular mesh using Matplotlib. This can also be done
         # with mayavi (see skimage.measure.marching_cubes docstring).
-        mesh = Poly3DCollection(
-            all_verts/N * (k_range[1] - k_range[0]) + k_range[0], antialiased=False, linewidth=0, linestyle='None')
+        mesh = Poly3DCollection(all_verts / N * (k_range[1] - k_range[0]) + k_range[0], antialiased=False, linewidth=0, linestyle='None')
         mesh.set_edgecolor(None)
         mesh.set_facecolor(np.mean(all_rgb, axis=1))
         # TODO RendererBase.draw_gouraud_triangles exists
@@ -83,11 +85,10 @@ def plot_3D_fermi_surface(model, fermi_energy, N=32, elev=35, azim=20, k_range=[
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    plot_3D_fermi_surface_to_ax(
-        ax, model, fermi_energy, N, k_range)
+    plot_3D_fermi_surface_to_ax(ax, model, fermi_energy, N, k_range)
 
     ax.view_init(elev=elev, azim=azim)
-    
+
     plt.tight_layout(pad=0)
     plt.show()
 
@@ -96,7 +97,7 @@ def export_3D_fermi_surface(file, model, fermi_energy, N=32, k_range=[-0.5, 0.5]
     from skimage import measure
     import matplotlib.colors as mcolors
 
-    x, y, z = np.meshgrid(*3*[np.linspace(*k_range, N)], indexing='ij')
+    x, y, z = np.meshgrid(*3 * [np.linspace(*k_range, N)], indexing='ij')
     xyz = np.stack([x, y, z], axis=-1)
 
     # use default colors from matplotlib
@@ -146,35 +147,48 @@ illum 2
             vert_index += len(verts)
 
 
-# plot two cuts of the 3D fermi surface at k=(x,y,z) with given z
-def plot_2D_fermi_surface(model, fermi_energy, z=[0, 1/2], N=50, show=plt.show, k_range=[-0.5, 0.5]):
-    x_ = np.linspace(*k_range, N)
-    y_ = np.linspace(*k_range, N)
+def plot_2D_fermi_surface(model, fermi_energy, z=[0, 1 / 2], N=50, show=plt.show, k_range=[-0.5, 0.5], accelerate=False):
+    """plot two cuts of the 3D fermi surface at k=(x,y,z) with given z"""
+    x_ = np.linspace(*k_range, N)  # type: ignore
+    y_ = np.linspace(*k_range, N)  # type: ignore
     z_ = np.array([0.0])
     x, y, z_ = np.meshgrid(x_, y_, z_, indexing='ij')
-    models = model if "__iter__" in dir(model) else [model]
+    models = model if "__iter__" in dir(model) else [model]  # allow multiple models as input for comparison
+    if accelerate:
+        # if it has hamiltonian available, use it -> no colored bands in the plot
+        # Note, that most time is spent evaluating the model, so this is not always much of an improvement.
+        # Also, the precision around bandcrossings is much lower.
+        accelerate = "f" in dir(model)
     for z2 in z:
-        z_ = z_*0.0 + z2
+        z_ = z_ * 0.0 + z2
         k_smpl = np.stack([x, y, z_], axis=-1)
         shape = list(np.shape(k_smpl))
+        k_smpl = np.reshape(k_smpl, (-1, 3))  # be nice to the models and don't expect them to handle the more general axes
         for m, model in enumerate(models):
-            la = model(np.reshape(k_smpl, (-1, 3)))
-            color_index = 0
-            for i in range(len(la[0])):
-                volume = np.reshape(la[:, i], shape[:-1]) - fermi_energy
+            if not accelerate:
+                bands = model(k_smpl)
+                color_index = 0
+                for i in range(len(bands[0])):
+                    volume = np.reshape(bands[:, i], shape[:-1]) - fermi_energy
+                    if np.any(volume > 0) and np.any(volume < 0):
+                        plt.contour(x.reshape((N, N)), y.reshape((N, N)), volume.reshape((N, N)),
+                                    (0,), colors=f"C{color_index}", linestyles=["solid", "dashed", "dashdot", "dotted"][m % 4])
+                        # plt.clabel(cs, inline=1, fontsize=10) # for the case where more than 1 line is plotted
+                        # for c in cs.collections: # doesn't work with some versions of matplotlib
+                        #     c.set_label(f"Band {i}")
+                        color_index += 1
+            else:
+                h = model.f(k_smpl)
+                # no solving for eigenvalues is required here, however precision sometimes suffers.
+                volume = np.linalg.det(h - np.eye(len(h[0]))*fermi_energy)
                 if np.any(volume > 0) and np.any(volume < 0):
-                    cs = plt.contour(x.reshape((N, N)), y.reshape(
-                        (N, N)), volume.reshape((N, N)), (0,), colors=f"C{color_index}", linestyles=["solid", "dashed", "dashdot", "dotted"][m % 4])
-                    # plt.clabel(cs, inline=1, fontsize=10) # for the case where more than 1 line is plotted
-                    for c in cs.collections:
-                        c.set_label(f"Band {i}")
-                    # print(i)
-                    color_index += 1
+                    plt.contour(x.reshape((N, N)), y.reshape((N, N)), volume.reshape((N, N)),
+                                (0,), colors="k", linestyles=["solid", "dashed", "dashdot", "dotted"][m % 4])
         # set limits for the case, that there is no bands plotted
         plt.xlim(k_range[0], k_range[1])
         plt.ylim(k_range[0], k_range[1])
         plt.gca().set_aspect("equal")
         plt.title("(001)-plane cut")
-        # plt.legend(loc="lower right") # doesn't work... plots really weird lines instead of just colors
+        #plt.legend(loc="lower right") # doesn't work... plots really weird lines instead of just colors, or in other versions just a small empty box
         if show:
             show()

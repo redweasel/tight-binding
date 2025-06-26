@@ -1,6 +1,8 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from collections.abc import Callable
+
+from .loss import *
 from .symmetry import *
 from .linalg import *
 from . import logger
@@ -78,6 +80,11 @@ class BandStructureModel:
         assert pshape[0] > 0
 
     def copy(self) -> 'BandStructureModel':
+        """
+        Copy this bandstructure model. Note, this is a partially shallow copy and neighbors
+        and symmetry will still be linked with the original one, while the `params` will be deep copied.
+        This is a limitation of the way the general functions `f_i`,... are implemented.
+        """
         model = BandStructureModel(self.f_i, self.df_i, self.params.copy(), ddf_i=self.ddf_i)
         model.symmetrizer = self.symmetrizer
         model.sym = self.sym
@@ -202,26 +209,21 @@ class BandStructureModel:
         Returns:
             (float, ndarray(N_b)): the weighted loss (standard deviation) and the maximal error per band
         """
-        assert len(k_smpl) == len(ref_bands)
-        assert len(band_weights) == len(ref_bands[0])
-        bands = self.bands(k_smpl)
-        err = (bands[:, band_offset:][:, :len(ref_bands[0])] - ref_bands)
-        max_err = np.max(np.abs(err), axis=0)
-        err *= np.reshape(band_weights, (1, -1))
-        return np.linalg.norm(err) / len(k_smpl)**0.5, max_err
+        return model_error(self(k_smpl), ref_bands, band_weights, band_offset)
 
     def loss(self, k_smpl, ref_bands, band_weights, band_offset):
         """
         Returns:
             float: the weighted loss (standard deviation)
         """
-        assert len(k_smpl) == len(ref_bands)
-        assert len(band_weights) == len(ref_bands[0])
-        bands = self.bands(k_smpl)
-        err = (bands[:, band_offset:][:, :len(ref_bands[0])] -
-               ref_bands) * np.reshape(band_weights, (1, -1))
-        return np.linalg.norm(err) / len(k_smpl)**0.5
-        # return np.max(np.abs(bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands))
+        return model_loss(self(k_smpl), ref_bands, band_weights, band_offset)
+
+    def windowed_loss(self, k_smpl, ref_bands, min_energy, max_energy, allow_skipped_bands=False):
+        """
+        Returns:
+            float: the windowed loss (standard deviation)
+        """
+        return model_windowed_loss(self(k_smpl), ref_bands, min_energy, max_energy, allow_skipped_bands=allow_skipped_bands)
 
     def print_error(self, k_smpl, ref_bands, band_weights, band_offset, prefix="", log=None):
         """Print the loss and the maximal error per band"""
@@ -527,7 +529,7 @@ class BandStructureModel:
                     x = precond_func(x / len(k_smpl))
                     return np.einsum("nk,nid,njd,nd,nad,nbd,onp,opab->kij", c_i_E_mat_c, eigvecs, eigvecs_c, weights, eigvecs_c, eigvecs, fc_i, [x, np.swapaxes(x, -1, -2).conj()], optimize=combined_path)
                 # A(x) is close to a projection matrix
-                step = precond_func(conjugate_gradient_solve(A, b, err=np.linalg.norm(b) * 1e-3, max_i=max_cg_iterations))
+                step = precond_func(conjugate_gradient_solve(A, b, err=float(np.linalg.norm(b)) * 1e-3, max_i=max_cg_iterations))
                 step *= 1 / len(k_smpl)
 
                 self.params -= step

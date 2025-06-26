@@ -6,6 +6,7 @@ from . import logger
 from . import json_tb_format
 from . import wannier90_tb_format as tb_fmt
 from .linalg import *
+from .loss import *
 import time
 
 
@@ -142,7 +143,7 @@ class HermitianFourierSeries:
         old_len = len(self.neighbors)
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
-        return len(self.neighbors) - old_len
+        return old_len - len(self.neighbors)
 
     def limit_neighbor_count(self, max_count: int) -> int:
         """Remove all neighbors that exceed the targeted number of neighbors.
@@ -158,20 +159,23 @@ class HermitianFourierSeries:
         old_len = len(self.neighbors)
         self.neighbors = np.array(self.neighbors[sort])
         self.H_r = np.array(self.H_r[sort])
-        return len(self.neighbors) - old_len
+        return old_len - len(self.neighbors)
 
     def cleanup_neighbors(self, min_norm: float) -> int:
         """Remove all neighbors that have a coefficient matrix with a norm smaller than a given threshold.
 
         Args:
             min_norm (float): Minimal norm for the neighbor coefficients. Everything else gets cut off.
+
+        Returns:
+            int: number of removed neighbors
         """
         keep = np.linalg.norm(self.H_r, axis=(-1, -2)) >= min_norm
         old_len = len(self.neighbors)
         keep[0] = True  # always keep the 0
         self.neighbors = np.array(self.neighbors[keep])
         self.H_r = np.array(self.H_r[keep])
-        return len(self.neighbors) - old_len
+        return old_len - len(self.neighbors)
 
     def __add__(self, other: 'HermitianFourierSeries') -> 'HermitianFourierSeries':
         # do the direct sum of the two series.
@@ -323,24 +327,21 @@ class AsymTightBindingModel:
         Returns:
             (float, ndarray(N_b)): the weighted loss (standard deviation) and the maximal error per band
         """
-        assert len(k_smpl) == len(ref_bands)
-        assert len(band_weights) == len(ref_bands[0])
-        bands = self.bands(k_smpl)[:, band_offset:][:, :len(ref_bands[0])]
-        err = bands - ref_bands
-        max_err = np.max(np.abs(err), axis=0)
-        err *= np.reshape(band_weights, (1, -1))
-        return np.linalg.norm(err) / len(k_smpl)**0.5, max_err
+        return model_error(self(k_smpl), ref_bands, band_weights, band_offset)
 
     def loss(self, k_smpl, ref_bands, band_weights, band_offset):
         """
         Returns:
             float: the weighted loss (standard deviation)
         """
-        assert len(k_smpl) == len(ref_bands)
-        assert len(band_weights) == len(ref_bands[0])
-        bands = self.bands(k_smpl)[:, band_offset:][:, :len(ref_bands[0])]
-        err = (bands - ref_bands) * np.reshape(band_weights, (1, -1))
-        return np.linalg.norm(err) / len(k_smpl)**0.5
+        return model_loss(self(k_smpl), ref_bands, band_weights, band_offset)
+
+    def windowed_loss(self, k_smpl, ref_bands, min_energy, max_energy, allow_skipped_bands=False):
+        """
+        Returns:
+            float: the windowed loss (standard deviation)
+        """
+        return model_windowed_loss(self(k_smpl), ref_bands, min_energy, max_energy, allow_skipped_bands=allow_skipped_bands)
 
     def print_error(self, k_smpl, ref_bands, band_weights, band_offset, prefix="", log=None):
         """Print the loss and the maximal error per band"""

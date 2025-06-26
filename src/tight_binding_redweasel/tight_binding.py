@@ -2,6 +2,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from .symmetry import *
 from .unitary_representations import *
+from .loss import *
 
 def random_hermitian(n):
     h = (np.random.random((n, n)) * 2 - 1) + 1j * (2 * np.random.random((n, n)) - 1)
@@ -296,17 +297,14 @@ class TightBindingModel:
                 mat += np.asarray(self.ddf_i(k, i))[...,None,None] * params[i]
         return mat
     
-    # returns the weighted loss (standard deviation) and the maximal error per band
     def error(self, k_smpl, ref_bands, band_weights, band_offset):
-        bands = self.bands(k_smpl)
-        err = (bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands)
-        max_err = np.max(np.abs(err), axis=0)
-        err *= np.reshape(band_weights, (1, -1))
-        return np.linalg.norm(err) / len(k_smpl)**0.5, max_err
+        return model_error(self(k_smpl), ref_bands, band_weights, band_offset)
 
-    def loss(self, k_smpl, ref_bands, weights, band_offset):
-        bands = self.bands(k_smpl)
-        return np.linalg.norm((bands[:,band_offset:][:,:len(ref_bands[0])] - ref_bands) * np.reshape(weights, (1, -1))) / len(k_smpl)**0.5
+    def loss(self, k_smpl, ref_bands, band_weights, band_offset):
+        return model_loss(self(k_smpl), ref_bands, band_weights, band_offset)
+
+    def windowed_loss(self, k_smpl, ref_bands, min_energy, max_energy, allow_skipped_bands=False):
+        return model_windowed_loss(self(k_smpl), ref_bands, min_energy, max_energy, allow_skipped_bands=allow_skipped_bands)
 
     def optimize(self, k_smpl, k_smpl_weights, ref_bands, weights, band_offset, iterations, batch_div=1, learning_rate=1.0, train_k0=True):
         N = np.shape(self.params)[1]

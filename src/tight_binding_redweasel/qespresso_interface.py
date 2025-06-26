@@ -1178,7 +1178,7 @@ lwrite_overlaps={lwrite_overlaps}
     # prepare the wannierization parameters and check them
     # wannier_count is the number of bands in the result if disentanglement is used. Otherwise this is choosen automatically to use all bands.
     # run this after nscf_nosym()
-    def prepare_wannier(self, max_disentangle_energy, max_frozen_energy, wannier_count=None, grid_size=None, iterations=100, disentangle_iterations=500, projections="random", exclude_bands=None, symmetry=False, write_tb=False, write_wannier_functions=False):
+    def prepare_wannier(self, disentangle_energy_window: tuple[float, float], frozen_energy_window: tuple[float, float], wannier_count=None, grid_size=None, iterations=100, disentangle_iterations=500, projections="random", exclude_bands=None, symmetry=False, write_tb=False, write_wannier_functions=False):
         # the difficult part is the "projections" part
         # that part is about which orbitals are used where
         # using my HamiltonianSymmetry I can accumulate all the information for it.
@@ -1212,10 +1212,10 @@ timing_level = 2
 num_dump_cycles = 10
 num_print_cycles = 10
 
-dis_win_max = {max_disentangle_energy:.3f}
-!dis_win_min = 11.0
-{f"dis_froz_max = {max_frozen_energy:.3f}" if not symmetry else ""}
-!dis_froz_min = 11.0
+dis_win_min = {disentangle_energy_window[0]}
+dis_win_max = {disentangle_energy_window[1]}
+{f'''dis_froz_min = {frozen_energy_window[0]}
+dis_froz_max = {frozen_energy_window[1]}''' if not symmetry else ""}
 dis_num_iter = {disentangle_iterations}
 dis_mix_ratio   = 1.0
 dis_conv_tol = 1e-6
