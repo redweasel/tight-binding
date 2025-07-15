@@ -674,31 +674,50 @@ class DensityOfStates:
         return np.array([(mu[inv_order[i] * 2 + 1] - mu[inv_order[i] * 2]) / (2 * h) if T_smpl[i] > 0 else 0 for i in range(len(T_smpl))])
 
     # heat capacity at constant volume in eV/K
-    def heat_capacity(self, mu: float, T: float, N=256, spin_factor=2) -> float:
-        # The heat capacity is du/dT where u is the energy per unit cel
-        # u = integral e*rho(e)*f(e) de = -integral N(e)*(f(e)+e df/de(e)) de
+    def heat_capacity(self, electrons: float, T: float, N=256, spin_factor=2, h=1e-4) -> float:
+        # The heat capacity is du/dT where u is the energy per unit cell
+        # u = integral e f(e) rho(e) de
+        # = [...] - integral (f + e df/de) N(e) de
         # the temperature derivative can be broken up into the part from the change in chemical potential
         # and the part from the change f(e)
 
-        # du/dT = integral rho(e)*e*(e-mu)/T*(-df/de(e)) de
+        # du/dT = integral rho(e)*e*(e - mu(T) + mu'(T)*k_B*T)/T*(-df/de(e)) de
+        # = integral rho(e)*e*(e - mu2)/T*(-df/de(e)) de
         # for 3D bandstructures, rho(e) is continuous,
-        # TODO the following is WRONG!
         # so this can solved using a piecewise linear interpolaton of rho(e).
+        # du/dT = 1/T * integral rho(e)*e*(e - mu(T) + mu'(T)*k_B*T) * w de
         # the resulting integral has terms up to e^2, for which the analytical
         # solution is implemented. To use it, the substitution e = x/beta + mu must be made.
-        # -> e*(e-mu) -> (x/beta + mu)*x/beta = x^2/beta^2 + mu*x/beta
+        # -> e*(e-mu2) -> (x/beta + mu)*(x/beta - mu'*k_B*T) = x^2/beta^2 + (mu-mu'*k_B*T)*x/beta + mu*mu'*k_B*T
+        # Note that rho should be approximated linear as rho(e) = a*(e-e0)+b, which makes the integral cubic in x.
+        # Then, one has to Taylor to get a quadratic approximation centered in the relevant interval.
 
+        # TODO allow more than one T to be used!
+        if T <= 0.0:
+            return 0.0
+        
         e0, e1 = self.energy_range()
-        mu = float(mu)
+        # numerical derivative of the chemical potential
+        dT = h * T
+        mu = self.chemical_potential(electrons, [T - dT, T, T + dT], N=N)
+        seebeck = (mu[2] - mu[0]) / (2 * dT) * k_B * T
+        mu = mu[1]
+        mu2 = mu - seebeck
         
         beta = 1 / (k_B * T)  # 1/eV
         def accumulate(e_smpl, rho):
             def segment(e0, e1, y0, y1):
-                #dx = e1 - e0
-                #dy = y1 - y0
-                #a = dy / dx
+                dx = e1 - e0
+                dy = y1 - y0
+                em = (e0 + e1) / 2
+                a = dy / dx
                 b = (y0 + y1) / 2
-                return b * int_poly((e0 - mu) * beta, (e1 - mu) * beta, 1/beta**2, mu/beta, 0)
+                # rho(e) = a*(e-em)+b
+                a0 = (a*(2*em - mu + seebeck) + b)/beta**2
+                b0 = (a*(-3*em**2 - em*seebeck - 2*mu**2 + mu*(5*em + 2*seebeck)) + b*(mu + seebeck))/beta
+                c0 = a*(em**3 - mu**3 + mu**2*(3*em + seebeck) + mu*(-3*em**2 - em*seebeck)) + b*mu*seebeck
+                return int_poly((e0 - mu) * beta, (e1 - mu) * beta, a0, b0, c0)
+            # above and below energy range, this is just zero, so no extrapolation needed.
             return np.sum(segment(e_smpl[:-1], e_smpl[1:], rho[:-1], rho[1:]))
         # calculate custom distribution for precision/cost balance
         e_smpl = _samples(e0, e1, mu, beta, N)

@@ -209,6 +209,9 @@ class CubesSmearing(SmearingMethod):
             # I think that is not because of the gradients,
             # but because the averaging of the values (without gradients)
             # had the effect of implicitly considering second order effects.
+            # TODO reevaluate the above statement
+            if not wrap:
+                raise NotImplementedError("Non-wrapping with gradients requires cube weights, which are currently not implemented.")
         L = self.B @ np.diag(self.step_sizes)
         normal = np.reshape(self.cubes[1:], (3, -1)).T
         basis = np.zeros((len(normal), 3, 3)) + np.eye(3)
@@ -404,6 +407,8 @@ class SphereSmearing(SmearingMethod):
             # the interpolated version usually overestimates the fermi-energy, while this usually underestimates it.
             # -> a mix between the two methods will probably be superior!
             # TODO test!
+            if not wrap:
+                raise NotImplementedError("Non-wrapping with gradients requires cube weights, which are currently not implemented.")
 
     def volume_dvolume(self, value: float):
         volume, dvolume = unit_sphere_cut(value - self.values, *self.grads)

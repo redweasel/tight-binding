@@ -21,5 +21,3 @@ def test_1d_integration():
     err = np.linalg.norm(res / correct_results - 1)
     res = list(res)
     assert err < 2e-7, f"incorrect result {res} instead of {correct_results} (error {err})"
-
-test_1d_integration()
