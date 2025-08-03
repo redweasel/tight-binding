@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from tight_binding_redweasel import (BandStructureModel, Symmetry, dos, bulk)
+from tight_binding_redweasel import (dos, bulk)
 
 def test_dos():
     free_electron_model = bulk.FreeElectrons(k_neighbors=[(0,0,0), (0,0,1), (0,1,0), (1,0,0), (0,0,-1), (0,-1,0), (-1,0,0)])

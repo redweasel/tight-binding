@@ -57,16 +57,20 @@ class SmearingMethod:
 # huge epsilon needed to make the axis aligned case work ok
 EPSILON = 1e-4
 
+def cube_precomp(ax, ay, az):
+    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
+    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
+    ax /= norm; ay /= norm; az /= norm
+    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
+    return ax, ay, az, norm
+
 # cheap approximation of volume in cuboid using cube cuts
-def cube_cut_volume(a0, ax, ay, az):
-    # approximate the trilinear integral with correct first order behavior
+def cube_cut_volume(a0, ax, ay, az, norm):
     # simplify using abs (also on a0 to reduce numerical cancelation and get more 0 multiplications)
     a0_sign = a0 < 0.0
-    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
+    a0 = np.abs(a0) # copy array!
     # cube cuts = sum of right angle tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 /= norm
-    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
+    a0 /= norm
     a1 = (-ax + ay + az) / 2
     a2 = ( ax - ay + az) / 2
     a3 = ( ax + ay - az) / 2
@@ -80,13 +84,9 @@ def cube_cut_volume(a0, ax, ay, az):
     return np.where(a0_sign, volume, 1.0 - volume)
 
 # cheap approximation using cube cuts (direct derivative of cube_cut_volume, not the actual area!)
-def cube_cut_dvolume(a0, ax, ay, az):
-    # approximate the trilinear integral with correct first order behavior
-    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
-    # cube cuts = sum of tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 /= norm
-    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
+def cube_cut_dvolume(a0, ax, ay, az, norm):
+    a0 = np.abs(a0) # copy array!
+    a0 /= norm
     a1 = (-ax + ay + az) / 2
     a2 = ( ax - ay + az) / 2
     a3 = ( ax + ay - az) / 2
@@ -100,14 +100,10 @@ def cube_cut_dvolume(a0, ax, ay, az):
     return np.where(a0 < 3**.5/2, area / (2 * axyzn), 0.0)
 
 # cheap approximation of volume and area in cuboid using cube cuts
-def cube_cut_volume_dvolume(a0, ax, ay, az):
-    # approximate the trilinear integral with correct first order behavior
-    # cube cuts = sum of tetrahedrons
+def cube_cut_volume_dvolume(a0, ax, ay, az, norm):
     a0_sign = a0 < 0.0
-    a0, ax, ay, az = np.abs(a0), np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 /= norm
-    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
+    a0 = np.abs(a0) # copy array!
+    a0 /= norm
     a1 = (-ax + ay + az) / 2
     a2 = ( ax - ay + az) / 2
     a3 = ( ax + ay - az) / 2
@@ -125,14 +121,8 @@ def cube_cut_volume_dvolume(a0, ax, ay, az):
     return np.where(a0_sign, volume, 1.0 - volume), dvolume
 
 # center of mass of the surface of a cube cut
-def cube_cut_area_com(a0, ax, ay, az):
-    # approximate the trilinear integral with correct first order behavior
-    sx, sy, sz = np.sign(ax), np.sign(ay), np.sign(az)
-    ax, ay, az = np.abs(ax), np.abs(ay), np.abs(az) # copy arrays!
-    # cube cuts = sum of tetrahedrons
-    norm = (ax**2 + ay**2 + az**2)**0.5 + 1e-40
-    ax /= norm; ay /= norm; az /= norm; a0 = a0 / norm
-    ax = np.maximum(ax, EPSILON); ay = np.maximum(ay, EPSILON); az = np.maximum(az, EPSILON)
+def cube_cut_area_com(a0, ax, ay, az, norm, sx, sy, sz):
+    a0 = a0 / norm
     v0 = np.maximum(0, ( ax + ay + az)/2 + a0)
     v1 = np.maximum(0, (-ax + ay + az)/2 + a0)
     v2 = np.maximum(0, ( ax - ay + az)/2 + a0)
@@ -153,7 +143,7 @@ def cube_cut_area_com(a0, ax, ay, az):
     com +=  v5[...,None]**2 * (np.reshape(( 1, -1,  1), shape)/2 + d * v5[...,None])
     com +=  v6[...,None]**2 * (np.reshape(( 1,  1, -1), shape)/2 + d * v6[...,None])
     com -=  v7[...,None]**2 * (np.reshape(( 1,  1,  1), shape)/2 + d * v7[...,None])
-    com *= np.stack((sx, sy, sz), axis=-1)
+    com *= np.sign(np.stack((sx, sy, sz), axis=-1))
     com = com / np.where(area[...,None] != 0, area[...,None], np.inf)
     axyz = ax * ay * az
     area = np.where(np.abs(axyz) != 0, area / (2 * axyz), 0)
@@ -196,11 +186,9 @@ class CubesSmearing(SmearingMethod):
             #axyz = (-a[0] + a[1] + a[2] - a[3] + a[4] - a[5] - a[6] + a[7])
             # TODO one could take the second derivative along the gradient into account here!
             #  -> just a correction to a0 depending on the surface value
-            # TODO move the normalisation and other calculations that only involve ax, ay, and az into here -> add "norm" as returned cache
-            if wrap:
-                self.cubes = a0, ax, ay, az
-            else:
-                self.cubes = a0[:-1,:-1,:-1], ax[:-1,:-1,:-1], ay[:-1,:-1,:-1], az[:-1,:-1,:-1]
+            if not wrap:
+                a0, ax, ay, az = a0[:-1,:-1,:-1], ax[:-1,:-1,:-1], ay[:-1,:-1,:-1], az[:-1,:-1,:-1]
+            self.cubes = a0, ax, ay, az
         else:
             # gradients are in k_space, -> convert to crystal space!
             # crystal space is [0,1]^3 so unit volume.
@@ -212,28 +200,33 @@ class CubesSmearing(SmearingMethod):
             # TODO reevaluate the above statement
             if not wrap:
                 raise NotImplementedError("Non-wrapping with gradients requires cube weights, which are currently not implemented.")
-        L = self.B @ np.diag(self.step_sizes)
-        normal = np.reshape(self.cubes[1:], (3, -1)).T
-        basis = np.zeros((len(normal), 3, 3)) + np.eye(3)
-        basis[:,:,0] = normal
-        basis = np.linalg.qr(basis).Q
-        basis2 = np.zeros((len(normal), 3, 3)) + np.eye(3)
-        basis2[:,:,0] = normal @ np.linalg.inv(L)
-        basis2 = np.linalg.qr(basis2).Q
-        self.scale = np.abs(np.linalg.det(np.swapaxes(basis2[:,:,1:], -1, -2) @ L @ basis[:,:,1:]))
+        self.scale = None
+        # precompute normalisation
+        self.cubes = self.cubes[0], *cube_precomp(*self.cubes[1:]), *self.cubes[1:]
 
     def volume(self, value: float):
-        return cube_cut_volume(value - self.cubes[0], *self.cubes[1:])
+        return cube_cut_volume(value - self.cubes[0], *self.cubes[1:5])
 
     def dvolume(self, value: float):
-        return cube_cut_dvolume(value - self.cubes[0], *self.cubes[1:])
+        return cube_cut_dvolume(value - self.cubes[0], *self.cubes[1:5])
     
     def volume_dvolume(self, value: float):
-        volume, dvolume = cube_cut_volume_dvolume(value - self.cubes[0], *self.cubes[1:])
+        volume, dvolume = cube_cut_volume_dvolume(value - self.cubes[0], *self.cubes[1:5])
         return volume, dvolume
 
     def samples(self, value: float):
-        area, x = cube_cut_area_com(value - self.cubes[0], *self.cubes[1:])
+        if self.scale is None:
+            # precompute area scaling
+            L = self.B @ np.diag(self.step_sizes)
+            normal = np.reshape(self.cubes[5:8], (3, -1)).T
+            basis = np.zeros((len(normal), 3, 3)) + np.eye(3)
+            basis[:,:,0] = normal
+            basis = np.linalg.qr(basis).Q # TODO apparently this is really slow?
+            basis2 = np.zeros((len(normal), 3, 3)) + np.eye(3)
+            basis2[:,:,0] = normal @ np.linalg.inv(L)
+            basis2 = np.linalg.qr(basis2).Q
+            self.scale = np.abs(np.linalg.det(np.swapaxes(basis2[:,:,1:], -1, -2) @ L @ basis[:,:,1:]))
+        area, x = cube_cut_area_com(value - self.cubes[0], *self.cubes[1:8])
         # transform x into the the cubes
         x *= self.step_sizes
         x += self.centers
@@ -246,12 +239,111 @@ class CubesSmearing(SmearingMethod):
         x = x @ self.B.T
         # transform the areas into the correct coordinates
         # -> areas transform with the scaling (det) in the subspace perpendicular to the normal
-        # TODO move all the scale computation to __init__ as the normals are already known there
         w *= self.scale[select]
-        # TODO divide w by the correct number from the number of cubes in the model
-        # TODO how does the area change with scaling? This seems bad!
         # crystal space gradients
-        grads = np.reshape(self.cubes[1:], (3, -1)).T[select] / self.step_sizes
+        grads = np.reshape(self.cubes[5:8], (3, -1)).T[select] / self.step_sizes
+        # transform to reciprocal space gradients
+        grads = grads @ np.linalg.inv(self.B)
+        return x, grads, w
+
+
+# Neville Extrapolation, linear in T
+def extrapolate_poly(T, p=2):
+    # TODO test other extrapolation methods!
+    for m in range(1, len(T)):
+        for k in range(0, len(T) - m):
+            T[k] = T[k+1] + (T[k+1] - T[k]) / ((2**p)**m - 1)
+    return T[0]
+
+
+class ExtraCubesSmearing(SmearingMethod):
+    """
+    Smearing method based on the volume of cubes, just like `CubesSmearing`,
+    but using extrapolation for each individual cell.
+    """
+    def __init__(self, positions, A, values, wrap=False):
+        self.B = np.linalg.inv(A).T
+        # k_smpl are in reciprocal space coordinates.
+        # self.centers should be in crystal coordinates.
+        self.centers = positions @ A
+        # determine stepsizes from centers (should be a rectilinear grid)
+        self.step_sizes = np.array([
+            self.centers[1,0,0][0] - self.centers[0,0,0][0],
+            self.centers[0,1,0][1] - self.centers[0,0,0][1],
+            self.centers[0,0,1][2] - self.centers[0,0,0][2],
+        ])
+        self.centers += self.step_sizes * 0.5
+        if not wrap:
+            self.centers = self.centers[:-1,:-1,:-1]
+        # compute two grid scales for extrapolation
+        assert self.centers.shape[0] % 2 == 0 and self.centers.shape[1] % 2 == 0 and self.centers.shape[2] % 2 == 0, "grid for extrapolation needs to have an even number of cubes"
+        self.cubes = []
+        for i in [1, 2]:
+            a = [values[::i,::i,::i], np.roll(values[::i,::i,::i], -1, axis=0)]
+            a.extend([np.roll(vertex, -1, axis=1) for vertex in a])
+            a.extend([np.roll(vertex, -1, axis=2) for vertex in a])
+            a0 = (a[0] + a[1] + a[2] + a[3] + a[4] + a[5] + a[6] + a[7]) / 8
+            ax = (-a[0] + a[1] - a[2] + a[3] - a[4] + a[5] - a[6] + a[7]) / 4
+            ay = (-a[0] - a[1] + a[2] + a[3] - a[4] - a[5] + a[6] + a[7]) / 4
+            az = (-a[0] - a[1] - a[2] - a[3] + a[4] + a[5] + a[6] + a[7]) / 4
+            if not wrap:
+                a0, ax, ay, az = a0[:-1,:-1,:-1], ax[:-1,:-1,:-1], ay[:-1,:-1,:-1], az[:-1,:-1,:-1]
+            # precompute normalisation
+            self.cubes.append((a0, *cube_precomp(ax, ay, az), ax, ay, az))
+        self.scale = None
+
+    def volume(self, value: float):
+        res = [cube_cut_volume(value - cubes[0], *cubes[1:5]) for cubes in reversed(self.cubes)]
+        # downscale the higher resolution mesh
+        res[1] = (res[1][::2,::2,::2] + res[1][1::2,::2,::2] + res[1][::2,1::2,::2] + res[1][::2,::2,1::2] +
+                  res[1][1::2,1::2,1::2] + res[1][::2,1::2,1::2] + res[1][1::2,::2,1::2] + res[1][1::2,1::2,::2]) / 8
+        # this extrapolation can be more efficiently done after the sum, as it's linear!
+        # TODO either find a better non linear extrapolation method, or move it out again.
+        # However it makes no sense to move it into DoS, instead I would compute the mean here and
+        # thereby make some DoS functions not working.
+        return extrapolate_poly(res, p=2)
+
+    def dvolume(self, value: float):
+        res = [cube_cut_dvolume(value - cubes[0], *cubes[1:5]) for cubes in reversed(self.cubes)]
+        res[1] = (res[1][::2,::2,::2] + res[1][1::2,::2,::2] + res[1][::2,1::2,::2] + res[1][::2,::2,1::2] +
+                  res[1][1::2,1::2,1::2] + res[1][::2,1::2,1::2] + res[1][1::2,::2,1::2] + res[1][1::2,1::2,::2]) / 8
+        return extrapolate_poly(res, p=2)
+    
+    def volume_dvolume(self, value: float):
+        res = [list(cube_cut_volume_dvolume(value - cubes[0], *cubes[1:5])) for cubes in reversed(self.cubes)]
+        for i in [0, 1]:
+            res[1][i] = (res[1][i][::2,::2,::2] + res[1][i][1::2,::2,::2] + res[1][i][::2,1::2,::2] + res[1][i][::2,::2,1::2] +
+                         res[1][i][1::2,1::2,1::2] + res[1][i][::2,1::2,1::2] + res[1][i][1::2,::2,1::2] + res[1][i][1::2,1::2,::2]) / 8
+        return extrapolate_poly([res[0][0], res[1][0]], p=2), extrapolate_poly([res[0][1], res[1][1]], p=2)
+
+    def samples(self, value: float):
+        if self.scale is None:
+            # precompute area scaling for the fine grid
+            L = self.B @ np.diag(self.step_sizes)
+            normal = np.reshape(self.cubes[0][5:8], (3, -1)).T
+            basis = np.zeros((len(normal), 3, 3)) + np.eye(3)
+            basis[:,:,0] = normal
+            basis = np.linalg.qr(basis).Q
+            basis2 = np.zeros((len(normal), 3, 3)) + np.eye(3)
+            basis2[:,:,0] = normal @ np.linalg.inv(L)
+            basis2 = np.linalg.qr(basis2).Q
+            self.scale = np.abs(np.linalg.det(np.swapaxes(basis2[:,:,1:], -1, -2) @ L @ basis[:,:,1:]))
+        area, x = cube_cut_area_com(value - self.cubes[0][0], *self.cubes[0][1:8])
+        # transform x into the the cubes
+        x *= self.step_sizes
+        x += self.centers
+        x = x.reshape(-1, 3)
+        w = np.ravel(area)
+        select = w > 1e-4
+        w = w[select]
+        x = x[select]
+        # transform crystal to reciprocal coordinates
+        x = x @ self.B.T
+        # transform the areas into the correct coordinates
+        # -> areas transform with the scaling (det) in the subspace perpendicular to the normal
+        w *= self.scale[select]
+        # crystal space gradients
+        grads = np.reshape(self.cubes[0][5:8], (3, -1)).T[select] / self.step_sizes
         # transform to reciprocal space gradients
         grads = grads @ np.linalg.inv(self.B)
         return x, grads, w

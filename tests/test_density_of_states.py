@@ -9,9 +9,9 @@ def test_cubic_density_of_states():
     model = BandStructureModel.init_tight_binding(Symmetry.cubic(True), ((0,0,0), (0,0,1)), 1, exp=False)
     model.params[1] = t/48*3/2
 
-    for smearing in ["cubes", "tetras", "spheres"]:
+    for smearing in ["cubes", "cubes+", "tetras", "spheres"]:
         # 15 -> the minimum band value is not in the grid
-        for N in [15, 16]:
+        for N in [15, 16] if not "cubes+" else [12, 14]:
             dos_model = dos.DensityOfStates(model, N=N, smearing=smearing)
             assert abs(dos_model.bands_range[0][0] - -3) < 1e-8, f"lower band range was wrong/inprecise: {dos_model.bands_range[0][0]}"
             assert abs(dos_model.bands_range[0][1] - 3) < 1e-8, f"upper band range was wrong/inprecise: {dos_model.bands_range[0][1]}"
@@ -102,9 +102,9 @@ def test_linear_density_of_states():
 
         linear = LinearModel()
         # can't really test "spheres" here as they are not exactly matching the geometry of the problem like these
-        for smearing in ["cubes", "tetras"]:
+        for smearing in ["cubes", "cubes+", "tetras"]:
             # TODO test with different ranges ([0.0, 0.5] and [-0.5, 0.5] and [0, 1])
-            dos_model = dos.DensityOfStates(linear, N=17, ranges=((0.0, 0.5),)*3, wrap=False, smearing=smearing)
+            dos_model = dos.DensityOfStates(linear, N=18, ranges=((0.0, 0.5),)*3, wrap=False, smearing=smearing)
             assert np.linalg.norm(np.array(dos_model.bands_range)-offset_b - [(1.0, 2.5), (2.0, 5.0), (3.0, 7.5), (4.0, 10.0)]) < 1e-10, f"band ranges are detected wrong: {dos_model.bands_range}"
             energy_smpl, _states, density = dos_model.full_curve(N=30)
 
@@ -128,7 +128,7 @@ def test_linear_density_of_states():
             assert np.linalg.norm(density_bands2 - density_bands) < 1e-12, f"band resolved dos doesn't match, error {np.linalg.norm(density_bands2 - density_bands)}"
             # TODO compare states as well!
 
-            if smearing != "cubes":
+            if smearing == "tetras":
                 # fermi surface samples are not yet implemented for tetras
                 continue
 
@@ -186,13 +186,12 @@ def test_cut_functions():
                 assert np.linalg.norm(data0_eq - data0) == 0.0
                 error = np.max(np.abs(np.array(data0) - data1))
                 assert error < 1e-4, f"tetrahedron error was {error:.2e} for test {xs}, {ys}, {zs}"
-
                 data0 = []
                 data1 = []
                 for a0 in a0_smpl:
-                    v0 = dos.cube_cut_dvolume(a0, 0.1*xs, 0.9*ys, 0.7*zs)
-                    v1 = (dos.cube_cut_volume(a0 + 1e-5, 0.1*xs, 0.9*ys, 0.7*zs) -
-                        dos.cube_cut_volume(a0 - 1e-5, 0.1*xs, 0.9*ys, 0.7*zs)) / 2e-5
+                    v0 = dos.cube_cut_dvolume(a0, *dos.cube_precomp(0.1*xs, 0.9*ys, 0.7*zs))
+                    v1 = (dos.cube_cut_volume(a0 + 1e-5, *dos.cube_precomp(0.1*xs, 0.9*ys, 0.7*zs)) -
+                        dos.cube_cut_volume(a0 - 1e-5, *dos.cube_precomp(0.1*xs, 0.9*ys, 0.7*zs))) / 2e-5
                     data0.append(v0)
                     data1.append(v1)
                 error = np.max(np.abs(np.array(data0) - data1))

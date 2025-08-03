@@ -220,7 +220,7 @@ class DensityOfStates:
             A (arraylike[3, 3]): Matrix with lattice vectors in its columns. Used for computing the k-grid for sampling the model. Defaults to the unit matrix.
             ranges (arraylike[3, 2], optional): The ranges for each axis in crystal space. This should only be changed to consider symmetries, as the whole cell will still be considered to have volume 1. Defaults to ((-0.5, 0.5), (-0.5, 0.5), (-0.5, 0.5)).
             wrap (bool, optional): _description_. Defaults to True.
-            smearing (str, optional): One of the options {"cubes", "tetras", "spheres"}. For details look at the class `SmearingMethod`. Defaults to "cubes".
+            smearing (str, optional): One of the options {"cubes", "cubes+", "tetras", "spheres"}. For details look at the class `SmearingMethod`. Defaults to "cubes".
             use_gradients (bool, optional): If the smearing supports it, use analytic gradients instead of interpolated gradients for the smearing calculations. Defaults to False.
             midpoint (bool, optional): Shift the k-points by half a cell, such that the borders are not included. Defaults to False.
             check (bool or float, optional): If not False, check the model for correct periodicity. If a float is given instead of a bool, it is interpreted as the tolerance for the check. Defaults to True.
@@ -304,6 +304,10 @@ class DensityOfStates:
                 self.smearing = [CubesSmearing(self.k_smpl, A=A, values=self.bands[..., i], grads=grads[..., i], wrap=wrap) for i in range(len(self.bands_range))]
             else:
                 self.smearing = [CubesSmearing(self.k_smpl, A=A, values=self.bands[..., i], wrap=wrap) for i in range(len(self.bands_range))]
+        elif smearing == "cubes+":
+            if use_gradients:
+                raise NotImplementedError("use_gradients is not implemented for extrapolated cubes smearing")
+            self.smearing = [ExtraCubesSmearing(self.k_smpl, A=A, values=self.bands[..., i], wrap=wrap) for i in range(len(self.bands_range))]
         elif smearing == "spheres":
             if use_gradients:
                 # with gradients (a lot less regular, ig the averaged gradient are really needed)
@@ -681,14 +685,15 @@ class DensityOfStates:
         # the temperature derivative can be broken up into the part from the change in chemical potential
         # and the part from the change f(e)
 
-        # du/dT = integral rho(e)*e*(e - mu(T) + mu'(T)*k_B*T)/T*(-df/de(e)) de
+        # d/dT f(beta*(e-mu)) = beta*f'(beta*(e-mu)) * (-1/T*(e-mu)-mu')
+        # du/dT = integral rho(e)*e*(e - mu(T) + mu'(T)*T)/T*(-df/de(e)) de
         # = integral rho(e)*e*(e - mu2)/T*(-df/de(e)) de
         # for 3D bandstructures, rho(e) is continuous,
         # so this can solved using a piecewise linear interpolaton of rho(e).
-        # du/dT = 1/T * integral rho(e)*e*(e - mu(T) + mu'(T)*k_B*T) * w de
+        # du/dT = 1/T * integral rho(e)*e*(e - mu(T) + mu'(T)*T) * w de
         # the resulting integral has terms up to e^2, for which the analytical
         # solution is implemented. To use it, the substitution e = x/beta + mu must be made.
-        # -> e*(e-mu2) -> (x/beta + mu)*(x/beta - mu'*k_B*T) = x^2/beta^2 + (mu-mu'*k_B*T)*x/beta + mu*mu'*k_B*T
+        # -> e*(e-mu2) -> (x/beta + mu)*(x/beta - mu'*T) = x^2/beta^2 + (mu-mu'*T)*x/beta + mu*mu'*T
         # Note that rho should be approximated linear as rho(e) = a*(e-e0)+b, which makes the integral cubic in x.
         # Then, one has to Taylor to get a quadratic approximation centered in the relevant interval.
 
@@ -700,9 +705,8 @@ class DensityOfStates:
         # numerical derivative of the chemical potential
         dT = h * T
         mu = self.chemical_potential(electrons, [T - dT, T, T + dT], N=N)
-        seebeck = (mu[2] - mu[0]) / (2 * dT) * k_B * T
+        seebeck = (mu[2] - mu[0]) / (2 * dT) * T
         mu = mu[1]
-        mu2 = mu - seebeck
         
         beta = 1 / (k_B * T)  # 1/eV
         def accumulate(e_smpl, rho):
@@ -755,8 +759,6 @@ class DensityOfStates:
         """
         assert self.model is not None, "This function needs an underlying model"
         assert normalize in [None, "band", "total"], "normalize needs to be None, 'band' or 'total'"
-        if not isinstance(self.smearing[0], CubesSmearing):
-            raise NotImplementedError("This function is not yet implemented for anything but cubes")
         # use cube_cut_area_com() to get points, then
         # use the approximate gradients to do a newton step
         # to get the points even closer to the fermi surface.
@@ -828,7 +830,7 @@ class DensityOfStates:
             else:
                 raise NotImplementedError("No implementation to get gradients from the lattice.")
             # TODO WRONG for A != 1I
-            ax, ay, az = tuple(grads.T * self.step_sizes[:, None])  # transformed for cubes
+            ax, ay, az = grads.T * self.step_sizes[:, None]  # transformed for cubes
             w = np.zeros(len(weights))
             n = 2
             offsets = np.stack(np.meshgrid(*3 * [np.linspace(-0.5, 0.5, n, endpoint=False)])).reshape(-1, 3)
@@ -842,11 +844,12 @@ class DensityOfStates:
                 # TODO figure out the sign here (for weight_by_gradient=True ???)
                 a0 = np.sum(grads * self.step_sizes * (cube_indices * self.step_sizes - points), -1)[select]
                 # TODO figure out how to compute the area for cuboids instead of cubes
+                ax_, ay_, az_ = ax[select], ay[select], az[select]
                 if weight_by_gradient:
-                    w[select] += cube_cut_dvolume(a0, ax[select], ay[select], az[select])
+                    w[select] += cube_cut_dvolume(a0, *cube_precomp(ax_, ay_, az_))
                 else:
                     # TODO COM calculation is not needed
-                    w[select] += cube_cut_area_com(a0, ax[select], ay[select], az[select])[0]
+                    w[select] += cube_cut_area_com(a0, *cube_precomp(ax_, ay_, az_), ax_, ay_, az_)[0]
             w /= len(offsets)  # mean
             total_w_sum = np.sum(w)
             if normalize == 'band':
