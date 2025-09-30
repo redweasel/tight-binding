@@ -249,7 +249,7 @@ class KPath(Sequence):
         return k_points
 
 
-def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", periodic=True) -> Callable:
+def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", periodic=True, grid: tuple[int] | None=None) -> Callable:
     """Given band structure data and symmetry, return an 1D/2D/3D interpolator for the bandstructure.
     This works only for data, which can be arranged in a rectilinear grid after symmetrization.
 
@@ -264,55 +264,60 @@ def interpolate(k_smpl, bands, sym: _sym.Symmetry = None, method="cubic", period
         scipy.interpolate.RegularGridInterpolator: interpolator for the data
     """
     import scipy.interpolate as interp
-    assert np.shape(k_smpl)[0] == np.shape(bands)[0], f"number of k_smpl and bands needs to match, but was k_smpl: ({np.shape(k_smpl)}), bands: ({np.shape(bands)})"
-    dim = len(k_smpl[0])
+    k_smpl = np.asarray(k_smpl)
+    bands = np.asarray(bands)
+    assert len(k_smpl.shape) == 2, f"k_smpl should have shape (N, dim), but had shape {k_smpl.shape}"
+    assert k_smpl.shape[0] == bands.shape[0], f"number of k_smpl and bands needs to match, but was k_smpl: ({np.shape(k_smpl)}), bands: ({np.shape(bands)})"
+    kdim = len(k_smpl[0])
     if sym is not None:
-        assert sym.dim() == dim, f"dimensions of the symmetry and the k_smpl data don't match, symmetry: {sym.dim()}, k_smpl: {dim}"
+        assert sym.dim() == kdim, f"dimensions of the symmetry and the k_smpl data don't match, symmetry: {sym.dim()}, k_smpl: {kdim}"
         k_smpl_orig = k_smpl
         k_smpl, bands = sym.realize_symmetric_data(
             k_smpl, bands, unit_cell=periodic, average_bad_duplicates=True)
-    n = round(len(k_smpl)**(1 / dim))
-    assert n**dim == len(k_smpl), "could reconstruct full square/cubic volume"
+    if grid is None:
+        grid = (round(len(k_smpl)**(1 / kdim)),)*kdim
+    else:
+        grid = tuple(grid)
+    gdim = len(grid)
+    assert np.prod(grid) == len(k_smpl), "could reconstruct full volume from grid"
 
     # sort (again) by x, y, z compatible with reshape to meshgrid
-    bands = np.array(bands)
-    k_smpl = np.array(k_smpl)
-    for i in reversed(range(dim)):
+    for i in reversed(range(kdim)):
         # the round here is annoying as it can break at wrong places
         # + np.pi makes it less likely, but it can still happen
         reorder = np.argsort(np.round(k_smpl[:, i] + np.pi, 4), kind='stable')
         k_smpl = k_smpl[reorder]
         bands = bands[reorder]
 
-    used_k_smpl = np.moveaxis(k_smpl.reshape((n,) * dim + (dim,)), -1, 0)
-    used_bands = bands.reshape((n,) * dim + (-1,))
+    used_k_smpl = np.moveaxis(k_smpl.reshape(grid + (kdim,)), -1, 0)[:gdim] # use the first dimensions of k_smpl
+    used_bands = bands.reshape(grid + (-1,))
     if periodic:
         # make it work for k outside of the original k_smpl range by
         # 1. extending the range of the data using periodic points
         #   -> this is done more than necessary to accomodate for larger interpolation kernels like the cubic one.
         # 2. wrapping the function argument of the returned function using % 1.0
         #   -> see at the bottom
-        for i in range(dim):
-            vec = np.zeros(dim)
+        for i in range(gdim):
+            vec = np.zeros(gdim)
             vec[i] = 1.0
-            vec = vec.reshape((dim,) + (1,) * dim)
+            vec = vec.reshape((gdim,) + (1,) * gdim)
             used_k_smpl = np.concatenate([used_k_smpl.take([-1], axis=i + 1, mode="wrap") - vec,
                                           used_k_smpl, used_k_smpl.take([0, 1], axis=i + 1, mode="wrap") + vec], axis=i + 1)
             used_bands = np.concatenate([used_bands.take([-1], axis=i, mode="wrap"), used_bands,
                                          used_bands.take([0, 1], axis=i, mode="wrap")], axis=i)
 
-    if dim == 1:
+    if gdim == 1:
         interp_f = interp.RegularGridInterpolator(used_k_smpl, used_bands, method=method)
-    elif dim == 2:
+    elif gdim == 2:
         interp_f = interp.RegularGridInterpolator((used_k_smpl[0][:, 0], used_k_smpl[1][0, :]),
                                                   used_bands,
                                                   method=method)
-    elif dim == 3:
+    elif gdim == 3:
         interp_f = interp.RegularGridInterpolator((used_k_smpl[0][:, 0, 0], used_k_smpl[1][0, :, 0], used_k_smpl[2][0, 0, :]),
                                                   used_bands,
                                                   method=method)
     else:
-        raise ValueError(f"interpolation not implemented for dimension {dim}")
+        raise ValueError(f"interpolation not implemented for dimension {gdim}")
     if periodic:
         return lambda k: interp_f((np.asanyarray(k) + 0.5) % 1.0 - 0.5)
     return interp_f
@@ -382,8 +387,8 @@ def hexagonal_points(r: float, h: float) -> dict:
     points = {}
     points['G'] = (np.zeros(3), 'Γ')
     points['A'] = (np.array([0, 0, h / 2]), 'A')
-    points['K'] = (np.array([r / 3**.5, 0, 0]), 'K')
-    points['H'] = (np.array([r / 3**.5, 0, h / 2]), 'H')
+    points['K'] = (np.array([r / 1.5, 0, 0]), 'K')
+    points['H'] = (np.array([r / 1.5, 0, h / 2]), 'H')
     points['M'] = (np.array([0.5 * r, 0.5 / 3**.5 * r, 0]), 'M')
     points['L'] = (np.array([0.5 * r, 0.5 / 3**.5 * r, h / 2]), 'L')
     return points
