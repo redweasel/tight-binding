@@ -15,7 +15,7 @@ The codebase also includes the following features, accessible as python classes:
 
 ## Installation
 
-This is a python package for Python >=3.11 and can therefore be installed using pip. At the moment it's not uploaded to PyPi, because it has so many WIP areas. To work with it, we recommend a virtual environment \[(1)[https://docs.python.org/3/library/venv.html], (2)[https://python.land/virtual-environments/virtualenv]\]. On Linux this means running the following two commands before running pip:
+This is a python package for Python >=3.11 and can therefore be installed using pip. At the moment it's not uploaded to PyPi, because it has so many WIP areas. To work with it, we recommend a virtual environment \[[1](https://docs.python.org/3/library/venv.html), [2](https://python.land/virtual-environments/virtualenv)\]. On Linux this means running the following two commands before running pip:
 ```
 python3 -m venv ./.venv
 source .venv/bin/activate
@@ -35,3 +35,9 @@ It's best to start with some examples to see some of the possibilities.
 For this, clone this repository and go into the `examples` directory. Try running `fit_copper.py`, `dos_copper.py`, `fermi_surface_copper.py` and `bulk_copper.py`. The output of the fit is provided, so the scripts can be exectued in arbitrary order to explore without breaking anything.
 
 If you have Quantum Espresso installed, you can also try to reproduce the computation of the bandstructure of copper by following the `ExampleQE.ipynb` notebook.
+
+## Citation
+
+This repository was written as part of the work on the publication [10.1088/2516-1075/ae1776](https://iopscience.iop.org/article/10.1088/2516-1075/ae1776).
+There is currently no published overview of the entire content of the repository, mainly because I'm working on it alone and have to manage my time,
+so cite the mentioned work if you use this this code in your research.
