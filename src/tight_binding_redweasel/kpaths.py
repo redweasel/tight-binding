@@ -354,7 +354,7 @@ SC_PATH_2D = KPath('G2d').to('X2d').to('M2d').to('G2d')
 PATH_1D = KPath('G1d').to('X1d', N=100)
 
 # TODO implement https://www.nature.com/articles/s41524-020-00383-7
-# to get all the paths.
+# to get all the paths. Note, that Euler paths are usually not possible.
 
 # internal function to compute the more complicated
 # symmetry points from the face centered points

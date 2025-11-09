@@ -949,12 +949,13 @@ def autofit_asym(name, neighbors_src, k_smpl, ref_bands, band_weights, sym: Symm
 
     best_tb_error = float("inf")
     best_tb = None # type: AsymTightBindingModel
+    model_band_count = add_bands_below + np.shape(ref_bands)[-1] + add_bands_above
     for _ in range(restarts):
         print("restart with new model")
-        tb = AsymTightBindingModel.new(neighbors, add_bands_below + np.shape(ref_bands)[-1] + add_bands_above)
+        tb = AsymTightBindingModel.new(neighbors, model_band_count)
         tb.randomize(0.01)
         tb.normalize()
-        tb.H.H_r[0] = np.diag(ref_bands[0])
+        tb.H.H_r[0,add_bands_below:model_band_count-add_bands_above,add_bands_below:model_band_count-add_bands_above] = np.diag(ref_bands[0])
         # now fit in 10 steps extending from the gamma point (0-point)
         log = logger.OptimisationLogger(update_line=False)
         for j in range(1, 11):

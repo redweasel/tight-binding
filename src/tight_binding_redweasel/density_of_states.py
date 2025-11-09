@@ -191,13 +191,21 @@ def naive_energy(bands, mu, T, spin_factor=2):
         return np.sum(e[e <= mu]) * (np.shape(bands)[-1]/len(e)) * spin_factor
 
 
-def _samples(e0, e1, mu, beta, N):
+def _samples(e0, e1, mu, beta, N, filled=False, continuous=False):
     # sample a range e0 to e1 in such a way, that an integral over -df/de has equal weights for each point. (importance sampling)
     # for numerical stability, it is required to limit e0 and e1 here
-    e0 = np.maximum(mu - 30 / beta, e0)
-    e1 = np.minimum(mu + 30 / beta, e1)
+    e0_ = np.maximum(mu - 30 / beta, e0)
+    e1_ = np.minimum(mu + 30 / beta, e1)
+    # TODO handle bandgaps by removing all sample points in them. -> semiconductor calculations, efficiency
     #return np.log(1 / (1e-16 + np.linspace(scipy.special.expit(-beta * (e0 - mu)), scipy.special.expit(-beta * (e1 - mu)), N)) - 1 + 1e-16) / beta + mu
-    return -scipy.special.logit(np.concatenate([np.linspace(scipy.special.expit(-beta * (e0 - mu)), 0.5, N//2, endpoint=False), np.linspace(0.5, scipy.special.expit(-beta * (e1 - mu)), (N+1)//2)])) / beta + mu
+    if continuous:
+        smpl = -scipy.special.logit(np.linspace(scipy.special.expit(-beta * (e0_ - mu)), scipy.special.expit(-beta * (e1_ - mu)), N)) / beta + mu
+    else:
+        smpl = -scipy.special.logit(np.concatenate([np.linspace(scipy.special.expit(-beta * (e0_ - mu)), 0.5, N//2, endpoint=False), np.linspace(0.5, scipy.special.expit(-beta * (e1_ - mu)), (N+1)//2)])) / beta + mu
+    if filled:
+        smpl[0] = e0
+        smpl[-1] = e1
+    return smpl
 
 class DensityOfStates:
     """This class represents the density of states for a given 3D bandstructure model.
@@ -644,7 +652,8 @@ class DensityOfStates:
                 return -simple_term + a / 2 * int_poly((e0 - mu) * beta, (e1 - mu) * beta, 1/beta**2, 2*mu/beta, mu*mu)
             s = np.sum(segment(e_smpl[:-1], e_smpl[1:], states[:-1], states[1:]))
             # add segments/other functions as extrapolation on both side here to get correct high temperature behavior
-            s += segment(e_smpl[-1], e_smpl[-1] + 8. / beta, self.model_bandcount(), self.model_bandcount()) # flat N(e) above the energy range
+            s += segment(e_smpl[-1], e_smpl[-1] + 8. / beta, states[-1], self.model_bandcount()) # flat N(e) above the energy range
+            s += segment(e0, e_smpl[0], 0, states[0]) # flat N(e) above the energy range
             return s
         # calculate custom distribution for precision/cost balance
         e_smpl = _samples(e0, e1, mu, beta, N)
@@ -679,6 +688,7 @@ class DensityOfStates:
 
     # heat capacity at constant volume in eV/K
     def heat_capacity(self, electrons: float, T: float, N=256, spin_factor=2, h=1e-4) -> float:
+        # TODO comment!
         # The heat capacity is du/dT where u is the energy per unit cell
         # u = integral e f(e) rho(e) de
         # = [...] - integral (f + e df/de) N(e) de
@@ -724,9 +734,97 @@ class DensityOfStates:
             # above and below energy range, this is just zero, so no extrapolation needed.
             return np.sum(segment(e_smpl[:-1], e_smpl[1:], rho[:-1], rho[1:]))
         # calculate custom distribution for precision/cost balance
-        e_smpl = _samples(e0, e1, mu, beta, N)
+        e_smpl = _samples(e0, e1, mu, beta * 0.5, N, continuous=True)
         rho = np.array([self.density(energy) for energy in e_smpl])
         return accumulate(e_smpl, rho) / T * spin_factor
+
+    def entropy(self, mu: float, T, N=50, spin_factor=2):
+        """Compute the entropy of the system. The entropy is defined as
+        `S = integral rho(e) (f ln(f) + (1 - f) ln(1 - f)) de` with the fermi function `f(e,mu,beta)`.
+        Using this entropy, one can compute the free energy `F = E - T*S`.
+        Note, that the convergence with k-sample count is slower than the convergence of the density.
+
+        Args:
+            mu (float): The chemical potential.
+            T (float, optional): Temperature. Defaults to 0.0K.
+            N (int, optional): Number of samples of the DoS to use. Defaults to 32.
+            spin_factor (int, optional): The number of electrons per band. Defaults to 2.
+
+        Returns:
+            float: The entropy of the system.
+        """
+        if T <= 0:
+            return 0.0
+        # S = -k_B * integral_-inf^inf rho(e) (f ln(f) + (1 - f) ln(1 - f)) de
+        #   = -k_B * integral_-inf^inf rho(e) (beta e / (1 + exp(-beta e)) - ln(1 + exp(beta e))) de
+        # this distribution function is almost the same as the derivative of the fermi function.
+        # -> use the same samples
+        # to compute it in a stable way, do partial integration to the states N(e)
+        # S = -k_B*[N(e)(f ln(f) + (1 - f) ln(1 - f))]_-inf^inf + k_B beta^2/2 integral N(e) e/(1 + cosh(beta*e)) de
+        # we now approximate N(e) as piecewise linear and solve the integral exactly.
+        beta = 1 / (k_B * T)  # 1/eV
+        def accumulate(e_smpl, states):
+            def F(x):
+                # f ln(f) + (1 - f) ln(f) = ...
+                return beta*x * scipy.special.expit(beta*x) + np.log(scipy.special.expit(-beta*x))
+            def F1(x):
+                # integral of x/(1+cosh(b*x))
+                return x/beta*np.tanh(beta*x/2) - 2/beta**2*np.log(np.cosh(beta*x/2))
+            def F2(x):
+                # integral of x^2/(1+cosh(b*x))
+                bx = beta*x
+                e = 1 + np.exp(-bx)
+                return -2*x*x / (beta * (1 + np.exp(bx))) - 4*x/beta**2*np.log(e) + 4*beta**-3*scipy.special.spence(e)
+            def segment(e0, e1, y0, y1):
+                dx = e1 - e0
+                dy = y1 - y0
+                a = dy / dx
+                #return a * (F2(e1 - mu) - F2(e0 - mu)) # without the boundary term
+                em = (e0 + e1) / 2
+                b = (y0 + y1) / 2 - (em - mu) * a
+                return b * (F1(e1 - mu) - F1(e0 - mu)) + a * (F2(e1 - mu) - F2(e0 - mu))
+            I = np.sum(segment(e_smpl[:-1], e_smpl[1:], states[:-1], states[1:]))
+            # boundary term from partial integration
+            return beta**2/2*I - F(e_smpl[-1] - mu) * states[-1] + F(e_smpl[0] - mu) * states[0]
+        
+        e0, e1 = self.energy_range()
+        # calculate custom distribution for precision/cost balance
+        e_smpl = _samples(e0, e1, mu, beta * 0.25, N, continuous=True)
+        states = np.array([self.states_below(energy) for energy in e_smpl])
+        return k_B*accumulate(e_smpl, states) * spin_factor
+    
+    def entropy2(self, mu: float, T, N=100, spin_factor=2, density=None):
+        """Same as `self.entropy` but with a different/simpler algorithm.
+        The result is expected to be less precise, however that depends on
+        The shape of the density of states. Use this to check the result of entropy.
+        Note, that the convergence with k-sample count is slower than the convergence of the density.
+
+        Args:
+            mu (float): The chemical potential.
+            T (float, optional): Temperature. Defaults to 0.0K.
+            N (int, optional): Number of samples of the DoS to use. Defaults to 32.
+            spin_factor (int, optional): The number of electrons per band. Defaults to 2.
+
+        Returns:
+            float: The entropy of the system.
+        """
+        if density is None:
+            density = self.density
+        if T <= 0:
+            return 0.0
+        # S = -k_B * integral_-inf^inf rho(e) (f ln(f) + (1 - f) ln(1 - f)) de
+        beta = 1 / (k_B * T)  # 1/eV
+        e0, e1 = self.energy_range()
+        e0 = np.maximum(mu - 30 / beta, e0)
+        e1 = np.minimum(mu + 30 / beta, e1)
+        x = np.linspace(e0, e1, 2*N+1)[1::2]
+        f = scipy.special.expit(-beta*(x-mu))
+        density = np.array([density(e) for e in x])
+        return -k_B * np.mean(density * (f*np.log(f) + (1 - f)*np.log(1 - f))) * (e1 - e0) * spin_factor
+
+    def free_energy(self, mu: float, T, N=256, spin_factor=2):
+        # Gibbs free energy F = E - T*S
+        return self.energy(mu, T, N=N, spin_factor=spin_factor) - self.entropy(mu, T, N=N, spin_factor=spin_factor) * T
 
     def conductivity(self, mu):
         # TODO conductivity from the naive sum

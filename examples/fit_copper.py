@@ -22,6 +22,7 @@ k_smpl, ref_bands, S, fermi_energy = material.read_bands_crystal()
 sym = Symmetry.point_group(S)
 
 A_norm = material.A / (abs(material.A[0,0])*2) # this is the normalisation for fcc and bcc
+#A_norm = material.A / np.linalg.norm(material.A, axis=0, keepdims=True) # this is the normalisation for most other structures.
 k_smpl_fit, ref_bands_sym = sym.realize_symmetric_data(k_smpl, ref_bands)
 k_smpl_fit = k_smpl_fit @ np.linalg.inv(A_norm)
 
