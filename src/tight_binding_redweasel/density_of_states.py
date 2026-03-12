@@ -694,7 +694,6 @@ class DensityOfStates:
         # = [...] - integral (f + e df/de) N(e) de
         # the temperature derivative can be broken up into the part from the change in chemical potential
         # and the part from the change f(e)
-
         # d/dT f(beta*(e-mu)) = beta*f'(beta*(e-mu)) * (-1/T*(e-mu)-mu')
         # du/dT = integral rho(e)*e*(e - mu(T) + mu'(T)*T)/T*(-df/de(e)) de
         # = integral rho(e)*e*(e - mu2)/T*(-df/de(e)) de
@@ -704,8 +703,8 @@ class DensityOfStates:
         # the resulting integral has terms up to e^2, for which the analytical
         # solution is implemented. To use it, the substitution e = x/beta + mu must be made.
         # -> e*(e-mu2) -> (x/beta + mu)*(x/beta - mu'*T) = x^2/beta^2 + (mu-mu'*T)*x/beta + mu*mu'*T
-        # Note that rho should be approximated linear as rho(e) = a*(e-e0)+b, which makes the integral cubic in x.
-        # Then, one has to Taylor to get a quadratic approximation centered in the relevant interval.
+        # Note, that rho should be approximated linear as rho(e) = a*(e-e0)+b, which makes the integral cubic in x.
+        # Then, one has to Taylor to get a quadratic approximation centered in the relevant interval. (Chebychev Polynomial as approx would be better)
 
         # TODO allow more than one T to be used!
         if T <= 0.0:

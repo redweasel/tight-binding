@@ -65,6 +65,9 @@ plt.show()
 ```
 """
 
+# This is work in progress. For a Julia implementation of the XML file reading, look at
+# https://github.com/qiaojunfeng/WannierIO.jl/blob/39c580ec52f5f9e641211f6db5175ec5b5e00e05/src/qe/xml.jl
+
 import os
 import re
 import subprocess
@@ -306,6 +309,7 @@ class QECrystal:
         assert unit in ("angstrom", "bohr")
         self.name = name
         self.unit = unit
+        self.verbose = True
         self.A = np.asarray(A)
         self.basis = np.asarray(basis)
         self.types = np.asarray(types)
@@ -336,6 +340,9 @@ class QECrystal:
         self.nd = nd
         self.ni = ni
         self.nt = nt
+
+    def set_verbose(self, verbose: bool):
+        self.verbose = verbose
 
     def plot_crystal(self, repeat=1, turntable=14, elevation=35):
         """3d plot of the crystal structure"""
@@ -388,6 +395,25 @@ class QECrystal:
             ax.set_zlim(np.min(deformed_cube[2]), np.max(deformed_cube[2]))
         ax.set_aspect("equal")
         ax.legend()
+
+    def export_crystal_points(self, file, repeat=3):
+        """Export the atomic positions into unit cell into a mesh file in PLY format.
+
+        Args:
+            file (str): The .ply file to write to.
+        """
+        offset = np.stack(np.reshape(np.meshgrid(*([np.arange(repeat)-(repeat-1)//2]*3)), (3, -1, 1)), axis=-1).reshape(-1, 1, 3)
+        extended_basis = (np.reshape(self.basis, (1, -1, 3)) + offset).reshape(-1, 3)
+        cube_line = np.stack(np.reshape(np.meshgrid(*([np.arange(2)]*3)), (3, -1)), axis=-1).reshape(-1, 3)[:-1]
+        deformed_cube = cube_line @ self.A.T
+        x = np.concatenate([deformed_cube, extended_basis @ self.A.T])
+        faces = [(0, 1, 3, 2), (0, 2, 6, 4), (0, 4, 5, 1)]
+        with open(file, 'w') as f:
+            f.write("ply\nformat ascii 1.0\ncomment created by tight_binding_redweasel\nelement vertex %d\nproperty float x\nproperty float y\nproperty float z\nelement face %d\nproperty list uchar uint vertex_indices\nend_header\n" % (len(x), len(faces)))
+            for xyz in x:
+                f.write("%.5f %.5f %.5f\n" % tuple(xyz))
+            for face in faces:
+                f.write((("%d "*(1+len(face)))[:-1] % ((len(face),) + face)) + "\n")
     
     def _mass_per_cell(self) -> float:
         nuclei_mass = 1.66053907e-27 * sum((element_masses[element_numbers[t]] for t in self.types))
@@ -861,11 +887,32 @@ class QECrystal:
     
     # ----- execution of QUANTUM ESPRESSO -----
 
+    def _validate(self, program, name):
+        # to avoid file system issues and accidental command injection
+        assert isinstance(self.nk, int)
+        assert isinstance(self.nd, int)
+        assert isinstance(self.nt, int)
+        assert re.match(r"[a-zA-Z0-9_]+", program)
+        assert re.match(r"[a-zA-Z0-9_\-\.]+", name)
+        assert re.match(r"[a-zA-Z0-9_\-\.,\+\*!%&]+", self.name)
+
     def _run(self, program, name):
-        os.system(mpi_run + f'{program}{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} -in {self.name}.{name}.in | tee {self.name}.{name}.out')
+        self._validate(program, name)
+        cmd = mpi_run + f'{program}{"" if platform == "win32" else ".x"} -nk {self.nk} -nd {self.nd} -nt {self.nt} -in {self.name}.{name}.in'
+        if self.verbose:
+            cmd += f" | tee {self.name}.{name}.out"
+        elif platform == "linux":
+            cmd += f" > /dev/null"
+        os.system(cmd)
     
     def _run_simple(self, program, args, out_file):
-        os.system(f'{program}{"" if platform == "win32" else ".x"} {args} | tee {out_file}')
+        self._validate(program, out_file)
+        cmd = f'{program}{"" if platform == "win32" else ".x"} {args}'
+        if self.verbose:
+            cmd += f" | tee {out_file}"
+        elif platform == "linux":
+            cmd += f" > /dev/null"
+        os.system(cmd)
 
     def scf(self, k_grid_size, k_grid_size2=None, k_grid_size3=None):
         """Do a self consistent field calculation (solving the Kohn-Sham equations).
@@ -874,7 +921,7 @@ class QECrystal:
             k_grid_size (int): k points in x direction of the grid.
             k_grid_size2 (int, optional): k points in y direction of the grid. Defaults to k_grid_size.
             k_grid_size3 (int, optional): k points in z direction of the grid. Defaults to k_grid_size.
-        """        
+        """
         if k_grid_size2 is None:
             k_grid_size2 = k_grid_size
         if k_grid_size3 is None:
@@ -1155,6 +1202,26 @@ lwrite_overlaps={lwrite_overlaps}
         print(f"computing projections onto atomic orbitals for {self.name}")
         self._run("projwfc", "projwfc")
 
+    # EPW can also be used, but requires wannier90.
+
+    def d3_hessian(self, h=1e-3):
+        """Compute the D3 Hessian matrix using a numerical derivative (stepsize h defaults to 1e-3).
+        The results can be read from disk using `self.read_d3_hessian()`"""
+        with open(f"{self.name}.d3hess.in", "w") as file:
+            file.write(f"""
+&input
+prefix='{self.name}'
+outdir='./qe-data/'
+step={h:.2e}
+/
+""")
+        self._run("d3hess", "d3hess")
+    
+    def read_d3_hessian(self):
+        with open(f"{self.name}.hess") as file:
+            pass
+        return
+
     def k_points_wannier(self, points):
         k_points = "begin kpoints\n"
         for x, y, z in points:
@@ -1384,6 +1451,7 @@ def from_disk(name: str, read_output=True, prepare_pseudopotentials=False) -> QE
         else:
             section = root.getElementsByTagName("input")[0]
         types_elem = section.getElementsByTagName("atomic_species")[0]
+        structure = section.getElementsByTagName("atomic_structure")[0]
         positions = section.getElementsByTagName("atomic_positions")[0]
         for atom in types_elem.getElementsByTagName("species"):
             atom_type = atom.getAttribute("name")
@@ -1397,9 +1465,9 @@ def from_disk(name: str, read_output=True, prepare_pseudopotentials=False) -> QE
         a2 = [float(x) for x in section.getElementsByTagName("a2")[0].firstChild.nodeValue.strip().split()]
         a3 = [float(x) for x in section.getElementsByTagName("a3")[0].firstChild.nodeValue.strip().split()]
         A = np.array([a1, a2, a3]).T
-        if crystal.unit == "angstrom":
-            A *= bohr_to_angstrom
-        crystal.A = A
+        #alat = float(structure.getAttribute("alat")) # ...weird alat unit...? It doesn't always do what I would think it would do...
+        # I found https://github.com/qiaojunfeng/WannierIO.jl/blob/39c580ec52f5f9e641211f6db5175ec5b5e00e05/src/qe/xml.jl
+        # which has the same calculation as mine below, so I hope it's correct
         for atom in positions.getElementsByTagName("atom"):
             atom_type = atom.getAttribute("name")
             atom_pos = [float(x) for x in atom.firstChild.nodeValue.strip().split()]
@@ -1407,6 +1475,9 @@ def from_disk(name: str, read_output=True, prepare_pseudopotentials=False) -> QE
             atom_pos = np.linalg.inv(A) @ atom_pos
             basis.append(atom_pos)
             types.append(atom_type)
+        if crystal.unit == "angstrom": # only convert units after converting atom_pos
+            A *= bohr_to_angstrom
+        crystal.A = A
         crystal.basis = np.array(basis)
         crystal.types = np.array(types)
         crystal.kinetic_energy_cutoff = float(section.getElementsByTagName("ecutwfc")[0].firstChild.nodeValue)
